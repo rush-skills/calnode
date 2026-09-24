@@ -101,10 +101,15 @@
 	type Host = { user_id: string; name: string; email: string };
 	type TogetherHost = Host & { optional: boolean };
 
-	// Q1: just me, or specific people?  Q2 (people only): rotate, or all attend?
+	// Q1: just me, or specific people?  Q2 (people only): rotate, all attend, or
+	// mixed (some always attend while the rest rotate)?
 	let hostScope = $state<'me' | 'people'>('me');
-	let staffing = $state<'rotate' | 'together'>('rotate');
+	let staffing = $state<'rotate' | 'together' | 'mixed'>('rotate');
 	// Rotation pool (each "rotation"); together = required + optional join-if-free.
+	// Mixed uses BOTH lists: rotationHosts is the pool one person is picked from,
+	// togetherHosts are the people who attend every booking (required block a slot
+	// when busy; optional join only if free). The engine already takes the three
+	// roles side by side on a round_robin event — this is only the authoring path.
 	let rotationHosts = $state<Host[]>([]);
 	let togetherHosts = $state<TogetherHost[]>([]);
 	let hostsLoaded = $state(false);
@@ -130,7 +135,7 @@
 
 	// routing_mode is derived from the two answers — never set directly.
 	const routingMode = $derived(
-		hostScope === 'me' ? 'fixed' : staffing === 'rotate' ? 'round_robin' : 'collective'
+		hostScope === 'me' ? 'fixed' : staffing === 'together' ? 'collective' : 'round_robin'
 	);
 
 	async function loadHosts() {
@@ -143,6 +148,10 @@
 			togetherHosts = items
 				.filter((h) => h.role === 'required' || h.role === 'optional')
 				.map((h) => ({ ...toHost(h), optional: h.role === 'optional' }));
+			// A rotation with always-attending people is the mixed mode. Detect it from
+			// the roles so those hosts show up (and survive the next save) instead of
+			// being silently dropped by the rotate-only save path.
+			if (et?.routing_mode === 'round_robin' && togetherHosts.length > 0) staffing = 'mixed';
 			hostsLoaded = true;
 		} catch (e: any) {
 			toast.error(e.message || 'Could not load hosts');
@@ -183,7 +192,12 @@
 	// togetherHosts after switching to Rotate — would wrongly mark everyone
 	// unavailable and make addOne skip every team member.
 	const assignedIds = $derived(
-		new Set((staffing === 'rotate' ? rotationHosts : togetherHosts).map((h) => h.user_id))
+		new Set(
+			(staffing === 'mixed'
+				? [...rotationHosts, ...togetherHosts]
+				: staffing === 'rotate' ? rotationHosts : togetherHosts
+			).map((h) => h.user_id)
+		)
 	);
 	// Any active member not already chosen — including the current user, who can
 	// be a host like anyone else.
@@ -198,6 +212,9 @@
 		// previous mode.
 		const list: { user_id: string }[] = target === 'rotation' ? rotationHosts : togetherHosts;
 		if (list.some((x) => x.user_id === h.user_id)) return;
+		// Mixed shows both lists at once, so a person must not land in both (the API
+		// rejects a duplicate user_id, and "always attends AND rotates" is meaningless).
+		if (staffing === 'mixed' && assignedIds.has(h.user_id)) return;
 		if (target === 'rotation') rotationHosts = [...rotationHosts, h];
 		else togetherHosts = [...togetherHosts, { ...h, optional: false }];
 	}
@@ -298,6 +315,8 @@
 			priceMajor = ((et.price_cents ?? 0) / 100).toFixed(2);
 			reminders = et.reminders ?? [];
 			if (et.routing_mode === 'round_robin') { hostScope = 'people'; staffing = 'rotate'; }
+			// loadHosts() flips 'rotate' to 'mixed' when the rotation also carries
+			// required/optional hosts — that fact lives in the host list, not the row.
 			else if (et.routing_mode === 'collective') { hostScope = 'people'; staffing = 'together'; }
 			else { hostScope = 'me'; }
 			rrStrategy = (['even', 'priority', 'soonest'].includes(et.rr_strategy ?? '')
@@ -328,6 +347,9 @@
 		if (form.max_active_bookings < 0) { toast.error('Max active bookings cannot be negative (0 = unlimited).'); return; }
 		if (routingMode === 'round_robin' && rotationHosts.length === 0) {
 			toast.error('Add at least one person to the rotation'); return;
+		}
+		if (staffing === 'mixed' && togetherHosts.length === 0) {
+			toast.error('Add at least one person who always attends, or switch to "Rotate between them"'); return;
 		}
 		if (routingMode === 'collective' && !togetherHosts.some((h) => !h.optional)) {
 			toast.error('Add at least one required host (someone who always attends)'); return;
@@ -375,8 +397,19 @@
 			const effSlug = updated?.slug || slug;
 
 			if (routingMode === 'round_robin') {
+				// Mixed: the always-attending people ride along with their required/optional
+				// role. Plain rotate sends the rotation only, so switching back to it clears
+				// any fixed hosts on purpose.
+				const fixed = staffing === 'mixed'
+					? togetherHosts.map((hh, i) => ({
+						user_id: hh.user_id, role: hh.optional ? 'optional' : 'required', priority: i,
+					}))
+					: [];
 				await api.put(`/v1/event-types/${effSlug}/hosts`, {
-					hosts: rotationHosts.map((hh, i) => ({ user_id: hh.user_id, role: 'rotation', priority: i })),
+					hosts: [
+						...rotationHosts.map((hh, i) => ({ user_id: hh.user_id, role: 'rotation', priority: i })),
+						...fixed,
+					],
 				});
 			} else if (routingMode === 'collective') {
 				await api.put(`/v1/event-types/${effSlug}/hosts`, {
@@ -804,17 +837,23 @@
 							class="rounded-md px-3 py-1.5 text-sm font-medium transition-colors {staffing === 'together' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground'}">
 							Everyone attends
 						</button>
+						<button type="button" onclick={() => (staffing = 'mixed')}
+							class="rounded-md px-3 py-1.5 text-sm font-medium transition-colors {staffing === 'mixed' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground'}">
+							Some always attend
+						</button>
 					</div>
 					<p class="text-xs text-muted-foreground">
 						{#if staffing === 'rotate'}
 							One available person is booked per slot, spreading bookings across the group.
-						{:else}
+						{:else if staffing === 'together'}
 							Everyone joins the same meeting. A slot is offered only when all required people are free.
+						{:else}
+							Some people join every meeting; one more is picked from a rotation each time. Required attendees must be free for a slot to open — optional ones never block it.
 						{/if}
 					</p>
 				</div>
 
-				{#if staffing === 'rotate'}
+				{#if staffing === 'rotate' || staffing === 'mixed'}
 					<div class="mt-4 space-y-3">
 						<div class="space-y-1.5">
 							<Label for="rr-strategy">Who gets picked</Label>
@@ -872,9 +911,10 @@
 						{/if}
 						{@render hostPickers('rotation', 'rr')}
 					</div>
-				{:else}
+				{/if}
+				{#if staffing === 'together' || staffing === 'mixed'}
 					<div class="mt-4 space-y-3">
-						<p class="text-sm font-medium">Who attends</p>
+						<p class="text-sm font-medium">{staffing === 'mixed' ? 'People who always attend' : 'Who attends'}</p>
 						{#if togetherHosts.length > 0}
 							<div class="space-y-2">
 								{#each togetherHosts as h (h.user_id)}
@@ -900,7 +940,9 @@
 								{/each}
 							</div>
 						{:else}
-							<p class="text-xs text-muted-foreground">Add the people who attend this meeting.</p>
+							<p class="text-xs text-muted-foreground">
+								{staffing === 'mixed' ? 'Add the people who join every booking alongside the rotation pick.' : 'Add the people who attend this meeting.'}
+							</p>
 						{/if}
 						<p class="text-xs text-muted-foreground">
 							<span class="font-medium text-foreground">Required</span> hosts always attend and must be free for a slot to open.

@@ -224,20 +224,23 @@ An event type owns a **host list** (`event_type_hosts`): each row = (user, role,
 priority), role ∈ **required | rotation | optional**. The editor authors these
 roles through **two plain questions** rather than a mode picker — *who can host?*
 (just me / specific people) and, for people, *how are they staffed?* (rotate /
-everyone attends). `routing_mode` is **derived** from the two answers, never set
-directly (`frontend/src/routes/event-types/[slug]/+page.svelte`):
+everyone attends / some always attend). `routing_mode` is **derived** from the two
+answers, never set directly (`frontend/src/routes/event-types/[slug]/+page.svelte`):
 
 | Q1 | Q2 | `routing_mode` | Roles written |
 |---|---|---|---|
 | Just me | — | `fixed` | owner → `required` |
 | Specific people | Rotate | `round_robin` | each → `rotation` (+ `rr_strategy`) |
 | Specific people | Everyone attends | `collective` | each → `required`; per-person **Optional** toggle → `optional` (join-if-free) |
+| Specific people | Some always attend | `round_robin` | rotation list → `rotation` (+ `rr_strategy`); always-attend list → `required`, or `optional` via the same toggle |
 
 Everyone is `required` by default in the "Everyone attends" branch, so the common
 case has no extra knobs; flipping a person to **Optional** is the only refinement.
-The old "fixed host inside a rotation" combo (a `required` host alongside a
-rotation pool) is no longer authorable from the UI — the engine still supports it,
-but no editor path writes it.
+"Some always attend" is the same `round_robin` row with `required`/`optional` hosts
+beside the pool — the editor infers that mode from the host list on load (a
+`round_robin` event with any non-rotation host), since nothing on the row records
+it. Always-attending hosts never count toward `rr_strategy`; only the pool does.
+Switching back to plain "Rotate" saves the rotation alone, dropping the fixed hosts.
 
 **The one rule** — a slot is offered when: all `required` hosts free **AND** (if a
 rotation pool exists) ≥1 rotation host free. At booking time the assignment is: all
