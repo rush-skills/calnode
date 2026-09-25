@@ -1639,12 +1639,18 @@ func (h *Handler) CancelBooking(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Admins (and the owner) may cancel any booking — needed to resolve a
-	// departing member's meetings. Non-admin hosts can cancel only their own.
+	// departing member's meetings. Non-admin hosts can cancel only bookings they
+	// attend — as primary OR as a secondary host (canActOnBooking), the same gate
+	// the reschedule endpoint uses, so a booking listed under "My bookings" is one
+	// the viewer can actually act on.
 	var cancelErr error
-	if user.IsAdmin {
+	var primaryHostID string
+	if err := h.db.QueryRowContext(r.Context(), `SELECT host_id FROM bookings WHERE id = ?`, id).Scan(&primaryHostID); err != nil {
+		cancelErr = booking.ErrNotFound
+	} else if h.canActOnBooking(r.Context(), user, id, primaryHostID) {
 		cancelErr = h.bookingSvc.CancelByID(r.Context(), id, attribution)
 	} else {
-		cancelErr = h.bookingSvc.Cancel(r.Context(), user.ID, id, attribution)
+		cancelErr = booking.ErrNotFound
 	}
 	if err := cancelErr; err != nil {
 		switch {

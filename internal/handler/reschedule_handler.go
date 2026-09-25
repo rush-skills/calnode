@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -53,7 +54,7 @@ func (h *Handler) RescheduleBooking(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Return 404 for unauthorized access to avoid leaking booking IDs.
-	if hostID != user.ID {
+	if !h.canActOnBooking(r.Context(), user, id, hostID) {
 		h.writeError(w, http.StatusNotFound, "booking not found")
 		return
 	}
@@ -120,4 +121,25 @@ func (h *Handler) RescheduleBooking(w http.ResponseWriter, r *http.Request) {
 	// manage_handler.go. etSlug is unused here now; it's re-derived inside the helper
 	// via loadCancellationData's own join, which is equivalent.
 	go h.rescheduleSideEffects(*updated, etID, previousStart, previousEnd) // #nosec G118 -- deliberately its own context.Background(); see rescheduleSideEffects' doc comment
+}
+
+// canActOnBooking says whether user may reschedule or cancel this booking: admins and
+// the owner may act on any booking (they resolve other people's meetings), and any host
+// attending it may act on their own. "Attending" is a booking_hosts row, not just
+// bookings.host_id: on a Group booking or a rotation with always-attending hosts the
+// primary is one of several, and the others see the booking under "My bookings" (which
+// joins booking_hosts) - gating on the primary alone left them with a "booking not
+// found" on a meeting they are in. hostID is the primary already loaded by the caller,
+// so legacy bookings with no booking_hosts rows still resolve.
+func (h *Handler) canActOnBooking(ctx context.Context, user AuthUser, bookingID, hostID string) bool {
+	if user.IsAdmin || hostID == user.ID {
+		return true
+	}
+	var n int
+	if err := h.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM booking_hosts WHERE booking_id = ? AND user_id = ?`,
+		bookingID, user.ID).Scan(&n); err != nil {
+		return false
+	}
+	return n > 0
 }
