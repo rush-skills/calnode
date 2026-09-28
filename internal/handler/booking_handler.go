@@ -1160,7 +1160,11 @@ func (h *Handler) createHostEventsAndNotify(ctx context.Context, b *booking.Book
 	gc := h.getCal()
 	primaryPrefs := allOnPrefs
 	confirmFailed := false
-	descPlain, descRich := calendarDescription(bData.Locale, in.CalendarMessage, b.ID)
+	answers, err := h.loadAnswerLines(ctx, b.ID)
+	if err != nil {
+		h.logger.Error("booking confirmation: load answers for calendar event", "error", err, "booking_id", b.ID)
+	}
+	descPlain, descRich := calendarDescription(bData.Locale, in.CalendarMessage, answers, b.ID)
 	for _, host := range hosts {
 		// Create a calendar event on each host's connected calendar and record
 		// the per-host event ID so it can be cancelled later. The primary's id

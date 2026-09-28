@@ -241,7 +241,11 @@ func (h *Handler) reconcileCreations(ctx context.Context, gc *calendar.Service) 
 			}
 		}
 		loc := i18n.Get(m.orgLocale) // nil (→ English) if empty/unrecognized; i18n.Locale.T handles nil safely
-		descPlain, descRich := calendarDescription(loc, m.calMsg, m.bookingID)
+		answers, aerr := h.loadAnswerLines(ctx, m.bookingID)
+		if aerr != nil {
+			h.logger.Error("reconcile: load answers for calendar event", "error", aerr, "booking_id", m.bookingID)
+		}
+		descPlain, descRich := calendarDescription(loc, m.calMsg, answers, m.bookingID)
 		eventID, link, calID, provider, err := gc.CreateEvent(ctx, m.userID, calendar.CreateEventParams{
 			Summary:         loc.Tf("calendar_event_summary", m.etName, m.orgName),
 			Description:     descPlain,

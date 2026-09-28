@@ -168,7 +168,11 @@ func (h *Handler) ReassignBooking(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			loc := i18n.Get(orgLocale) // nil (→ English) if empty/unrecognized; i18n.Locale.T handles nil safely
-			descPlain, descRich := calendarDescription(loc, calMsg, bCopy.ID)
+			answers, aerr := h.loadAnswerLines(ctx, bCopy.ID)
+			if aerr != nil {
+				h.logger.Error("reassign: load answers for calendar event", "error", aerr, "booking_id", bCopy.ID)
+			}
+			descPlain, descRich := calendarDescription(loc, calMsg, answers, bCopy.ID)
 			newEventID, _, newCalID, newProvider, err := gc.CreateEvent(ctx, newHostID, calendar.CreateEventParams{
 				Summary:         loc.Tf("calendar_event_summary", etName, orgName),
 				Description:     descPlain,

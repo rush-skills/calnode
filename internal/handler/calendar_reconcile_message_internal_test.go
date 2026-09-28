@@ -56,6 +56,8 @@ func TestReconcileCreations_healedEventCarriesTheCalendarMessage(t *testing.T) {
 		{`INSERT INTO booking_attendees (id, booking_id, name, email, iana_timezone, is_organizer, locale) VALUES ('a-1', 'bk-1', 'Alice', 'alice@example.com', 'UTC', 1, 'en')`, nil},
 		{`INSERT INTO booking_hosts (id, booking_id, user_id, is_primary) VALUES ('bh-1', 'bk-1', 'host-1', 1)`, nil},
 		{`INSERT INTO calendar_connections (id,user_id,provider,access_token_enc,calendar_id,is_destination) VALUES ('conn','host-1','google','test','primary',1)`, nil},
+		{`INSERT INTO event_type_questions (id,event_type_id,label,type,position) VALUES ('q-1','et-1','Topic','text',0)`, nil},
+		{`INSERT INTO booking_answers (id,booking_id,question_id,value) VALUES ('ans-1','bk-1','q-1','Pricing')`, nil},
 	} {
 		if _, err := database.Exec(q.sql, q.args...); err != nil {
 			t.Fatalf("seed: %v\n%s", err, q.sql)
@@ -76,7 +78,7 @@ func TestReconcileCreations_healedEventCarriesTheCalendarMessage(t *testing.T) {
 		t.Fatalf("created %d events; want 1 (logs: %s)", len(p.created), logs.String())
 	}
 	ev := p.created[0]
-	if ev.Description != "Agenda\n\nBooking ID: bk-1" || ev.DescriptionHTML != "<p>Agenda</p><p>Booking ID: bk-1</p>" {
+	if ev.Description != "Agenda\n\nTopic: Pricing\n\nBooking ID: bk-1" || ev.DescriptionHTML != "<p>Agenda</p><p><strong>Topic:</strong> Pricing</p><p>Booking ID: bk-1</p>" {
 		t.Errorf("healed event: plain=%q rich=%q", ev.Description, ev.DescriptionHTML)
 	}
 	var stored string

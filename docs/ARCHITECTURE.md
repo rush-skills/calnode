@@ -497,8 +497,10 @@ Calnode talks to calendars through a **provider abstraction**, not a single vend
   the one place the text on a host's calendar event is composed: the event type's
   **`calendar_message`** (admin-authored rich text, stored as **sanitized HTML** via
   `internal/richtext`, distinct from `description` which is the public booking page's
-  text) followed by the translated `Booking ID: …` line, which stays **last and always
-  present** because the reconciler and support match events on it. It returns a plain
+  text), then the booker's **answers to the booking questions** (`Label: answer` per
+  line, loaded by `loadAnswerLines`; escaped, never treated as HTML), then the translated
+  `Booking ID: …` line, which stays **last and always present** because the reconciler
+  and support match events on it. It returns a plain
   form (CalDAV, `.ics`, add-to-calendar links) and an HTML twin (`DescriptionHTML`, used
   by Google and Microsoft, which render it). The inline create, the reconciler's heal and
   reassignment all call it. The attendee's `.ics` and deep links carry the message

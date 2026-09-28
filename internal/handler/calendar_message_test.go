@@ -131,6 +131,8 @@ func TestReassignBooking_newHostEventCarriesTheMessage(t *testing.T) {
 	database.Exec(`INSERT INTO booking_attendees (id,booking_id,name,email,iana_timezone,is_organizer)
 		VALUES ('a1','b1','Alice','alice@example.com','UTC',1)`) //nolint:errcheck
 	database.Exec(`INSERT INTO calendar_connections (id,user_id,provider,access_token_enc,calendar_id,is_destination) VALUES ('conn3','u3','google','test','primary',1)`) //nolint:errcheck
+	database.Exec(`INSERT INTO event_type_questions (id,event_type_id,label,type,position) VALUES ('q1','et1','Topic','text',0)`)                                         //nolint:errcheck
+	database.Exec(`INSERT INTO booking_answers (id,booking_id,question_id,value) VALUES ('ans1','b1','q1','Pricing')`)                                                    //nolint:errcheck
 	p := telephoneCalendar{events: make(chan calendar.CreateEventParams, 1)}
 	svc := calendar.NewService(database)
 	svc.Register(p)
@@ -145,7 +147,7 @@ func TestReassignBooking_newHostEventCarriesTheMessage(t *testing.T) {
 	}
 	select {
 	case ev := <-p.events:
-		if ev.Description != "Agenda\n\nBooking ID: b1" || ev.DescriptionHTML != "<p>Agenda</p><p>Booking ID: b1</p>" {
+		if ev.Description != "Agenda\n\nTopic: Pricing\n\nBooking ID: b1" || ev.DescriptionHTML != "<p>Agenda</p><p><strong>Topic:</strong> Pricing</p><p>Booking ID: b1</p>" {
 			t.Errorf("new host event: plain=%q rich=%q", ev.Description, ev.DescriptionHTML)
 		}
 	case <-time.After(5 * time.Second):
@@ -169,5 +171,53 @@ func TestPatchEventType_emailNotes_sanitizedAndCapped(t *testing.T) {
 		if code, _ := patchET(t, h, apiKey, slug, fmt.Sprintf(`{%q:%q}`, f, strings.Repeat("x", 4000))); code != http.StatusOK {
 			t.Errorf("%s at cap: code=%d; want 200", f, code)
 		}
+	}
+}
+
+// The booker's answers ride on the host's calendar event, between the message and
+// the Booking ID, so the host has the context without opening the admin app.
+func TestCreateBooking_calendarEventCarriesQuestionAnswers(t *testing.T) {
+	h, db, key, userID := setupWorkspaceWithDB(t)
+	slug, etID := seedEventTypeHTTP(t, h, key)
+	if _, err := db.Exec(`UPDATE event_types SET calendar_message = '<p>Agenda</p>' WHERE id = ?`, etID); err != nil {
+		t.Fatal(err)
+	}
+	q1 := createQuestion(t, h, slug, key, `{"label":"Company","type":"text"}`)
+	q2 := createQuestion(t, h, slug, key, `{"label":"Newsletter","type":"checkbox"}`)
+	q3 := createQuestion(t, h, slug, key, `{"label":"Left blank","type":"text"}`)
+	if _, err := db.Exec(`INSERT INTO calendar_connections (id,user_id,provider,access_token_enc,calendar_id,is_destination) VALUES ('conn',?,'google','test','primary',1)`, userID); err != nil {
+		t.Fatal(err)
+	}
+	p := telephoneCalendar{events: make(chan calendar.CreateEventParams, 1)}
+	svc := calendar.NewService(db)
+	svc.Register(p)
+	h.SetCalendar(svc)
+
+	body := fmt.Sprintf(`{"event_type_slug":%q,"start_at":"2026-06-15T09:00:00Z","name":"Test","email":"test@example.com",
+		"answers":[{"question_id":%q,"value":"Acme & Co"},{"question_id":%q,"value":"yes"},{"question_id":%q,"value":"  "}]}`, slug, q1, q2, q3)
+	req := httptest.NewRequest(http.MethodPost, "/v1/bookings", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.CreateBooking(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var resp struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+
+	select {
+	case ev := <-p.events:
+		wantPlain := "Agenda\n\nCompany: Acme & Co\nNewsletter: yes\n\nBooking ID: " + resp.ID
+		if ev.Description != wantPlain {
+			t.Errorf("Description = %q; want %q", ev.Description, wantPlain)
+		}
+		wantRich := "<p>Agenda</p><p><strong>Company:</strong> Acme &amp; Co</p><p><strong>Newsletter:</strong> yes</p><p>Booking ID: " + resp.ID + "</p>"
+		if ev.DescriptionHTML != wantRich {
+			t.Errorf("DescriptionHTML = %q; want %q", ev.DescriptionHTML, wantRich)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("calendar event was never created")
 	}
 }
