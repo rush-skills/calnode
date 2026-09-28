@@ -144,6 +144,13 @@ page shows the exact redirect URIs for the running instance). Calendar is a
 sensitive scope, so submit the app for verification before wide public use
 (unverified = warning screen + 100-user cap).
 
+**Letting your whole org sign in.** By default only invited people can sign in. On
+Settings → Google OAuth, under **Who can sign in**, list your organisation's email
+domains (one per line). Anyone who signs in with a **verified** Google or Microsoft
+account under one of those domains becomes a member on first login, with password
+login off and never as admin. Exact match on the domain — list each subdomain you use.
+Empty list = invite-only. (`PATCH /v1/settings/signin {"allowed_signin_domains":[...]}`.)
+
 ---
 
 ## 6. Backups (Litestream)

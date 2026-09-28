@@ -1,6 +1,7 @@
 package mailer
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -94,5 +95,52 @@ func TestBookingData_Brand(t *testing.T) {
 	}
 	if got := (BookingData{BrandName: "Acme"}).Brand(); got != "Acme" {
 		t.Errorf("Brand() set = %q; want Acme", got)
+	}
+}
+
+// Email notes are rich text: the text part gets readable plain text, the HTML part
+// the allowlisted markup, and anything dangerous is stripped on send even if it
+// somehow reached the row. A legacy plain-text note keeps its line breaks.
+func TestCustomNote_richTextRendersInBothParts(t *testing.T) {
+	d := testBookingData()
+	d.CustomNote = `<p>Bring <strong>ID</strong>.</p><ul><li>Park at <a href="https://x.io/p">the lot</a></li></ul><script>alert(1)</script>`
+
+	if got, want := d.CustomNoteText(), "Bring ID.\n\n- Park at the lot (https://x.io/p)"; got != want {
+		t.Errorf("CustomNoteText = %q; want %q", got, want)
+	}
+	html := string(d.CustomNoteHTML())
+	if !strings.Contains(html, "<strong>ID</strong>") || strings.Contains(html, "<script") {
+		t.Errorf("CustomNoteHTML = %q", html)
+	}
+
+	// Every attendee-facing template appends the note in both parts.
+	for name, send := range map[string]func(context.Context, Mailer, BookingData) error{
+		"confirmation": SendConfirmationToAttendee,
+		"cancellation": SendCancellationToAttendee,
+		"reschedule":   SendRescheduleToAttendee,
+		"reminder":     SendReminder,
+	} {
+		cap := &captureMailer{}
+		if err := send(context.Background(), cap, d); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		msg := cap.all()[0]
+		if !strings.Contains(msg.Text, "- Park at the lot (https://x.io/p)") || strings.Contains(msg.Text, "<strong>") {
+			t.Errorf("%s text part: %q", name, msg.Text)
+		}
+		if !strings.Contains(msg.HTML, "<strong>ID</strong>") || strings.Contains(msg.HTML, "&lt;strong&gt;") || strings.Contains(msg.HTML, "<script") {
+			t.Errorf("%s html part should carry the sanitized markup unescaped: %s", name, msg.HTML)
+		}
+	}
+
+	// A note written before the rich editor: plain text, line breaks kept, and the
+	// ampersand escaped in the HTML part but not the text part.
+	legacy := testBookingData()
+	legacy.CustomNote = "Line one\nQ & A"
+	if got := legacy.CustomNoteText(); got != "Line one\nQ & A" {
+		t.Errorf("legacy text = %q", got)
+	}
+	if got := string(legacy.CustomNoteHTML()); got != "Line one\nQ &amp; A" {
+		t.Errorf("legacy html = %q", got)
 	}
 }

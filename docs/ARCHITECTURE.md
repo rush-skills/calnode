@@ -160,6 +160,16 @@ the platform/recovery secret doesn't expose secrets.
 
 ## 6. Auth, sessions, roles
 
+- **Allowed sign-in domains** (`server_settings.allowed_signin_domains`, migration 00069;
+  `internal/handler/signin_domains.go`). Empty (the default) keeps sign-in **invite-only**:
+  `finishOAuthLogin` refuses any email without a users row. With domains listed, an unknown
+  email is auto-provisioned as a plain member (`is_admin=0`, `email_login=0`, name from the
+  provider or the address's local part) **only if** the provider verified the address
+  (Google's `verified_email`; Microsoft's tenant-level domain verification) **and** its
+  domain matches the list exactly. Archived users stay refused. Admin-only
+  `GET/PATCH /v1/settings/signin`; the list is validated and normalised on save and parsed
+  again on read, so a hand-edited row never matches garbage.
+
 - **API keys** (`cno_…`, **SHA-256**-hashed in `api_keys`) and **browser sessions**
   (cookie `calnode_session`, HttpOnly/SameSite=Lax/Secure-when-https, **30-day**,
   stored in `sessions`) both satisfy `RequireAuth` (`internal/handler/auth.go`).
@@ -224,20 +234,23 @@ An event type owns a **host list** (`event_type_hosts`): each row = (user, role,
 priority), role ∈ **required | rotation | optional**. The editor authors these
 roles through **two plain questions** rather than a mode picker — *who can host?*
 (just me / specific people) and, for people, *how are they staffed?* (rotate /
-everyone attends). `routing_mode` is **derived** from the two answers, never set
-directly (`frontend/src/routes/event-types/[slug]/+page.svelte`):
+everyone attends / some always attend). `routing_mode` is **derived** from the two
+answers, never set directly (`frontend/src/routes/event-types/[slug]/+page.svelte`):
 
 | Q1 | Q2 | `routing_mode` | Roles written |
 |---|---|---|---|
 | Just me | — | `fixed` | owner → `required` |
 | Specific people | Rotate | `round_robin` | each → `rotation` (+ `rr_strategy`) |
 | Specific people | Everyone attends | `collective` | each → `required`; per-person **Optional** toggle → `optional` (join-if-free) |
+| Specific people | Some always attend | `round_robin` | rotation list → `rotation` (+ `rr_strategy`); always-attend list → `required`, or `optional` via the same toggle |
 
 Everyone is `required` by default in the "Everyone attends" branch, so the common
 case has no extra knobs; flipping a person to **Optional** is the only refinement.
-The old "fixed host inside a rotation" combo (a `required` host alongside a
-rotation pool) is no longer authorable from the UI — the engine still supports it,
-but no editor path writes it.
+"Some always attend" is the same `round_robin` row with `required`/`optional` hosts
+beside the pool — the editor infers that mode from the host list on load (a
+`round_robin` event with any non-rotation host), since nothing on the row records
+it. Always-attending hosts never count toward `rr_strategy`; only the pool does.
+Switching back to plain "Rotate" saves the rotation alone, dropping the fixed hosts.
 
 **The one rule** — a slot is offered when: all `required` hosts free **AND** (if a
 rotation pool exists) ≥1 rotation host free. At booking time the assignment is: all
@@ -490,6 +503,18 @@ Calnode talks to calendars through a **provider abstraction**, not a single vend
 - **Providers:** `internal/gcal` (Google) and `internal/calendar/microsoft`
   (Microsoft 365 / Outlook via Graph). Both implement `Provider`. One `Service` is
   built at startup (`internal/server`) and each configured backend is `Register`ed.
+- **Event description = `calendarDescription`** (`internal/handler/calendar_description.go`),
+  the one place the text on a host's calendar event is composed: the event type's
+  **`calendar_message`** (admin-authored rich text, stored as **sanitized HTML** via
+  `internal/richtext`, distinct from `description` which is the public booking page's
+  text), then the booker's **answers to the booking questions** (`Label: answer` per
+  line, loaded by `loadAnswerLines`; escaped, never treated as HTML), then the translated
+  `Booking ID: …` line, which stays **last and always present** because the reconciler
+  and support match events on it. It returns a plain
+  form (CalDAV, `.ics`, add-to-calendar links) and an HTML twin (`DescriptionHTML`, used
+  by Google and Microsoft, which render it). The inline create, the reconciler's heal and
+  reassignment all call it. The attendee's `.ics` and deep links carry the message
+  without the ID line (`BookingData.CalendarMessage`). Sanitize runs on save AND on send.
 - **One calendar per user.** On a successful connect the callback calls
   `Service.RetainOnly(userID, provider)`, deleting any prior connection on a
   different provider — so connecting Microsoft replaces a previous Google connection
@@ -625,6 +650,14 @@ as the desired state:
 
 ## 12. Notifications & email
 
+- **Custom notes are rich text.** `event_types.msg_confirmation/_cancellation/_reschedule/
+  _reminder` hold **sanitized HTML** from the admin's rich-text editor (the same TipTap
+  component as the calendar invite message, `frontend/src/lib/components/rich-text-editor`).
+  Templates never read `CustomNote` directly: `BookingData.CustomNoteText` renders the
+  text/plain part, `CustomNoteHTML` the HTML part (typed `template.HTML` only after
+  `richtext.Sanitize`, which runs again on send). Notes written before the editor were
+  plain text and still render: text passes through, HTML gets escaped with its line
+  breaks kept. PATCH sanitizes on save; the cap is 4000 chars of raw submission.
 - `internal/mailer`: two transports behind one `Mailer` interface. The `From` header =
   `{EmailFromName} <{EmailFrom}>` (`smtp.go: buildRaw`). Configurable in Settings → Email
   (`email_from`, `email_from_name`) or env.

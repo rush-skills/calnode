@@ -16,6 +16,7 @@
 	import { toast } from 'svelte-sonner';
 	import { saveOnCmdS } from '$lib/save-shortcut';
 	import QuestionsPanel from '$lib/components/event-types/QuestionsPanel.svelte';
+	import { RichTextEditor, normalizeHtml, htmlToText } from '$lib/components/rich-text-editor';
 	import EmbedPanel from '$lib/components/event-types/EmbedPanel.svelte';
 
 	// Ordered by expected usage. 'custom_video' is retired from the picker but the
@@ -101,10 +102,15 @@
 	type Host = { user_id: string; name: string; email: string };
 	type TogetherHost = Host & { optional: boolean };
 
-	// Q1: just me, or specific people?  Q2 (people only): rotate, or all attend?
+	// Q1: just me, or specific people?  Q2 (people only): rotate, all attend, or
+	// mixed (some always attend while the rest rotate)?
 	let hostScope = $state<'me' | 'people'>('me');
-	let staffing = $state<'rotate' | 'together'>('rotate');
+	let staffing = $state<'rotate' | 'together' | 'mixed'>('rotate');
 	// Rotation pool (each "rotation"); together = required + optional join-if-free.
+	// Mixed uses BOTH lists: rotationHosts is the pool one person is picked from,
+	// togetherHosts are the people who attend every booking (required block a slot
+	// when busy; optional join only if free). The engine already takes the three
+	// roles side by side on a round_robin event — this is only the authoring path.
 	let rotationHosts = $state<Host[]>([]);
 	let togetherHosts = $state<TogetherHost[]>([]);
 	let hostsLoaded = $state(false);
@@ -130,7 +136,7 @@
 
 	// routing_mode is derived from the two answers — never set directly.
 	const routingMode = $derived(
-		hostScope === 'me' ? 'fixed' : staffing === 'rotate' ? 'round_robin' : 'collective'
+		hostScope === 'me' ? 'fixed' : staffing === 'together' ? 'collective' : 'round_robin'
 	);
 
 	async function loadHosts() {
@@ -143,6 +149,10 @@
 			togetherHosts = items
 				.filter((h) => h.role === 'required' || h.role === 'optional')
 				.map((h) => ({ ...toHost(h), optional: h.role === 'optional' }));
+			// A rotation with always-attending people is the mixed mode. Detect it from
+			// the roles so those hosts show up (and survive the next save) instead of
+			// being silently dropped by the rotate-only save path.
+			if (et?.routing_mode === 'round_robin' && togetherHosts.length > 0) staffing = 'mixed';
 			hostsLoaded = true;
 		} catch (e: any) {
 			toast.error(e.message || 'Could not load hosts');
@@ -183,7 +193,12 @@
 	// togetherHosts after switching to Rotate — would wrongly mark everyone
 	// unavailable and make addOne skip every team member.
 	const assignedIds = $derived(
-		new Set((staffing === 'rotate' ? rotationHosts : togetherHosts).map((h) => h.user_id))
+		new Set(
+			(staffing === 'mixed'
+				? [...rotationHosts, ...togetherHosts]
+				: staffing === 'rotate' ? rotationHosts : togetherHosts
+			).map((h) => h.user_id)
+		)
 	);
 	// Any active member not already chosen — including the current user, who can
 	// be a host like anyone else.
@@ -198,6 +213,9 @@
 		// previous mode.
 		const list: { user_id: string }[] = target === 'rotation' ? rotationHosts : togetherHosts;
 		if (list.some((x) => x.user_id === h.user_id)) return;
+		// Mixed shows both lists at once, so a person must not land in both (the API
+		// rejects a duplicate user_id, and "always attends AND rotates" is meaningless).
+		if (staffing === 'mixed' && assignedIds.has(h.user_id)) return;
 		if (target === 'rotation') rotationHosts = [...rotationHosts, h];
 		else togetherHosts = [...togetherHosts, { ...h, optional: false }];
 	}
@@ -246,6 +264,9 @@
 		{ value: 168, label: '1 week before' },
 	];
 	let reminders = $state<number[]>([]);
+	// Rich text (HTML) put on every booking's calendar invite, above the Booking ID
+	// line. Sent as the editor produces it; the server sanitizes on save and on send.
+	let calendar_message = $state('');
 	let msg_confirmation = $state('');
 	let msg_cancellation = $state('');
 	let msg_reschedule = $state('');
@@ -298,10 +319,13 @@
 			priceMajor = ((et.price_cents ?? 0) / 100).toFixed(2);
 			reminders = et.reminders ?? [];
 			if (et.routing_mode === 'round_robin') { hostScope = 'people'; staffing = 'rotate'; }
+			// loadHosts() flips 'rotate' to 'mixed' when the rotation also carries
+			// required/optional hosts — that fact lives in the host list, not the row.
 			else if (et.routing_mode === 'collective') { hostScope = 'people'; staffing = 'together'; }
 			else { hostScope = 'me'; }
 			rrStrategy = (['even', 'priority', 'soonest'].includes(et.rr_strategy ?? '')
 				? et.rr_strategy : 'even') as Strategy;
+			calendar_message = et.calendar_message ?? '';
 			msg_confirmation = et.msg_confirmation ?? '';
 			msg_cancellation = et.msg_cancellation ?? '';
 			msg_reschedule = et.msg_reschedule ?? '';
@@ -328,6 +352,9 @@
 		if (form.max_active_bookings < 0) { toast.error('Max active bookings cannot be negative (0 = unlimited).'); return; }
 		if (routingMode === 'round_robin' && rotationHosts.length === 0) {
 			toast.error('Add at least one person to the rotation'); return;
+		}
+		if (staffing === 'mixed' && togetherHosts.length === 0) {
+			toast.error('Add at least one person who always attends, or switch to "Rotate between them"'); return;
 		}
 		if (routingMode === 'collective' && !togetherHosts.some((h) => !h.optional)) {
 			toast.error('Add at least one required host (someone who always attends)'); return;
@@ -360,10 +387,11 @@
 				// field must send '' to actually clear it. The API treats null as "leave
 				// unchanged" (for partial-PATCH callers), which would silently keep the old
 				// value here — the field would look cleared in the UI but persist server-side.
-				msg_confirmation: msg_confirmation.trim(),
-				msg_cancellation: msg_cancellation.trim(),
-				msg_reschedule: msg_reschedule.trim(),
-				msg_reminder: msg_reminder.trim(),
+				calendar_message: normalizeHtml(calendar_message),
+				msg_confirmation: normalizeHtml(msg_confirmation),
+				msg_cancellation: normalizeHtml(msg_cancellation),
+				msg_reschedule: normalizeHtml(msg_reschedule),
+				msg_reminder: normalizeHtml(msg_reminder),
 				msg_greeting: msg_greeting.trim(),
 				subj_confirmation: subj_confirmation.trim(),
 				subj_cancellation: subj_cancellation.trim(),
@@ -375,8 +403,19 @@
 			const effSlug = updated?.slug || slug;
 
 			if (routingMode === 'round_robin') {
+				// Mixed: the always-attending people ride along with their required/optional
+				// role. Plain rotate sends the rotation only, so switching back to it clears
+				// any fixed hosts on purpose.
+				const fixed = staffing === 'mixed'
+					? togetherHosts.map((hh, i) => ({
+						user_id: hh.user_id, role: hh.optional ? 'optional' : 'required', priority: i,
+					}))
+					: [];
 				await api.put(`/v1/event-types/${effSlug}/hosts`, {
-					hosts: rotationHosts.map((hh, i) => ({ user_id: hh.user_id, role: 'rotation', priority: i })),
+					hosts: [
+						...rotationHosts.map((hh, i) => ({ user_id: hh.user_id, role: 'rotation', priority: i })),
+						...fixed,
+					],
 				});
 			} else if (routingMode === 'collective') {
 				await api.put(`/v1/event-types/${effSlug}/hosts`, {
@@ -425,7 +464,8 @@
 		const name     = et?.name ?? 'My Event';
 		const loc      = et?.location_value ? `\nLocation: ${et.location_value}` : '';
 		const dur      = et?.duration_minutes ?? 30;
-		const noteBlk  = note.trim() ? `\n---\n${note.trim()}\n` : '';
+		const noteText = htmlToText(note);
+		const noteBlk  = noteText ? `\n---\n${noteText}\n` : '';
 		const start    = 'Tomorrow, 2:00 PM UTC';
 		const prev     = 'Today, 2:00 PM UTC';
 		// Compute end time correctly by adding duration to 14:00.
@@ -804,17 +844,23 @@
 							class="rounded-md px-3 py-1.5 text-sm font-medium transition-colors {staffing === 'together' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground'}">
 							Everyone attends
 						</button>
+						<button type="button" onclick={() => (staffing = 'mixed')}
+							class="rounded-md px-3 py-1.5 text-sm font-medium transition-colors {staffing === 'mixed' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground'}">
+							Some always attend
+						</button>
 					</div>
 					<p class="text-xs text-muted-foreground">
 						{#if staffing === 'rotate'}
 							One available person is booked per slot, spreading bookings across the group.
-						{:else}
+						{:else if staffing === 'together'}
 							Everyone joins the same meeting. A slot is offered only when all required people are free.
+						{:else}
+							Some people join every meeting; one more is picked from a rotation each time. Required attendees must be free for a slot to open — optional ones never block it.
 						{/if}
 					</p>
 				</div>
 
-				{#if staffing === 'rotate'}
+				{#if staffing === 'rotate' || staffing === 'mixed'}
 					<div class="mt-4 space-y-3">
 						<div class="space-y-1.5">
 							<Label for="rr-strategy">Who gets picked</Label>
@@ -872,9 +918,10 @@
 						{/if}
 						{@render hostPickers('rotation', 'rr')}
 					</div>
-				{:else}
+				{/if}
+				{#if staffing === 'together' || staffing === 'mixed'}
 					<div class="mt-4 space-y-3">
-						<p class="text-sm font-medium">Who attends</p>
+						<p class="text-sm font-medium">{staffing === 'mixed' ? 'People who always attend' : 'Who attends'}</p>
 						{#if togetherHosts.length > 0}
 							<div class="space-y-2">
 								{#each togetherHosts as h (h.user_id)}
@@ -900,7 +947,9 @@
 								{/each}
 							</div>
 						{:else}
-							<p class="text-xs text-muted-foreground">Add the people who attend this meeting.</p>
+							<p class="text-xs text-muted-foreground">
+								{staffing === 'mixed' ? 'Add the people who join every booking alongside the rotation pick.' : 'Add the people who attend this meeting.'}
+							</p>
 						{/if}
 						<p class="text-xs text-muted-foreground">
 							<span class="font-medium text-foreground">Required</span> hosts always attend and must be free for a slot to open.
@@ -920,6 +969,18 @@
 <div class="mb-8">
 	<h2 class="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Notifications</h2>
 	<div class="rounded-lg border bg-card p-6 space-y-6">
+
+		<!-- Calendar invite message -->
+		<div>
+			<p class="mb-1 text-sm font-medium">Calendar invite message</p>
+			<p class="mb-3 text-xs text-muted-foreground">
+				Shown in the calendar event every attendee and host receives, above the booking reference.
+				Separate from the description on the booking page. Leave empty to send just the booking reference.
+			</p>
+			<RichTextEditor id="et-calendar-message" bind:value={calendar_message} placeholder="Agenda, prep notes, what to bring…" />
+		</div>
+
+		<div class="border-t"></div>
 
 		<!-- Reminders -->
 		<div>
@@ -1016,13 +1077,13 @@
 									{/if}
 								</div>
 								{#if item.key === 'confirmation'}
-									<Textarea bind:value={msg_confirmation} rows={3} placeholder="Add a custom note for attendees…" />
+									<RichTextEditor id="et-msg-confirmation" bind:value={msg_confirmation} placeholder="Add a custom note for attendees…" minHeight="min-h-20" />
 								{:else if item.key === 'cancellation'}
-									<Textarea bind:value={msg_cancellation} rows={3} placeholder="Add a custom note for attendees…" />
+									<RichTextEditor id="et-msg-cancellation" bind:value={msg_cancellation} placeholder="Add a custom note for attendees…" minHeight="min-h-20" />
 								{:else if item.key === 'reschedule'}
-									<Textarea bind:value={msg_reschedule} rows={3} placeholder="Add a custom note for attendees…" />
+									<RichTextEditor id="et-msg-reschedule" bind:value={msg_reschedule} placeholder="Add a custom note for attendees…" minHeight="min-h-20" />
 								{:else if item.key === 'reminder'}
-									<Textarea bind:value={msg_reminder} rows={3} placeholder="Add a custom note for attendees…" />
+									<RichTextEditor id="et-msg-reminder" bind:value={msg_reminder} placeholder="Add a custom note for attendees…" minHeight="min-h-20" />
 								{/if}
 
 								<!-- Preview toggle -->

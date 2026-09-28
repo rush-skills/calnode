@@ -328,3 +328,24 @@ func TestUpdateEvent_emptyEventID_noOp(t *testing.T) {
 		t.Errorf("UpdateEvent(\"\") = %v; want nil", err)
 	}
 }
+
+// A rich calendar message reaches Google as HTML — its event body renders basic tags,
+// so the admin's formatting survives. Without one, the plain text goes as before.
+func TestCreateEvent_prefersHTMLDescriptionWhenGiven(t *testing.T) {
+	srv, gotReq := mockCreateEventServer(t, "ev1", http.StatusOK)
+	c := newTestClient(t)
+	c.apiBase = srv.URL
+	saveDestinationConnection(t, c, "user-1", "primary")
+
+	p := calendar.CreateEventParams{
+		Summary:         "Sync",
+		Description:     "Agenda\n\nBooking ID: xyz",
+		DescriptionHTML: "<p>Agenda</p><p>Booking ID: xyz</p>",
+		Start:           time.Date(2026, 6, 20, 14, 0, 0, 0, time.UTC),
+		End:             time.Date(2026, 6, 20, 15, 0, 0, 0, time.UTC),
+	}
+	c.CreateEvent(context.Background(), "user-1", p) //nolint:errcheck
+	if gotReq.Description != p.DescriptionHTML {
+		t.Errorf("Description = %q; want the HTML %q", gotReq.Description, p.DescriptionHTML)
+	}
+}

@@ -133,3 +133,31 @@ func TestBuildRaw_multipartWithICS(t *testing.T) {
 		t.Error("missing text body part")
 	}
 }
+
+// The invite message rides at the top of the .ics DESCRIPTION and the add-to-calendar
+// links, so the attendee's own calendar entry reads like the host's Google/Outlook one.
+func TestBuildICSAndCalendarLinks_carryTheCalendarMessage(t *testing.T) {
+	d := testBookingData()
+	d.CalendarMessage = "Agenda\n- One"
+	d.ManageURL = "https://calnode.example.com/manage/tok"
+
+	ics := string(BuildICS(d, "REQUEST"))
+	// ICS folds long lines and escapes newlines as \n; the order is what matters.
+	if !strings.Contains(ics, "DESCRIPTION:Agenda\\n- One\\n\\n") {
+		t.Errorf("ICS DESCRIPTION should open with the message:\n%s", ics)
+	}
+	if strings.Index(ics, "Agenda") > strings.Index(ics, "Alice") {
+		t.Errorf("message should precede the host line:\n%s", ics)
+	}
+	for _, u := range []string{d.GoogleCalURL(), d.OutlookCalURL()} {
+		if !strings.Contains(u, "Agenda%0A-+One%0A%0A") {
+			t.Errorf("calendar link should carry the message first: %s", u)
+		}
+	}
+
+	// Without a message, nothing changes.
+	d.CalendarMessage = ""
+	if strings.Contains(string(BuildICS(d, "REQUEST")), "Agenda") || strings.Contains(d.GoogleCalURL(), "Agenda") {
+		t.Error("message leaked with CalendarMessage empty")
+	}
+}

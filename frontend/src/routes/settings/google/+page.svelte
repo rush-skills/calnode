@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, type GoogleSettings } from '$lib/api';
+	import { api, type GoogleSettings, type SigninSettings } from '$lib/api';
+	import { Textarea } from '$lib/components/ui/textarea';
 	import { currentUser } from '$lib/stores';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
@@ -15,6 +16,25 @@
 	let googleSettings = $state<GoogleSettings | null>(null);
 	let clientID = $state('');
 	let clientSecret = $state('');
+
+	// Allowed sign-in domains: one per line or comma-separated in the box; the server
+	// normalises and validates, and echoes the stored list back.
+	const domainsSaving = createAsyncFlag();
+	let domainsText = $state('');
+	let domainsStored = $state<string[]>([]);
+	function domainsFromText(text: string): string[] {
+		return text.split(/[\n,;]+/).map((d) => d.trim()).filter(Boolean);
+	}
+	async function saveDomains() {
+		await domainsSaving.run(async () => {
+			const res = await api.patch<SigninSettings>('/v1/settings/signin', {
+				allowed_signin_domains: domainsFromText(domainsText),
+			});
+			domainsStored = res.allowed_signin_domains;
+			domainsText = res.allowed_signin_domains.join('\n');
+			toast.success(res.allowed_signin_domains.length ? 'Allowed domains saved' : 'Domain sign-in turned off');
+		}, 'Could not save allowed domains');
+	}
 
 	// Host the server builds its OAuth redirect URIs from. Prefer the server's
 	// configured base_url so the displayed URIs match exactly what we send to
@@ -37,6 +57,9 @@
 	onMount(() => loadingFlag.run(async () => {
 		googleSettings = await api.get<GoogleSettings>('/v1/settings/google');
 		clientID = googleSettings.client_id;
+		const signin = await api.get<SigninSettings>('/v1/settings/signin');
+		domainsStored = signin.allowed_signin_domains;
+		domainsText = signin.allowed_signin_domains.join('\n');
 	}, 'Could not load Google settings'));
 
 	async function save() {
@@ -187,6 +210,30 @@
 			<div class="mt-5">
 				<Button onclick={save} disabled={savingFlag.active}>
 					{savingFlag.active ? 'Saving…' : 'Save'}
+				</Button>
+			</div>
+		</div>
+
+		<div class="rounded-lg border bg-card p-6">
+			<div class="mb-4">
+				<h2 class="text-sm font-semibold">Who can sign in</h2>
+				<p class="mt-0.5 text-xs text-muted-foreground">
+					By default only invited people can sign in. List your organisation's email domains and anyone
+					who signs in with a verified Google or Microsoft account under one of them becomes a member
+					automatically, with their own booking links. New members are never admins.
+				</p>
+			</div>
+			<div class="space-y-1.5">
+				<Label for="signin-domains">Allowed sign-in domains</Label>
+				<Textarea id="signin-domains" bind:value={domainsText} rows={3} placeholder="acme.com&#10;acme.co.uk" class="font-mono text-sm" />
+				<p class="text-xs text-muted-foreground">
+					One per line. Exact match on the part after the @ — list each subdomain you use.
+					{#if domainsStored.length === 0}Currently invite-only.{/if}
+				</p>
+			</div>
+			<div class="mt-4">
+				<Button onclick={saveDomains} disabled={domainsSaving.active}>
+					{domainsSaving.active ? 'Saving…' : 'Save domains'}
 				</Button>
 			</div>
 		</div>

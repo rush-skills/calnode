@@ -93,7 +93,7 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 
 	reqBody := calEventReq{
 		Summary:     p.Summary,
-		Description: p.Description,
+		Description: descriptionFor(p),
 		Location:    p.Location,
 		Start:       calEventDateTime{DateTime: p.Start.UTC().Format(time.RFC3339), TimeZone: "UTC"},
 		End:         calEventDateTime{DateTime: p.End.UTC().Format(time.RFC3339), TimeZone: "UTC"},
@@ -230,4 +230,14 @@ func (c *Client) CancelEvent(ctx context.Context, userID, calendarID, eventID st
 		return fmt.Errorf("gcal: cancel event status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// descriptionFor prefers the rich description: Google Calendar renders basic HTML in the
+// event body, so an admin's formatted calendar message arrives formatted. Plain text
+// otherwise, unchanged.
+func descriptionFor(p calendar.CreateEventParams) string {
+	if p.DescriptionHTML != "" {
+		return p.DescriptionHTML
+	}
+	return p.Description
 }

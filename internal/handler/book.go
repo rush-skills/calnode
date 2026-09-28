@@ -126,19 +126,26 @@ func firstRune(s string) string {
 }
 
 // displayHosts resolves the faces to show for an event type's booking page by
-// routing mode: the single required host (Normal), the top-priority rotation host
-// (round-robin — best-effort, the actual pick happens at booking time), or all
-// required hosts (Group). Archived members are excluded.
+// routing mode: the single required host (Normal), the required hosts plus the
+// rotation pool (round-robin — the required ones attend every booking, one of the
+// pool is picked at booking time), or all required hosts (Group). Optional hosts
+// are never shown: they join only if free, so promising a face would mislead.
+// Archived members are excluded.
 func (h *Handler) displayHosts(ctx context.Context, etID, mode string) []hostDisplay {
-	role := "required"
+	// Two role slots; outside round-robin the second repeats the first so the IN
+	// list stays a fixed shape.
+	extraRole := "required"
 	if mode == "round_robin" {
-		role = "rotation"
+		extraRole = "rotation"
 	}
+	// Required first (they are certain), then the rotation pool in priority order —
+	// the same order slots' host_ids come back in, so a slot pick doesn't reshuffle.
 	rows, err := h.db.QueryContext(ctx, `
 		SELECT u.name, COALESCE(u.avatar_url, '')
 		FROM event_type_hosts eth JOIN users u ON u.id = eth.user_id
-		WHERE eth.event_type_id = ? AND eth.role = ? AND u.archived_at IS NULL
-		ORDER BY eth.priority ASC, u.name ASC`, etID, role)
+		WHERE eth.event_type_id = ? AND eth.role IN ('required', ?) AND u.archived_at IS NULL
+		ORDER BY CASE eth.role WHEN 'required' THEN 0 ELSE 1 END, eth.priority ASC, u.name ASC`,
+		etID, extraRole)
 	if err != nil {
 		h.logger.ErrorContext(ctx, "book page: display hosts", "error", err)
 		return nil
