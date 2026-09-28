@@ -90,3 +90,10 @@ func indexOf(s, sub string) int {
 	}
 	return -1
 }
+
+func TestSanitize_trimsEdgeEmptyParagraphsOnly(t *testing.T) {
+	got := Sanitize("<p></p><p></p><p>a</p><p></p><p>b</p><p></p>")
+	if got != "<p>a</p><p></p><p>b</p>" {
+		t.Errorf("got %q", got)
+	}
+}

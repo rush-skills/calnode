@@ -37,6 +37,9 @@ var policy = func() *bluemonday.Policy {
 // "&lt;", never as a tag.
 func Sanitize(input string) string {
 	out := strings.TrimSpace(policy.Sanitize(input))
+	// Editors leave an empty trailing paragraph behind the cursor; drop those at either
+	// end. Empty paragraphs in the middle are deliberate spacing and stay.
+	out = reEdgeEmptyP.ReplaceAllString(out, "")
 	if strings.TrimSpace(ToPlainText(out)) == "" && !strings.Contains(out, "<br") {
 		// Only structural leftovers such as "<p></p>": there is nothing to show.
 		return ""
@@ -45,6 +48,7 @@ func Sanitize(input string) string {
 }
 
 var (
+	reEdgeEmptyP = regexp.MustCompile(`^(\s*<p>\s*</p>)+|(<p>\s*</p>\s*)+$`)
 	reBlockClose = regexp.MustCompile(`(?i)</(p|div|h[1-6]|blockquote|ul|ol|tr)>`)
 	reBlockOpen  = regexp.MustCompile(`(?i)<(p|div|h[1-6]|blockquote|ul|ol|tr)(\s[^>]*)?>`)
 	reBr         = regexp.MustCompile(`(?i)<br\s*/?>`)

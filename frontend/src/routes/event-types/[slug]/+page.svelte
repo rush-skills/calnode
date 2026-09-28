@@ -16,6 +16,7 @@
 	import { toast } from 'svelte-sonner';
 	import { saveOnCmdS } from '$lib/save-shortcut';
 	import QuestionsPanel from '$lib/components/event-types/QuestionsPanel.svelte';
+	import { RichTextEditor, normalizeHtml } from '$lib/components/rich-text-editor';
 	import EmbedPanel from '$lib/components/event-types/EmbedPanel.svelte';
 
 	// Ordered by expected usage. 'custom_video' is retired from the picker but the
@@ -263,6 +264,9 @@
 		{ value: 168, label: '1 week before' },
 	];
 	let reminders = $state<number[]>([]);
+	// Rich text (HTML) put on every booking's calendar invite, above the Booking ID
+	// line. Sent as the editor produces it; the server sanitizes on save and on send.
+	let calendar_message = $state('');
 	let msg_confirmation = $state('');
 	let msg_cancellation = $state('');
 	let msg_reschedule = $state('');
@@ -321,6 +325,7 @@
 			else { hostScope = 'me'; }
 			rrStrategy = (['even', 'priority', 'soonest'].includes(et.rr_strategy ?? '')
 				? et.rr_strategy : 'even') as Strategy;
+			calendar_message = et.calendar_message ?? '';
 			msg_confirmation = et.msg_confirmation ?? '';
 			msg_cancellation = et.msg_cancellation ?? '';
 			msg_reschedule = et.msg_reschedule ?? '';
@@ -382,6 +387,7 @@
 				// field must send '' to actually clear it. The API treats null as "leave
 				// unchanged" (for partial-PATCH callers), which would silently keep the old
 				// value here — the field would look cleared in the UI but persist server-side.
+				calendar_message: normalizeHtml(calendar_message),
 				msg_confirmation: msg_confirmation.trim(),
 				msg_cancellation: msg_cancellation.trim(),
 				msg_reschedule: msg_reschedule.trim(),
@@ -962,6 +968,18 @@
 <div class="mb-8">
 	<h2 class="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Notifications</h2>
 	<div class="rounded-lg border bg-card p-6 space-y-6">
+
+		<!-- Calendar invite message -->
+		<div>
+			<p class="mb-1 text-sm font-medium">Calendar invite message</p>
+			<p class="mb-3 text-xs text-muted-foreground">
+				Shown in the calendar event every attendee and host receives, above the booking reference.
+				Separate from the description on the booking page. Leave empty to send just the booking reference.
+			</p>
+			<RichTextEditor id="et-calendar-message" bind:value={calendar_message} placeholder="Agenda, prep notes, what to bring…" />
+		</div>
+
+		<div class="border-t"></div>
 
 		<!-- Reminders -->
 		<div>
