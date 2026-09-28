@@ -31,7 +31,11 @@ type BookingData struct {
 	ManageURL          string // manage link (reschedule/cancel), set at booking creation
 	BaseURL            string
 	CustomNote         string // optional host-configured note appended to the email body
-	SubjectOverride    string // optional per-event-type custom subject; falls back to the default when empty
+	// CalendarMessage is the event type's invite message as plain text, put at the top
+	// of the .ics DESCRIPTION and the "add to calendar" links so the attendee's own
+	// calendar entry carries the same agenda a Google/Outlook invite would. Empty = none.
+	CalendarMessage string
+	SubjectOverride string // optional per-event-type custom subject; falls back to the default when empty
 	// AttachICS attaches an iCalendar invite to the attendee's email — set by the
 	// handler only when the host has no Google destination calendar (so Google
 	// isn't already inviting the attendee, which would duplicate). ICSSequence must
@@ -166,6 +170,9 @@ func inTZ(t time.Time, tz string, l *i18n.Locale) string {
 // calDetails is the shared "add to calendar" description for the link builders.
 func (d BookingData) calDetails() string {
 	s := d.Tf("email_booking_with", d.HostName)
+	if d.CalendarMessage != "" {
+		s = d.CalendarMessage + "\n\n" + s
+	}
 	if d.ManageURL != "" {
 		s += "\n" + d.T("email_manage_this_booking") + " " + d.ManageURL
 	}

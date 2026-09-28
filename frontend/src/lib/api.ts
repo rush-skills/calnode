@@ -51,6 +51,8 @@ export type EventType = {
 	subj_cancellation?: string;
 	subj_reschedule?: string;
 	subj_reminder?: string;
+	/** Sanitized HTML placed on every booking's calendar invite above the Booking ID line. */
+	calendar_message?: string | null;
 	msg_confirmation?: string;
 	msg_cancellation?: string;
 	msg_reschedule?: string;

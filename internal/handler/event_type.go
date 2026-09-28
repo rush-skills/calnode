@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/calnode/calnode/internal/db"
+	"github.com/calnode/calnode/internal/richtext"
 	"github.com/calnode/calnode/internal/uid"
 )
 
@@ -39,9 +40,13 @@ type eventTypeJSON struct {
 	// ShowTakenSlots renders already-booked times greyed out on the booking page
 	// instead of omitting them. Off by default: the slots endpoint is public, so this
 	// makes the host's booked hours legible to anyone with the link (#19).
-	ShowTakenSlots  bool    `json:"show_taken_slots"`
-	IsPublic        bool    `json:"is_public"`
-	CreatedAt       string  `json:"created_at"`
+	ShowTakenSlots bool   `json:"show_taken_slots"`
+	IsPublic       bool   `json:"is_public"`
+	CreatedAt      string `json:"created_at"`
+	// CalendarMessage is sanitized HTML placed on every booking's calendar invite
+	// (above the Booking ID line) — distinct from Description, which is the public
+	// booking page's text. nil/empty = the invite carries only the Booking ID.
+	CalendarMessage *string `json:"calendar_message"`
 	MsgConfirmation *string `json:"msg_confirmation"`
 	MsgCancellation *string `json:"msg_cancellation"`
 	MsgReschedule   *string `json:"msg_reschedule"`
@@ -82,7 +87,7 @@ func scanEventType(s rowScanner) (*eventTypeJSON, error) {
 func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 	var et eventTypeJSON
 	var desc, locVal, msgConf, msgCancel, msgResched, msgRemind, msgGreeting sql.NullString
-	var subjConf, subjCancel, subjResched, subjRemind sql.NullString
+	var subjConf, subjCancel, subjResched, subjRemind, calMsg sql.NullString
 	var isActive, isPublic, showTaken int
 
 	dests := []any{
@@ -95,7 +100,7 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 		&isActive, &isPublic, &showTaken, &et.CreatedAt,
 		&msgConf, &msgCancel, &msgResched, &msgRemind, &msgGreeting,
 		&subjConf, &subjCancel, &subjResched, &subjRemind,
-		&et.PriceCents, &et.Currency,
+		&et.PriceCents, &et.Currency, &calMsg,
 	}
 	dests = append(dests, trailing...)
 	err := s.Scan(dests...)
@@ -114,6 +119,9 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 	et.IsActive = isActive != 0
 	et.IsPublic = isPublic != 0
 	et.ShowTakenSlots = showTaken != 0
+	if calMsg.Valid && calMsg.String != "" {
+		et.CalendarMessage = &calMsg.String
+	}
 	if msgConf.Valid {
 		et.MsgConfirmation = &msgConf.String
 	}
@@ -154,7 +162,7 @@ const etColumns = `id, slug, name, description,
 	is_active, is_public, show_taken_slots, created_at,
 	msg_confirmation, msg_cancellation, msg_reschedule, msg_reminder, msg_greeting,
 	subj_confirmation, subj_cancellation, subj_reschedule, subj_reminder,
-	price_cents, currency`
+	price_cents, currency, calendar_message`
 
 // selectETCols fetches a single owner-scoped event type (no `owned` column).
 const selectETCols = "SELECT " + etColumns + " FROM event_types"
@@ -458,6 +466,7 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 		SubjCancellation    *string `json:"subj_cancellation"`
 		SubjReschedule      *string `json:"subj_reschedule"`
 		SubjReminder        *string `json:"subj_reminder"`
+		CalendarMessage     *string `json:"calendar_message"`
 		PriceCents          *int    `json:"price_cents"`
 		Currency            *string `json:"currency"`
 		Reminders           []int   `json:"reminders"` // nil = don't touch; [] = clear all
@@ -613,6 +622,17 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	const maxMsgLen = 2000
+	if req.CalendarMessage != nil {
+		// Sanitized on the way in (and again on send — see richtext): the stored value
+		// is the allowlisted HTML, so a later GET round-trips exactly what will be sent.
+		// The length cap applies to the raw submission, so it cannot be dodged by
+		// padding with markup that the sanitizer strips.
+		if len(*req.CalendarMessage) > maxCalendarMessageLen {
+			h.writeError(w, http.StatusBadRequest, "calendar_message exceeds 10000 characters")
+			return
+		}
+		set("calendar_message", nullableString(richtext.Sanitize(*req.CalendarMessage)))
+	}
 	if req.MsgConfirmation != nil {
 		if len(*req.MsgConfirmation) > maxMsgLen {
 			h.writeError(w, http.StatusBadRequest, "msg_confirmation exceeds 2000 characters")
@@ -807,6 +827,11 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 
 // nullableString converts an empty string to nil (NULL in SQLite) so clearing a
 // custom note stores NULL rather than an empty string.
+// maxCalendarMessageLen bounds the raw calendar_message submission. Larger than the
+// email notes' 2000 because markup counts and the invite body is a natural home for an
+// agenda, but still small enough that Google's description limit is never in play.
+const maxCalendarMessageLen = 10000
+
 func nullableString(s string) any {
 	if s == "" {
 		return nil

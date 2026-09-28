@@ -367,7 +367,7 @@ func TestListCalendars_followsNextLink(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Query().Get("$skiptoken") == "" {
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"value":          []map[string]any{graphCalendars[0]},
+				"value":           []map[string]any{graphCalendars[0]},
 				"@odata.nextLink": srv.URL + "/me/calendars?$skiptoken=page2",
 			})
 			return
@@ -438,5 +438,51 @@ func TestSaveToken_refreshPreservesKind(t *testing.T) {
 	}
 	if kind != "personal" {
 		t.Errorf("account_kind=%q after refresh; want personal (preserved)", kind)
+	}
+}
+
+// Graph takes an HTML body when a rich calendar message is present, text otherwise.
+func TestCreateEvent_bodyContentTypeFollowsDescription(t *testing.T) {
+	for _, tc := range []struct {
+		name, plain, rich, wantType, wantContent string
+		wantBody                                 bool
+	}{
+		{"html", "Agenda\n\nBooking ID: x", "<p>Agenda</p>", "html", "<p>Agenda</p>", true},
+		{"text", "Booking ID: x", "", "text", "Booking ID: x", true},
+		{"none", "", "", "", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestClient(t)
+			connect(t, c, "u1")
+			var got struct {
+				Body *struct {
+					ContentType string `json:"contentType"`
+					Content     string `json:"content"`
+				} `json:"body"`
+			}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewDecoder(r.Body).Decode(&got)
+				w.WriteHeader(http.StatusCreated)
+				_, _ = w.Write([]byte(`{"id":"evt-1"}`))
+			}))
+			defer srv.Close()
+			c.apiBase = srv.URL
+			start := time.Date(2026, 6, 22, 21, 0, 0, 0, time.UTC)
+			if _, _, _, err := c.CreateEvent(context.Background(), "u1", calendar.CreateEventParams{
+				Summary: "Intro", Start: start, End: start.Add(30 * time.Minute),
+				Description: tc.plain, DescriptionHTML: tc.rich,
+			}); err != nil {
+				t.Fatalf("CreateEvent: %v", err)
+			}
+			if !tc.wantBody {
+				if got.Body != nil {
+					t.Errorf("body = %+v; want none", got.Body)
+				}
+				return
+			}
+			if got.Body == nil || got.Body.ContentType != tc.wantType || got.Body.Content != tc.wantContent {
+				t.Errorf("body = %+v; want %s %q", got.Body, tc.wantType, tc.wantContent)
+			}
+		})
 	}
 }

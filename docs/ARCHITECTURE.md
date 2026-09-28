@@ -493,6 +493,16 @@ Calnode talks to calendars through a **provider abstraction**, not a single vend
 - **Providers:** `internal/gcal` (Google) and `internal/calendar/microsoft`
   (Microsoft 365 / Outlook via Graph). Both implement `Provider`. One `Service` is
   built at startup (`internal/server`) and each configured backend is `Register`ed.
+- **Event description = `calendarDescription`** (`internal/handler/calendar_description.go`),
+  the one place the text on a host's calendar event is composed: the event type's
+  **`calendar_message`** (admin-authored rich text, stored as **sanitized HTML** via
+  `internal/richtext`, distinct from `description` which is the public booking page's
+  text) followed by the translated `Booking ID: …` line, which stays **last and always
+  present** because the reconciler and support match events on it. It returns a plain
+  form (CalDAV, `.ics`, add-to-calendar links) and an HTML twin (`DescriptionHTML`, used
+  by Google and Microsoft, which render it). The inline create, the reconciler's heal and
+  reassignment all call it. The attendee's `.ics` and deep links carry the message
+  without the ID line (`BookingData.CalendarMessage`). Sanitize runs on save AND on send.
 - **One calendar per user.** On a successful connect the callback calls
   `Service.RetainOnly(userID, provider)`, deleting any prior connection on a
   different provider — so connecting Microsoft replaces a previous Google connection
