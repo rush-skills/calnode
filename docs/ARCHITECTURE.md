@@ -160,6 +160,16 @@ the platform/recovery secret doesn't expose secrets.
 
 ## 6. Auth, sessions, roles
 
+- **Allowed sign-in domains** (`server_settings.allowed_signin_domains`, migration 00069;
+  `internal/handler/signin_domains.go`). Empty (the default) keeps sign-in **invite-only**:
+  `finishOAuthLogin` refuses any email without a users row. With domains listed, an unknown
+  email is auto-provisioned as a plain member (`is_admin=0`, `email_login=0`, name from the
+  provider or the address's local part) **only if** the provider verified the address
+  (Google's `verified_email`; Microsoft's tenant-level domain verification) **and** its
+  domain matches the list exactly. Archived users stay refused. Admin-only
+  `GET/PATCH /v1/settings/signin`; the list is validated and normalised on save and parsed
+  again on read, so a hand-edited row never matches garbage.
+
 - **API keys** (`cno_…`, **SHA-256**-hashed in `api_keys`) and **browser sessions**
   (cookie `calnode_session`, HttpOnly/SameSite=Lax/Secure-when-https, **30-day**,
   stored in `sessions`) both satisfy `RequireAuth` (`internal/handler/auth.go`).

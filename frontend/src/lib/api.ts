@@ -193,6 +193,11 @@ export type GoogleSettings = {
 	base_url: string;
 };
 
+export type SigninSettings = {
+	/** Email domains whose Google/Microsoft sign-ins create a member on first login. */
+	allowed_signin_domains: string[];
+};
+
 export type ZoomSettings = {
 	client_id: string;
 	client_secret_set: boolean;

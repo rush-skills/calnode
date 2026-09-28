@@ -87,8 +87,10 @@ func (h *Handler) CallbackGoogle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Only existing users can log in — no self-registration.
-	h.finishOAuthLogin(w, r, info.Email)
+	// Known emails sign in; an unknown one only via an allowed sign-in domain, and
+	// only when Google says the address is verified — an unverified Google account
+	// can claim any address, so it must never mint a member for it.
+	h.finishOAuthLogin(w, r, info.Email, info.Name, info.VerifiedEmail)
 }
 
 // Logout deletes the session record and clears the session cookie.
