@@ -638,6 +638,14 @@ as the desired state:
 
 ## 12. Notifications & email
 
+- **Custom notes are rich text.** `event_types.msg_confirmation/_cancellation/_reschedule/
+  _reminder` hold **sanitized HTML** from the admin's rich-text editor (the same TipTap
+  component as the calendar invite message, `frontend/src/lib/components/rich-text-editor`).
+  Templates never read `CustomNote` directly: `BookingData.CustomNoteText` renders the
+  text/plain part, `CustomNoteHTML` the HTML part (typed `template.HTML` only after
+  `richtext.Sanitize`, which runs again on send). Notes written before the editor were
+  plain text and still render: text passes through, HTML gets escaped with its line
+  breaks kept. PATCH sanitizes on save; the cap is 4000 chars of raw submission.
 - `internal/mailer`: two transports behind one `Mailer` interface. The `From` header =
   `{EmailFromName} <{EmailFrom}>` (`smtp.go: buildRaw`). Configurable in Settings → Email
   (`email_from`, `email_from_name`) or env.

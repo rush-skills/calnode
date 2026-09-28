@@ -622,6 +622,9 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	const maxMsgLen = 2000
+	// Email notes are rich text (sanitized HTML) since the editor moved to a rich
+	// editor; markup counts toward the cap, so it is roomier than the plain fields'.
+	const maxNoteLen = 4000
 	if req.CalendarMessage != nil {
 		// Sanitized on the way in (and again on send — see richtext): the stored value
 		// is the allowlisted HTML, so a later GET round-trips exactly what will be sent.
@@ -634,32 +637,32 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 		set("calendar_message", nullableString(richtext.Sanitize(*req.CalendarMessage)))
 	}
 	if req.MsgConfirmation != nil {
-		if len(*req.MsgConfirmation) > maxMsgLen {
-			h.writeError(w, http.StatusBadRequest, "msg_confirmation exceeds 2000 characters")
+		if len(*req.MsgConfirmation) > maxNoteLen {
+			h.writeError(w, http.StatusBadRequest, "msg_confirmation exceeds 4000 characters")
 			return
 		}
-		set("msg_confirmation", nullableString(*req.MsgConfirmation))
+		set("msg_confirmation", nullableString(richtext.Sanitize(*req.MsgConfirmation)))
 	}
 	if req.MsgCancellation != nil {
-		if len(*req.MsgCancellation) > maxMsgLen {
-			h.writeError(w, http.StatusBadRequest, "msg_cancellation exceeds 2000 characters")
+		if len(*req.MsgCancellation) > maxNoteLen {
+			h.writeError(w, http.StatusBadRequest, "msg_cancellation exceeds 4000 characters")
 			return
 		}
-		set("msg_cancellation", nullableString(*req.MsgCancellation))
+		set("msg_cancellation", nullableString(richtext.Sanitize(*req.MsgCancellation)))
 	}
 	if req.MsgReschedule != nil {
-		if len(*req.MsgReschedule) > maxMsgLen {
-			h.writeError(w, http.StatusBadRequest, "msg_reschedule exceeds 2000 characters")
+		if len(*req.MsgReschedule) > maxNoteLen {
+			h.writeError(w, http.StatusBadRequest, "msg_reschedule exceeds 4000 characters")
 			return
 		}
-		set("msg_reschedule", nullableString(*req.MsgReschedule))
+		set("msg_reschedule", nullableString(richtext.Sanitize(*req.MsgReschedule)))
 	}
 	if req.MsgReminder != nil {
-		if len(*req.MsgReminder) > maxMsgLen {
-			h.writeError(w, http.StatusBadRequest, "msg_reminder exceeds 2000 characters")
+		if len(*req.MsgReminder) > maxNoteLen {
+			h.writeError(w, http.StatusBadRequest, "msg_reminder exceeds 4000 characters")
 			return
 		}
-		set("msg_reminder", nullableString(*req.MsgReminder))
+		set("msg_reminder", nullableString(richtext.Sanitize(*req.MsgReminder)))
 	}
 	if req.MsgGreeting != nil {
 		if len(*req.MsgGreeting) > maxMsgLen {

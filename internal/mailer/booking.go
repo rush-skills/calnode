@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	htmltemplate "html/template"
 	"net/url"
 	"strconv"
 	"text/template"
 	"time"
 
 	"github.com/calnode/calnode/internal/i18n"
+	"github.com/calnode/calnode/internal/richtext"
 )
 
 // BookingData carries all the information needed to render booking emails.
@@ -30,7 +32,11 @@ type BookingData struct {
 	CancellationReason string
 	ManageURL          string // manage link (reschedule/cancel), set at booking creation
 	BaseURL            string
-	CustomNote         string // optional host-configured note appended to the email body
+	// CustomNote is the host-configured note appended to the email body: rich text
+	// stored as sanitized HTML by the event type editor, or plain text from before
+	// that existed. Templates never read it directly — CustomNoteText renders it for
+	// the text part and CustomNoteHTML for the HTML part, sanitizing again on send.
+	CustomNote string
 	// CalendarMessage is the event type's invite message as plain text, put at the top
 	// of the .ics DESCRIPTION and the "add to calendar" links so the attendee's own
 	// calendar entry carries the same agenda a Google/Outlook invite would. Empty = none.
@@ -63,6 +69,21 @@ type BookingData struct {
 	// attendee-facing only, same "public-facing" scope as book.html/manage.html/embed.js;
 	// host is the operator, out of scope (see internal-docs/i18n-plan.md).
 	Locale *i18n.Locale
+}
+
+// CustomNoteText is the note as readable plain text for the text/plain part:
+// paragraphs and list items on their own lines, links with their target, entities
+// decoded. A legacy plain-text note passes through unchanged.
+func (d BookingData) CustomNoteText() string {
+	return richtext.ToPlainText(richtext.Sanitize(d.CustomNote))
+}
+
+// CustomNoteHTML is the note as allowlisted HTML for the HTML part. It is typed
+// template.HTML only AFTER richtext.Sanitize, which is the one thing that makes it
+// safe to bypass html/template's escaping. A legacy plain-text note comes back
+// escaped, with its newlines intact (the note block renders white-space:pre-line).
+func (d BookingData) CustomNoteHTML() htmltemplate.HTML {
+	return htmltemplate.HTML(richtext.Sanitize(d.CustomNote)) // #nosec G203 -- sanitized by the richtext allowlist on the line above
 }
 
 // locale returns d.Locale, or English if unset.
@@ -448,7 +469,7 @@ var confirmOrgTmpl = template.Must(template.New("confirm-org").Parse(
 {{.BaseURL}}/book/{{.EventTypeSlug}}
 {{end}}{{if .CustomNote}}
 ---
-{{.CustomNote}}
+{{.CustomNoteText}}
 {{end}}
 — {{.Brand}}
 `))
@@ -484,7 +505,7 @@ var cancelOrgTmpl = template.Must(template.New("cancel-org").Parse(
 {{.BaseURL}}/book/{{.EventTypeSlug}}
 {{if .CustomNote}}
 ---
-{{.CustomNote}}
+{{.CustomNoteText}}
 {{end}}
 — {{.Brand}}
 `))
@@ -527,7 +548,7 @@ var rescheduleOrgTmpl = template.Must(template.New("reschedule-org").Parse(
 {{.ManageURL}}
 {{end}}{{if .CustomNote}}
 ---
-{{.CustomNote}}
+{{.CustomNoteText}}
 {{end}}
 — {{.Brand}}
 `))
@@ -570,7 +591,7 @@ var reminderOrgTmpl = template.Must(template.New("reminder-org").Parse(
 {{.ManageURL}}
 {{end}}{{if .CustomNote}}
 ---
-{{.CustomNote}}
+{{.CustomNoteText}}
 {{end}}
 — {{.Brand}}
 `))

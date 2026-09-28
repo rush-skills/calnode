@@ -152,3 +152,22 @@ func TestReassignBooking_newHostEventCarriesTheMessage(t *testing.T) {
 		t.Fatal("no event created for the new host")
 	}
 }
+
+// Email notes are rich text now: saved sanitized, with a roomier cap for markup.
+func TestPatchEventType_emailNotes_sanitizedAndCapped(t *testing.T) {
+	h, apiKey, _ := setupWorkspace(t)
+	slug, _ := seedEventTypeHTTP(t, h, apiKey)
+	for _, f := range []string{"msg_confirmation", "msg_cancellation", "msg_reschedule", "msg_reminder"} {
+		code, out := patchET(t, h, apiKey, slug, fmt.Sprintf(`{%q:"<p>See <em>you</em></p><img src=x onerror=alert(1)>"}`, f))
+		if code != http.StatusOK || out[f] != "<p>See <em>you</em></p>" {
+			t.Errorf("%s: code=%d value=%v; want sanitized <p>See <em>you</em></p>", f, code, out[f])
+		}
+		code, out = patchET(t, h, apiKey, slug, fmt.Sprintf(`{%q:%q}`, f, strings.Repeat("x", 4001)))
+		if code != http.StatusBadRequest || !strings.Contains(fmt.Sprint(out["error"]), f) {
+			t.Errorf("%s over cap: code=%d out=%v; want 400 naming the field", f, code, out)
+		}
+		if code, _ := patchET(t, h, apiKey, slug, fmt.Sprintf(`{%q:%q}`, f, strings.Repeat("x", 4000))); code != http.StatusOK {
+			t.Errorf("%s at cap: code=%d; want 200", f, code)
+		}
+	}
+}

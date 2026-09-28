@@ -16,7 +16,7 @@
 	import { toast } from 'svelte-sonner';
 	import { saveOnCmdS } from '$lib/save-shortcut';
 	import QuestionsPanel from '$lib/components/event-types/QuestionsPanel.svelte';
-	import { RichTextEditor, normalizeHtml } from '$lib/components/rich-text-editor';
+	import { RichTextEditor, normalizeHtml, htmlToText } from '$lib/components/rich-text-editor';
 	import EmbedPanel from '$lib/components/event-types/EmbedPanel.svelte';
 
 	// Ordered by expected usage. 'custom_video' is retired from the picker but the
@@ -388,10 +388,10 @@
 				// unchanged" (for partial-PATCH callers), which would silently keep the old
 				// value here — the field would look cleared in the UI but persist server-side.
 				calendar_message: normalizeHtml(calendar_message),
-				msg_confirmation: msg_confirmation.trim(),
-				msg_cancellation: msg_cancellation.trim(),
-				msg_reschedule: msg_reschedule.trim(),
-				msg_reminder: msg_reminder.trim(),
+				msg_confirmation: normalizeHtml(msg_confirmation),
+				msg_cancellation: normalizeHtml(msg_cancellation),
+				msg_reschedule: normalizeHtml(msg_reschedule),
+				msg_reminder: normalizeHtml(msg_reminder),
 				msg_greeting: msg_greeting.trim(),
 				subj_confirmation: subj_confirmation.trim(),
 				subj_cancellation: subj_cancellation.trim(),
@@ -464,7 +464,8 @@
 		const name     = et?.name ?? 'My Event';
 		const loc      = et?.location_value ? `\nLocation: ${et.location_value}` : '';
 		const dur      = et?.duration_minutes ?? 30;
-		const noteBlk  = note.trim() ? `\n---\n${note.trim()}\n` : '';
+		const noteText = htmlToText(note);
+		const noteBlk  = noteText ? `\n---\n${noteText}\n` : '';
 		const start    = 'Tomorrow, 2:00 PM UTC';
 		const prev     = 'Today, 2:00 PM UTC';
 		// Compute end time correctly by adding duration to 14:00.
@@ -1076,13 +1077,13 @@
 									{/if}
 								</div>
 								{#if item.key === 'confirmation'}
-									<Textarea bind:value={msg_confirmation} rows={3} placeholder="Add a custom note for attendees…" />
+									<RichTextEditor id="et-msg-confirmation" bind:value={msg_confirmation} placeholder="Add a custom note for attendees…" minHeight="min-h-20" />
 								{:else if item.key === 'cancellation'}
-									<Textarea bind:value={msg_cancellation} rows={3} placeholder="Add a custom note for attendees…" />
+									<RichTextEditor id="et-msg-cancellation" bind:value={msg_cancellation} placeholder="Add a custom note for attendees…" minHeight="min-h-20" />
 								{:else if item.key === 'reschedule'}
-									<Textarea bind:value={msg_reschedule} rows={3} placeholder="Add a custom note for attendees…" />
+									<RichTextEditor id="et-msg-reschedule" bind:value={msg_reschedule} placeholder="Add a custom note for attendees…" minHeight="min-h-20" />
 								{:else if item.key === 'reminder'}
-									<Textarea bind:value={msg_reminder} rows={3} placeholder="Add a custom note for attendees…" />
+									<RichTextEditor id="et-msg-reminder" bind:value={msg_reminder} placeholder="Add a custom note for attendees…" minHeight="min-h-20" />
 								{/if}
 
 								<!-- Preview toggle -->
