@@ -58,7 +58,7 @@ func (h *Handler) directoryItems(ctx context.Context, loc *i18n.Locale, where st
 	rows, err := h.db.QueryContext(ctx, `
 		SELECT slug, name, duration_minutes, location_type, COALESCE(location_value,''),
 		       price_cents, currency
-		FROM event_types et WHERE `+where+` ORDER BY name`, args...)
+		FROM event_types et WHERE `+where+` ORDER BY name`, args...) // #nosec G202 -- where is one of two literals at the call sites; every value is bound via args...
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +191,7 @@ func (h *Handler) TeamPage(w http.ResponseWriter, r *http.Request) {
 		}
 		members = append(members, m)
 	}
-	mRows.Close()
+	mRows.Close() // #nosec G104 -- rows already fully consumed above; nothing actionable on close error
 	if err := mRows.Err(); err != nil {
 		h.logger.ErrorContext(r.Context(), "team page: members rows", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
