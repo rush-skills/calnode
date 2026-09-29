@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/calnode/calnode/internal/calendar"
 	"github.com/calnode/calnode/internal/gcal"
@@ -48,11 +49,11 @@ func (h *Handler) GetGoogleSettings(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.requireAdmin(w, r); !ok {
 		return
 	}
-	var clientID, secretEnc string
+	var clientID, secretEnc, autoJoinRaw string
 	err := h.db.QueryRowContext(r.Context(), `
-		SELECT google_client_id, google_client_secret_enc
+		SELECT google_client_id, google_client_secret_enc, google_auto_join_domains
 		FROM server_settings WHERE id = 1`).
-		Scan(&clientID, &secretEnc)
+		Scan(&clientID, &secretEnc, &autoJoinRaw)
 	if err != nil && err != sql.ErrNoRows {
 		h.logger.ErrorContext(r.Context(), "google settings: query", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
@@ -62,6 +63,8 @@ func (h *Handler) GetGoogleSettings(w http.ResponseWriter, r *http.Request) {
 		"client_id":         clientID,
 		"client_secret_set": secretEnc != "",
 		"configured":        clientID != "",
+		// Workspace domains whose members may sign in without an invite; [] = off.
+		"auto_join_domains": autoJoinDomainsJSON(autoJoinRaw),
 		// base_url is the identity host the server builds OAuth redirect URIs
 		// from (see PatchGoogleSettings); the setup UI renders the exact URIs to
 		// register in Google Cloud so they always match what we send.
@@ -85,10 +88,28 @@ func (h *Handler) PatchGoogleSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ClientID     string `json:"client_id"`
 		ClientSecret string `json:"client_secret"`
+		// Pointer so "omitted" (keep the stored list) differs from [] (turn auto-join off).
+		AutoJoinDomains *[]string `json:"auto_join_domains"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
+	}
+
+	// Validate before writing anything so a bad domain list leaves credentials untouched.
+	if req.AutoJoinDomains != nil {
+		domains, err := normalizeAutoJoinDomains(*req.AutoJoinDomains)
+		if err != nil {
+			h.writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if _, err := h.db.ExecContext(r.Context(), `
+			UPDATE server_settings SET google_auto_join_domains = ?, updated_at = datetime('now')
+			WHERE id = 1`, strings.Join(domains, ",")); err != nil {
+			h.logger.ErrorContext(r.Context(), "google settings: update auto-join domains", "error", err)
+			h.writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
 	}
 
 	if req.ClientID == "" {
@@ -178,4 +199,13 @@ func (h *Handler) PatchGoogleSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.GetGoogleSettings(w, r)
+}
+
+// autoJoinDomainsJSON renders the stored list as a JSON array, never null, so the
+// settings page can bind to it without a nil check.
+func autoJoinDomainsJSON(raw string) []string {
+	if d := parseAutoJoinDomains(raw); d != nil {
+		return d
+	}
+	return []string{}
 }

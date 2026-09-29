@@ -11,6 +11,14 @@ exact tag (`ghcr.io/calnode/calnode:0.1.0`) if you need stability between upgrad
 
 ## [Unreleased]
 
+### Added
+- **Google Workspace auto-join.** Settings → Google OAuth has an "Auto-join domains" list.
+  A Google sign-in from a Workspace account on a listed domain creates a regular member
+  on first login instead of failing with "no account", so a team no longer has to invite
+  every colleague by hand. The check uses the hosted-domain claim Google verified for the
+  account, not the email text, so a personal Gmail address can't qualify. Off by default;
+  Microsoft sign-in is unchanged.
+
 ### Security
 - **Moving or cancelling a CalDAV booking no longer sends another account's app password
   to the server holding the event.** A host can connect several CalDAV accounts, and

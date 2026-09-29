@@ -15,6 +15,8 @@
 	let googleSettings = $state<GoogleSettings | null>(null);
 	let clientID = $state('');
 	let clientSecret = $state('');
+	// Comma-separated in the box; the server normalises and validates the list.
+	let autoJoinDomains = $state('');
 
 	// Host the server builds its OAuth redirect URIs from. Prefer the server's
 	// configured base_url so the displayed URIs match exactly what we send to
@@ -37,14 +39,17 @@
 	onMount(() => loadingFlag.run(async () => {
 		googleSettings = await api.get<GoogleSettings>('/v1/settings/google');
 		clientID = googleSettings.client_id;
+		autoJoinDomains = (googleSettings.auto_join_domains ?? []).join(', ');
 	}, 'Could not load Google settings'));
 
 	async function save() {
 		await savingFlag.run(async () => {
 			const body: Record<string, unknown> = { client_id: clientID };
 			if (clientSecret) body.client_secret = clientSecret;
+			body.auto_join_domains = autoJoinDomains.split(',').map((d) => d.trim()).filter(Boolean);
 			googleSettings = await api.patch<GoogleSettings>('/v1/settings/google', body);
 			clientSecret = '';
+			autoJoinDomains = (googleSettings.auto_join_domains ?? []).join(', ');
 			toast.success('Saved — go to Calendar to connect your account');
 		}, 'Could not save Google settings');
 	}
@@ -181,6 +186,20 @@
 							<code class="rounded bg-muted px-1">http://localhost:3000/…</code> variants too.
 						</p>
 					{/if}
+				</div>
+			{/if}
+
+			{#if googleSettings?.configured}
+				<div class="mt-5 border-t pt-4">
+					<Label for="g-auto-join">Auto-join domains</Label>
+					<Input id="g-auto-join" type="text" class="mt-1.5" placeholder="example.com, example.org"
+						bind:value={autoJoinDomains} />
+					<p class="mt-1.5 text-xs text-muted-foreground">
+						Anyone signing in with a Google Workspace account on one of these domains gets a member
+						account on their first sign-in, with no invite. Checked against the domain Google
+						verified for the account, not the email text, so a personal Gmail address can't match.
+						Leave empty to keep sign-in invite-only.
+					</p>
 				</div>
 			{/if}
 

@@ -28,7 +28,7 @@
 		denied: 'You denied access. Sign in is required to use the admin.',
 		oauth: 'OAuth error. Please try again.',
 		userinfo: 'Could not fetch your profile. Please try again.',
-		no_account: 'No Calnode account found for your email. Contact your admin.',
+		no_account: 'No Calnode account found for your email. Ask your admin for an invite, or to allow your Google Workspace domain to join automatically.',
 		archived: 'Your account has been archived. If you think this is an error, please contact your workspace admin.',
 		session: 'Could not create a session. Please try again.',
 		link: 'This login link is invalid or has expired. Request a new one below.'

@@ -189,6 +189,8 @@ export type GoogleSettings = {
 	configured: boolean;
 	/** Identity host the server builds OAuth redirect URIs from. */
 	base_url: string;
+	/** Google Workspace domains whose members may sign in without an invite; [] = off. */
+	auto_join_domains: string[];
 };
 
 export type ZoomSettings = {

@@ -171,7 +171,13 @@ the platform/recovery secret doesn't expose secrets.
   (Google `openid email profile`; Microsoft `openid email profile User.Read` — calendar
   access is a *separate* connection with its own scopes), share helpers in
   `auth_oauth.go` (`newOAuthState`/`verifyOAuthState`/`finishOAuthLogin`), map a user
-  **by email**, and **cannot create users** (unknown email → `no_account`). Microsoft
+  **by email**, and **cannot create users** (unknown email → `no_account`) — with one
+  admin-opted exception: **Google auto-join** (`google_auto_join.go`, migration 00068).
+  Settings → Google OAuth lists Workspace domains; a Google sign-in whose **`hd`
+  (hosted-domain) claim** matches creates a plain member (`is_admin=0`, no password,
+  `provider='google'`) before the ordinary lookup. The gate is `hd`, never the text after
+  `@` — Google sets it only for Workspace accounts on a domain it has verified, so a
+  personal Gmail can't match. Empty list (the default) = invite-only as before. Microsoft
   needs its own redirect URI registered in Azure (`/v1/auth/microsoft/callback`),
   distinct from the calendar one. (Magic-link login is also shipped —
   `POST /v1/auth/magic-link/request` + `GET …/verify`, `magic_link.go`, migration

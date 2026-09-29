@@ -87,7 +87,16 @@ func (h *Handler) CallbackGoogle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Only existing users can log in — no self-registration.
+	// No self-registration, with one gated exception: a verified Workspace account on
+	// an admin-allow-listed hosted domain gets a member row on first sign-in
+	// (google_auto_join.go). Everyone else must already exist.
+	if created, err := h.autoProvisionGoogleUser(r.Context(), info); err != nil {
+		h.logger.ErrorContext(r.Context(), "auth: auto-join provision", "error", err)
+		http.Redirect(w, r, "/admin/login?error=session", http.StatusFound)
+		return
+	} else if created {
+		h.logger.InfoContext(r.Context(), "auth: auto-joined member", "email", info.Email, "hd", info.HD)
+	}
 	h.finishOAuthLogin(w, r, info.Email)
 }
 
@@ -120,6 +129,10 @@ type googleUserInfo struct {
 	Email         string `json:"email"`
 	Name          string `json:"name"`
 	VerifiedEmail bool   `json:"verified_email"`
+	// HD is the Google Workspace hosted domain. Google sets it only for Workspace
+	// accounts and only after it has verified the domain, so it is the trustworthy
+	// signal for auto-join; the text after "@" in Email is not.
+	HD string `json:"hd"`
 }
 
 func fetchGoogleUserInfo(ctx context.Context, cfg *oauth2.Config, tok *oauth2.Token) (*googleUserInfo, error) {

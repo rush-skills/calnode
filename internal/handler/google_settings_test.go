@@ -399,3 +399,50 @@ func containsStr(s, sub string) bool {
 func strReader(s string) *strings.Reader {
 	return strings.NewReader(s)
 }
+
+func TestGoogleSettings_autoJoinDomains(t *testing.T) {
+	h, _, key := newGoogleHandler(t)
+	do := func(method, body string) *httptest.ResponseRecorder {
+		if method == http.MethodGet {
+			return getGoogleSettings(t, h, key)
+		}
+		return patchGoogleSettings(t, h, body, key)
+	}
+
+	// Default: off, rendered as an empty array (never null).
+	rec := do(http.MethodGet, "")
+	if !strings.Contains(rec.Body.String(), `"auto_join_domains":[]`) {
+		t.Fatalf("default GET body = %s; want auto_join_domains []", rec.Body.String())
+	}
+
+	// Set, normalised on the way in; credentials in the same request are saved too.
+	rec = do(http.MethodPatch, `{"client_id":"cid","client_secret":"sec","auto_join_domains":[" Example.com ","example.com"]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"auto_join_domains":["example.com"]`) {
+		t.Errorf("PATCH body = %s; want normalised list", rec.Body.String())
+	}
+
+	// Omitting the field keeps the stored list.
+	rec = do(http.MethodPatch, `{"client_id":"cid"}`)
+	if !strings.Contains(rec.Body.String(), `"auto_join_domains":["example.com"]`) {
+		t.Errorf("omitted field changed the list: %s", rec.Body.String())
+	}
+
+	// A bad entry is a 400 and leaves the stored list untouched.
+	rec = do(http.MethodPatch, `{"client_id":"cid","auto_join_domains":["someone@example.com"]}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("invalid domain status = %d; want 400", rec.Code)
+	}
+	rec = do(http.MethodGet, "")
+	if !strings.Contains(rec.Body.String(), `"auto_join_domains":["example.com"]`) {
+		t.Errorf("rejected PATCH changed the list: %s", rec.Body.String())
+	}
+
+	// An explicit empty list turns it off.
+	rec = do(http.MethodPatch, `{"client_id":"cid","auto_join_domains":[]}`)
+	if !strings.Contains(rec.Body.String(), `"auto_join_domains":[]`) {
+		t.Errorf("empty list did not clear: %s", rec.Body.String())
+	}
+}
