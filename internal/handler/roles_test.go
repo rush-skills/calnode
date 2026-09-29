@@ -42,20 +42,52 @@ func TestSetUserRole_ownerPromotesAndDemotes(t *testing.T) {
 	}
 }
 
-func TestSetUserRole_requiresOwnerNotAdmin(t *testing.T) {
+// An admin who is not the owner can grant admin to a member, so a workspace is not
+// bottlenecked on one person; taking admin away from another admin stays owner-only,
+// the same line password resets and archiving draw.
+func TestSetUserRole_adminCanPromoteButNotDemoteAdmin(t *testing.T) {
 	h, database, _, _ := setupWorkspaceWithDB(t)
-	// An admin (not owner) tries to change a role → 403.
 	adminKey := "admin-not-owner-key"
 	database.Exec(`INSERT INTO users (id,email,name,iana_timezone,is_admin,is_owner) VALUES ('u2','a@example.com','Admin','UTC',1,0)`)
 	database.Exec(`INSERT INTO api_keys (id,user_id,name,key_hash,created_at) VALUES ('k2','u2','t',?,'2024-01-01')`, sha256HexForTest(adminKey))
 	database.Exec(`INSERT INTO users (id,email,name,iana_timezone,is_admin) VALUES ('u3','m@example.com','Member','UTC',0)`)
+	database.Exec(`INSERT INTO users (id,email,name,iana_timezone,is_admin) VALUES ('u4','b@example.com','Other admin','UTC',1)`)
 
-	req := authReq(http.MethodPatch, "/v1/users/u3/role", `{"role":"admin"}`, adminKey)
-	req.SetPathValue("id", "u3")
+	call := func(target, role string) *httptest.ResponseRecorder {
+		req := authReq(http.MethodPatch, "/v1/users/"+target+"/role", `{"role":"`+role+`"}`, adminKey)
+		req.SetPathValue("id", target)
+		rec := httptest.NewRecorder()
+		h.RequireAuth(h.SetUserRole)(rec, req)
+		return rec
+	}
+
+	if rec := call("u3", "admin"); rec.Code != http.StatusOK {
+		t.Errorf("admin promoting a member: got %d; want 200 — %s", rec.Code, rec.Body.String())
+	}
+	var isAdmin int
+	database.QueryRow(`SELECT is_admin FROM users WHERE id = 'u3'`).Scan(&isAdmin)
+	if isAdmin != 1 {
+		t.Errorf("u3 is_admin = %d; want 1", isAdmin)
+	}
+
+	if rec := call("u4", "member"); rec.Code != http.StatusForbidden {
+		t.Errorf("admin demoting another admin: got %d; want 403", rec.Code)
+	}
+	database.QueryRow(`SELECT is_admin FROM users WHERE id = 'u4'`).Scan(&isAdmin)
+	if isAdmin != 1 {
+		t.Errorf("u4 is_admin = %d; want 1 (unchanged)", isAdmin)
+	}
+
+	// A plain member still cannot touch roles at all.
+	memberKey := "member-key"
+	database.Exec(`INSERT INTO users (id,email,name,iana_timezone,is_admin) VALUES ('u5','c@example.com','Member2','UTC',0)`)
+	database.Exec(`INSERT INTO api_keys (id,user_id,name,key_hash,created_at) VALUES ('k5','u5','t',?,'2024-01-01')`, sha256HexForTest(memberKey))
+	req := authReq(http.MethodPatch, "/v1/users/u4/role", `{"role":"member"}`, memberKey)
+	req.SetPathValue("id", "u4")
 	rec := httptest.NewRecorder()
 	h.RequireAuth(h.SetUserRole)(rec, req)
 	if rec.Code != http.StatusForbidden {
-		t.Errorf("got %d; want 403 (admin cannot grant admin)", rec.Code)
+		t.Errorf("member changing a role: got %d; want 403", rec.Code)
 	}
 }
 

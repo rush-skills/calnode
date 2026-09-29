@@ -100,9 +100,10 @@ func (h *Handler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 
 // ListTeams handles GET /v1/teams (admin) — teams with member counts.
 func (h *Handler) ListTeams(w http.ResponseWriter, r *http.Request) {
-	admin, ok := userFromContext(r.Context())
-	if !ok || !admin.IsAdmin {
-		h.writeError(w, http.StatusForbidden, "admin access required")
+	// Readable by any signed-in member (see ListUsers); creating and editing teams
+	// stays admin-only.
+	if _, ok := userFromContext(r.Context()); !ok {
+		h.writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	rows, err := h.db.QueryContext(r.Context(), `
@@ -130,9 +131,9 @@ func (h *Handler) ListTeams(w http.ResponseWriter, r *http.Request) {
 
 // GetTeam handles GET /v1/teams/{id} (admin) — team + its members.
 func (h *Handler) GetTeam(w http.ResponseWriter, r *http.Request) {
-	admin, ok := userFromContext(r.Context())
-	if !ok || !admin.IsAdmin {
-		h.writeError(w, http.StatusForbidden, "admin access required")
+	// Readable by any signed-in member: the Hosts tab expands a picked team's members.
+	if _, ok := userFromContext(r.Context()); !ok {
+		h.writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	id := r.PathValue("id")

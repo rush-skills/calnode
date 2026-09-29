@@ -8,14 +8,18 @@ import (
 
 // ListUsers handles GET /v1/users — admin only. Returns all users.
 func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
-	admin, ok := userFromContext(r.Context())
-	if !ok || !admin.IsAdmin {
-		h.writeError(w, http.StatusForbidden, "admin access required")
+	// Any signed-in member may read the directory: the event-type Hosts tab and the
+	// team picker need it, and a member setting up a rotation cannot pick colleagues
+	// they cannot see. Mutations elsewhere stay admin-only.
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		h.writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
-	// Archived members are hidden unless explicitly requested (?include_archived=true).
-	includeArchived := r.URL.Query().Get("include_archived") == "true"
+	// Archived members are hidden unless explicitly requested (?include_archived=true),
+	// and only an admin gets to ask: the Members page's archived view is admin-only.
+	includeArchived := user.IsAdmin && r.URL.Query().Get("include_archived") == "true"
 	where := "WHERE u.archived_at IS NULL"
 	if includeArchived {
 		where = ""

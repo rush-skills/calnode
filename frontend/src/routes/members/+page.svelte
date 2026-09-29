@@ -135,7 +135,7 @@
 		}
 	}
 
-	// --- Role management (owner only) ---
+	// --- Role management: any admin may grant admin; only the owner may take it away ---
 	async function setRole(m: TeamMember, role: 'admin' | 'member') {
 		try {
 			await api.patch(`/v1/users/${m.id}/role`, { role });
@@ -515,13 +515,17 @@
 														{/if}
 													</div>
 												{:else}
-													{#if $currentUser.is_owner && !m.is_owner}
+													{#if !m.is_owner && m.id !== $currentUser.id}
 														{#if m.is_admin}
-															<Button size="sm" variant="ghost" class="h-7 text-xs" onclick={() => setRole(m, 'member')}>Make member</Button>
-														{:else}
+															{#if $currentUser.is_owner}
+																<Button size="sm" variant="ghost" class="h-7 text-xs" onclick={() => setRole(m, 'member')}>Make member</Button>
+															{/if}
+														{:else if $currentUser.is_admin}
 															<Button size="sm" variant="ghost" class="h-7 text-xs" onclick={() => setRole(m, 'admin')}>Make admin</Button>
 														{/if}
-														<Button size="sm" variant="ghost" class="h-7 text-xs" onclick={() => confirmTransfer(m)}>Transfer ownership</Button>
+														{#if $currentUser.is_owner}
+															<Button size="sm" variant="ghost" class="h-7 text-xs" onclick={() => confirmTransfer(m)}>Transfer ownership</Button>
+														{/if}
 													{/if}
 													<!-- Reset password + Archive only on members this viewer may manage:
 													     never the owner; another admin only if the viewer is the owner. -->

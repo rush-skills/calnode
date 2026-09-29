@@ -6,16 +6,20 @@ import (
 	"net/http"
 )
 
-// SetUserRole handles PATCH /v1/users/{id}/role — owner only.
+// SetUserRole handles PATCH /v1/users/{id}/role — admin or owner.
 //
 // Body: {"role": "admin" | "member"}. Promotes or demotes a user between the
-// member and admin tiers. Per PRD §8.10 only the owner may grant or revoke
-// admin. The owner's own role cannot be changed here (use transfer-ownership),
-// and you cannot change your own role.
+// member and admin tiers. Any admin may grant admin, so a workspace is not
+// bottlenecked on one person (PRD §8.10 originally reserved this for the owner;
+// relaxed because a single-admin model does not scale). Taking admin away
+// follows the same rule as resetting an admin's password or archiving them:
+// only the owner may act on another admin, so admins cannot demote each other.
+// The owner's own role cannot be changed here (use transfer-ownership), and
+// you cannot change your own role.
 func (h *Handler) SetUserRole(w http.ResponseWriter, r *http.Request) {
 	actor, ok := userFromContext(r.Context())
-	if !ok || !actor.IsOwner {
-		h.writeError(w, http.StatusForbidden, "only the workspace owner can change roles")
+	if !ok || !actor.IsAdmin {
+		h.writeError(w, http.StatusForbidden, "admin access required")
 		return
 	}
 	targetID := r.PathValue("id")
@@ -37,9 +41,9 @@ func (h *Handler) SetUserRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var targetIsOwner int
+	var targetIsOwner, targetIsAdmin int
 	err := h.db.QueryRowContext(r.Context(),
-		`SELECT is_owner FROM users WHERE id = ?`, targetID).Scan(&targetIsOwner)
+		`SELECT is_owner, is_admin FROM users WHERE id = ?`, targetID).Scan(&targetIsOwner, &targetIsAdmin)
 	if err == sql.ErrNoRows {
 		h.writeError(w, http.StatusNotFound, "user not found")
 		return
@@ -51,6 +55,10 @@ func (h *Handler) SetUserRole(w http.ResponseWriter, r *http.Request) {
 	}
 	if targetIsOwner != 0 {
 		h.writeError(w, http.StatusBadRequest, "cannot change the owner's role; transfer ownership first")
+		return
+	}
+	if targetIsAdmin != 0 && req.Role == "member" && !actor.IsOwner {
+		h.writeError(w, http.StatusForbidden, "only the workspace owner can remove admin from another admin")
 		return
 	}
 

@@ -11,6 +11,19 @@ exact tag (`ghcr.io/calnode/calnode:0.1.0`) if you need stability between upgrad
 
 ## [Unreleased]
 
+### Fixed
+- **Members could not staff an event type.** Opening the Hosts tab as a regular member
+  failed with "admin access required": the member and team lists it fills its pickers from
+  were admin-only reads. Any signed-in member can now read the member directory and the
+  team list (active members only; the archived view and every team or member mutation
+  stay admin-only).
+
+### Changed
+- **Any admin can now make a member an admin.** Granting admin used to be owner-only, which
+  made one person the bottleneck for a growing team. Taking admin away from another admin
+  stays owner-only, the same rule that already governs resetting an admin's password or
+  archiving them, so admins cannot demote each other.
+
 ### Added
 - **Google Workspace auto-join.** Settings → Google OAuth has an "Auto-join domains" list.
   A Google sign-in from a Workspace account on a listed domain creates a regular member

@@ -189,9 +189,13 @@ the platform/recovery secret doesn't expose secrets.
   `calnode_session` cookie is present, so public booking, API-key, and manage-token
   requests are untouched. API-key auth isn't CSRF-able (custom header).
 - **Roles:** Member / Admin / Owner. `is_owner` is additive over `is_admin`.
-  Owner-gated actions: grant/revoke admin, transfer ownership. Admins can cancel
-  any booking, see all bookings, manage teams/members. Safe-removal + archive
-  guards prevent orphaning.
+  Owner-gated actions: revoke admin from an admin, transfer ownership. Any admin can
+  grant admin to a member (`roles.go`; owner-only until a single-admin workspace proved
+  a bottleneck). Admins can cancel any booking, see all bookings, manage teams/members.
+  Every signed-in member can *read* the member directory and team list (`GET /v1/users`,
+  `GET /v1/teams`, `GET /v1/teams/{id}`) because the event-type Hosts tab fills its
+  pickers from them; archived members and all mutations stay admin-only. Safe-removal +
+  archive guards prevent orphaning.
 - **Sign out everywhere** (`POST /v1/auth/sessions/revoke-all`, `session.go`). With no
   body it drops all of the caller's sessions **except the one that made the request** —
   "sign out my other devices", as distinct from `POST /v1/auth/logout`, which ends the

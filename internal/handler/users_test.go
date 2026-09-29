@@ -34,19 +34,30 @@ func TestListUsers_returnsAllUsers(t *testing.T) {
 	}
 }
 
-func TestListUsers_requiresAdmin(t *testing.T) {
+// A regular member can read the directory (the event-type Hosts tab needs it), but
+// the archived view stays admin-only: include_archived is ignored for a non-admin.
+func TestListUsers_memberCanListActiveOnly(t *testing.T) {
 	h, database, _, _ := setupWorkspaceWithDB(t)
 
 	rawKey := "non-admin-list-key"
 	database.Exec(`INSERT INTO users (id,email,name,iana_timezone,is_admin) VALUES ('u2','other@example.com','Other','UTC',0)`)
+	database.Exec(`INSERT INTO users (id,email,name,iana_timezone,is_admin,archived_at) VALUES ('u3','gone@example.com','Gone','UTC',0,'2024-01-01T00:00:00Z')`)
 	database.Exec(`INSERT INTO api_keys (id,user_id,name,key_hash,created_at) VALUES ('k2','u2','test',?,'2024-01-01')`, sha256HexForTest(rawKey))
 
-	req := authReq(http.MethodGet, "/v1/users", "", rawKey)
-	rec := httptest.NewRecorder()
-	h.RequireAuth(h.ListUsers)(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("got %d; want 403", rec.Code)
+	for _, path := range []string{"/v1/users", "/v1/users?include_archived=true"} {
+		req := authReq(http.MethodGet, path, "", rawKey)
+		rec := httptest.NewRecorder()
+		h.RequireAuth(h.ListUsers)(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: got %d; want 200 — %s", path, rec.Code, rec.Body.String())
+		}
+		var users []map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &users); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(users) != 2 {
+			t.Errorf("%s: got %d users; want 2 active (archived hidden from a member)", path, len(users))
+		}
 	}
 }
 

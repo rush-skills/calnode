@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/calnode/calnode/internal/handler"
@@ -190,5 +191,40 @@ func TestListUsers_includesTeams(t *testing.T) {
 	}
 	if !found {
 		t.Error("u2 not in user list")
+	}
+}
+
+// A regular member can read teams (the event-type Hosts tab's team picker and its
+// member expansion need both), while creating one stays admin-only above.
+func TestListAndGetTeam_memberCanRead(t *testing.T) {
+	h, database, key, _ := setupWorkspaceWithDB(t)
+
+	rawKey := "non-admin-team-read-key"
+	database.Exec(`INSERT INTO users (id,email,name,iana_timezone,is_admin) VALUES ('u2','other@example.com','Other','UTC',0)`)
+	database.Exec(`INSERT INTO api_keys (id,user_id,name,key_hash,created_at) VALUES ('k2','u2','test',?,'2024-01-01')`, sha256HexForTest(rawKey))
+
+	// Admin creates a team.
+	rec := httptest.NewRecorder()
+	h.RequireAuth(h.CreateTeam)(rec, authReq(http.MethodPost, "/v1/teams", `{"name":"Sales"}`, key))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create team: %d — %s", rec.Code, rec.Body.String())
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &created)
+
+	rec = httptest.NewRecorder()
+	h.RequireAuth(h.ListTeams)(rec, authReq(http.MethodGet, "/v1/teams", "", rawKey))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"Sales"`) {
+		t.Errorf("member list teams: %d — %s", rec.Code, rec.Body.String())
+	}
+
+	req := authReq(http.MethodGet, "/v1/teams/"+created.ID, "", rawKey)
+	req.SetPathValue("id", created.ID)
+	rec = httptest.NewRecorder()
+	h.RequireAuth(h.GetTeam)(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("member get team: %d — %s", rec.Code, rec.Body.String())
 	}
 }
