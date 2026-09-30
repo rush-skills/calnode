@@ -71,7 +71,7 @@ func TestAutoProvisionGoogleUser_gatesOnHostedDomain(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			created, err := h.autoProvisionGoogleUser(ctx, &tc.info)
+			created, err := h.autoProvisionGoogleUser(ctx, &tc.info, "")
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -100,18 +100,23 @@ func TestAutoProvisionGoogleUser_offByDefaultAndIdempotent(t *testing.T) {
 	h := autoJoinTestHandler(t, "")
 	ctx := context.Background()
 	info := &googleUserInfo{Email: "ana@example.com", VerifiedEmail: true, HD: "example.com"}
-	if created, err := h.autoProvisionGoogleUser(ctx, info); err != nil || created {
+	if created, err := h.autoProvisionGoogleUser(ctx, info, ""); err != nil || created {
 		t.Fatalf("empty allow-list: created=%v err=%v; want false, nil", created, err)
 	}
 
 	h2 := autoJoinTestHandler(t, "example.com")
-	if created, _ := h2.autoProvisionGoogleUser(ctx, info); !created {
+	if created, _ := h2.autoProvisionGoogleUser(ctx, info, "Asia/Kolkata"); !created {
 		t.Fatal("first login should create the user")
 	}
-	if created, err := h2.autoProvisionGoogleUser(ctx, info); err != nil || created {
+	if created, err := h2.autoProvisionGoogleUser(ctx, info, ""); err != nil || created {
 		t.Fatalf("second login: created=%v err=%v; want false, nil", created, err)
 	}
 	if n := countUsers(t, h2, info.Email); n != 1 {
 		t.Errorf("user rows = %d; want 1", n)
+	}
+	var tz string
+	h2.db.QueryRow(`SELECT iana_timezone FROM users WHERE email = ?`, info.Email).Scan(&tz)
+	if tz != "Asia/Kolkata" {
+		t.Errorf("iana_timezone = %q; want the browser zone passed at first login", tz)
 	}
 }

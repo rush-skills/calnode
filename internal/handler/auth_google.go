@@ -14,8 +14,13 @@ import (
 const (
 	sessionCookieName = "calnode_session"
 	stateCookieName   = "calnode_oauth_state"
-	sessionDuration   = 30 * 24 * time.Hour
-	stateDuration     = 5 * time.Minute
+	// tzCookieName carries the browser's IANA timezone (from ?tz= on /v1/auth/login)
+	// across the Google round-trip so an auto-joined member's availability is seeded in
+	// their own zone rather than UTC. Same lifetime as the state cookie; only read when
+	// a user is being created, never for an existing one.
+	tzCookieName    = "calnode_oauth_tz"
+	sessionDuration = 30 * 24 * time.Hour
+	stateDuration   = 5 * time.Minute
 )
 
 // SetGoogleAuth configures the handler for Google OAuth sign-in.
@@ -49,7 +54,42 @@ func (h *Handler) LoginGoogle(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	if tz := r.URL.Query().Get("tz"); tz != "" && tz != "UTC" && len(tz) <= 64 {
+		if _, err := time.LoadLocation(tz); err == nil {
+			http.SetCookie(w, &http.Cookie{ // #nosec G124 -- HttpOnly/SameSite/Secure are all set; Secure is h.secureCookie (dynamic on BASE_URL scheme), which gosec's static check can't verify
+				Name:     tzCookieName,
+				Value:    tz,
+				Path:     "/",
+				MaxAge:   int(stateDuration.Seconds()),
+				HttpOnly: true,
+				SameSite: http.SameSiteLaxMode,
+				Secure:   h.secureCookie,
+			})
+		}
+	}
 	http.Redirect(w, r, ga.AuthCodeURL(state, oauth2.AccessTypeOnline), http.StatusFound)
+}
+
+// browserTimezone returns the IANA zone the login page sent along, or "" when absent
+// or invalid, and clears the cookie either way (single use, like the state cookie).
+func (h *Handler) browserTimezone(w http.ResponseWriter, r *http.Request) string {
+	c, err := r.Cookie(tzCookieName)
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- HttpOnly/SameSite/Secure are all set; Secure is h.secureCookie (dynamic on BASE_URL scheme), which gosec's static check can't verify
+		Name:     tzCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   h.secureCookie,
+	})
+	if err != nil || c.Value == "" {
+		return ""
+	}
+	if _, err := time.LoadLocation(c.Value); err != nil {
+		return ""
+	}
+	return c.Value
 }
 
 // CallbackGoogle handles the OAuth redirect from Google.
@@ -90,7 +130,8 @@ func (h *Handler) CallbackGoogle(w http.ResponseWriter, r *http.Request) {
 	// No self-registration, with one gated exception: a verified Workspace account on
 	// an admin-allow-listed hosted domain gets a member row on first sign-in
 	// (google_auto_join.go). Everyone else must already exist.
-	if created, err := h.autoProvisionGoogleUser(r.Context(), info); err != nil {
+	tz := h.browserTimezone(w, r)
+	if created, err := h.autoProvisionGoogleUser(r.Context(), info, tz); err != nil {
 		h.logger.ErrorContext(r.Context(), "auth: auto-join provision", "error", err)
 		http.Redirect(w, r, "/admin/login?error=session", http.StatusFound)
 		return

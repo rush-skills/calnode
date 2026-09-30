@@ -81,8 +81,10 @@ func (h *Handler) loadAutoJoinDomains(ctx context.Context) ([]string, error) {
 // the caller should carry on with the ordinary lookup: either the user already exists,
 // or the domain is not allowed (the normal no_account outcome). An email race (two first
 // logins at once) is absorbed: the UNIQUE(email) conflict is ignored and the lookup that
-// follows finds the row the other request inserted.
-func (h *Handler) autoProvisionGoogleUser(ctx context.Context, info *googleUserInfo) (bool, error) {
+// follows finds the row the other request inserted. tz is the browser's IANA zone when
+// the login page supplied one (already validated by browserTimezone); empty falls back
+// to UTC, which the member can change under Settings → Profile.
+func (h *Handler) autoProvisionGoogleUser(ctx context.Context, info *googleUserInfo, tz string) (bool, error) {
 	hd := strings.ToLower(strings.TrimSpace(info.HD))
 	if hd == "" || !info.VerifiedEmail || info.Email == "" {
 		return false, nil
@@ -116,11 +118,14 @@ func (h *Handler) autoProvisionGoogleUser(ctx context.Context, info *googleUserI
 			name = name[:at]
 		}
 	}
+	if tz == "" {
+		tz = "UTC"
+	}
 	res, err := h.db.ExecContext(ctx, `
 		INSERT INTO users (id, email, name, iana_timezone, is_admin, email_login, provider)
-		VALUES (?, ?, ?, 'UTC', 0, 0, 'google')
+		VALUES (?, ?, ?, ?, 0, 0, 'google')
 		ON CONFLICT(email) DO NOTHING`,
-		uid.New(), info.Email, name)
+		uid.New(), info.Email, name, tz)
 	if err != nil {
 		return false, err
 	}

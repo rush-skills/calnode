@@ -1,6 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { base } from '$app/paths';
 	import { api, type AvailabilityRule, type AvailabilityOverride } from '$lib/api';
+
+	// The zone the browser reports, so a mismatch with the profile zone (the one the
+	// hours below are interpreted in) is called out instead of silently shifting slots.
+	const browserTz = typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : '';
 	import { prefs, fmtDate } from '$lib/prefs';
 	import { Button, buttonVariants } from '$lib/components/ui/button';
 	import { ConfirmDialog } from '$lib/components/ui/confirm-dialog';
@@ -309,7 +314,14 @@
 
 <div class="mb-8">
 	<h1 class="text-2xl font-semibold tracking-tight">Availability</h1>
-	<p class="mt-1 text-sm text-muted-foreground">Set your weekly hours and block off specific dates.</p>
+	<p class="mt-1 text-sm text-muted-foreground">
+		Set your weekly hours and block off specific dates. Times are in
+		<span class="font-medium text-foreground">{$prefs.timezone}</span>
+		{#if browserTz && browserTz !== $prefs.timezone}
+			<span class="text-amber-700">(your browser is in {browserTz})</span>
+		{/if}
+		&mdash; change it in <a href="{base}/settings/profile" class="underline">Profile</a>.
+	</p>
 </div>
 
 <!-- Weekly Hours -->

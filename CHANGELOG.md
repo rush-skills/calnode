@@ -12,6 +12,11 @@ exact tag (`ghcr.io/calnode/calnode:0.1.0`) if you need stability between upgrad
 ## [Unreleased]
 
 ### Fixed
+- **Availability now says which timezone it is in.** Weekly hours are interpreted in the
+  host's profile timezone, but the page never said so, and a mismatch with the browser
+  silently shifted every slot. The page now names the zone, flags a browser mismatch, and
+  links to Profile. Google auto-joined members also get their browser's timezone at first
+  sign-in instead of UTC (the login page passes it along; it is validated server-side).
 - **Members could not staff an event type.** Opening the Hosts tab as a regular member
   failed with "admin access required": the member and team lists it fills its pickers from
   were admin-only reads. Any signed-in member can now read the member directory and the
