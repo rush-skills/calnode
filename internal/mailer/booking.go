@@ -14,24 +14,28 @@ import (
 
 // BookingData carries all the information needed to render booking emails.
 type BookingData struct {
-	BookingID          string
-	EventTypeName      string
-	EventTypeSlug      string
-	HostName           string
-	HostEmail          string
-	OrganizerName      string
-	OrganizerEmail     string
-	OrganizerTimezone  string
-	StartAt            time.Time // UTC (new time for reschedule emails)
-	EndAt              time.Time
-	PreviousStartAt    time.Time // non-zero only for reschedule emails
-	PreviousEndAt      time.Time
-	LocationValue      string
-	CancellationReason string
-	ManageURL          string // manage link (reschedule/cancel), set at booking creation
-	BaseURL            string
-	CustomNote         string // optional host-configured note appended to the email body
-	SubjectOverride    string // optional per-event-type custom subject; falls back to the default when empty
+	BookingID     string
+	EventTypeName string
+	// EventTypeDescription is the admin-written event-type description. It leads the
+	// calendar invite's DESCRIPTION (the .ics here and the provider event the handler
+	// creates) so the invite carries the operator's own words, not only a booking id.
+	EventTypeDescription string
+	EventTypeSlug        string
+	HostName             string
+	HostEmail            string
+	OrganizerName        string
+	OrganizerEmail       string
+	OrganizerTimezone    string
+	StartAt              time.Time // UTC (new time for reschedule emails)
+	EndAt                time.Time
+	PreviousStartAt      time.Time // non-zero only for reschedule emails
+	PreviousEndAt        time.Time
+	LocationValue        string
+	CancellationReason   string
+	ManageURL            string // manage link (reschedule/cancel), set at booking creation
+	BaseURL              string
+	CustomNote           string // optional host-configured note appended to the email body
+	SubjectOverride      string // optional per-event-type custom subject; falls back to the default when empty
 	// AttachICS attaches an iCalendar invite to the attendee's email — set by the
 	// handler only when the host has no Google destination calendar (so Google
 	// isn't already inviting the attendee, which would duplicate). ICSSequence must

@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBuildICS_request(t *testing.T) {
@@ -131,5 +132,29 @@ func TestBuildRaw_multipartWithICS(t *testing.T) {
 	}
 	if !strings.Contains(raw, "body text") {
 		t.Error("missing text body part")
+	}
+}
+
+// The event type's description leads the invite text so the operator's own words reach
+// the attendee's calendar, with the standard "Booking with" line and manage link after.
+func TestBuildICS_leadsWithEventTypeDescription(t *testing.T) {
+	d := BookingData{
+		BookingID:            "bk1",
+		EventTypeName:        "Consultation",
+		EventTypeDescription: "Bring your ring size.\nWe meet at the studio.",
+		HostName:             "Ana",
+		ManageURL:            "https://x.test/manage/t",
+		StartAt:              time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC),
+		EndAt:                time.Date(2026, 1, 2, 10, 30, 0, 0, time.UTC),
+	}
+	// Unfold RFC 5545 continuation lines (CRLF + space) before asserting on content.
+	unfold := func(b []byte) string { return strings.ReplaceAll(string(b), "\r\n ", "") }
+	ics := unfold(BuildICS(d, "REQUEST"))
+	if !strings.Contains(ics, `DESCRIPTION:Bring your ring size.\nWe meet at the studio.\n\nBooking with Ana`) {
+		t.Errorf("description missing or misordered:\n%s", ics)
+	}
+	d.EventTypeDescription = "   "
+	if ics := unfold(BuildICS(d, "REQUEST")); !strings.Contains(ics, "DESCRIPTION:Booking with Ana") {
+		t.Errorf("blank description should be dropped:\n%s", ics)
 	}
 }

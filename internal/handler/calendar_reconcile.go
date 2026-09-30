@@ -186,13 +186,13 @@ func (h *Handler) reconcileCreations(ctx context.Context, gc *calendar.Service) 
 	// inline CreateEvent that simply hasn't stored its id yet.
 	cutoff := nowT.Add(-5 * time.Minute).Format(time.RFC3339)
 	type missing struct {
-		bookingID, userID, etName, orgName, orgEmail, orgLocale, startStr, endStr string
-		locationType, bookingLoc                                                  string
-		isPrimary                                                                 bool
+		bookingID, userID, etName, etDescription, orgName, orgEmail, orgLocale, startStr, endStr string
+		locationType, bookingLoc                                                                 string
+		isPrimary                                                                                bool
 	}
 	var items []missing
 	rows, err := h.db.QueryContext(ctx, `
-		SELECT bh.booking_id, bh.user_id, bh.is_primary, et.name, COALESCE(NULLIF(b.location_type, ''), et.location_type),
+		SELECT bh.booking_id, bh.user_id, bh.is_primary, et.name, COALESCE(et.description, ''), COALESCE(NULLIF(b.location_type, ''), et.location_type),
 		       COALESCE(b.location_value, ''),
 		       COALESCE(o.name, ''), COALESCE(o.email, ''), COALESCE(o.locale, ''), b.start_at, b.end_at
 		FROM booking_hosts bh
@@ -208,7 +208,7 @@ func (h *Handler) reconcileCreations(ctx context.Context, gc *calendar.Service) 
 	for rows.Next() {
 		var m missing
 		var primary int
-		if err := rows.Scan(&m.bookingID, &m.userID, &primary, &m.etName, &m.locationType,
+		if err := rows.Scan(&m.bookingID, &m.userID, &primary, &m.etName, &m.etDescription, &m.locationType,
 			&m.bookingLoc, &m.orgName, &m.orgEmail, &m.orgLocale, &m.startStr, &m.endStr); err == nil {
 			m.isPrimary = primary != 0
 			items = append(items, m)
@@ -243,7 +243,7 @@ func (h *Handler) reconcileCreations(ctx context.Context, gc *calendar.Service) 
 		loc := i18n.Get(m.orgLocale) // nil (→ English) if empty/unrecognized; i18n.Locale.T handles nil safely
 		eventID, link, calID, provider, err := gc.CreateEvent(ctx, m.userID, calendar.CreateEventParams{
 			Summary:        loc.Tf("calendar_event_summary", m.etName, m.orgName),
-			Description:    loc.Tf("calendar_event_booking_id", m.bookingID),
+			Description:    calendarEventDescription(loc.Tf, m.bookingID, m.etDescription),
 			Location:       m.bookingLoc,
 			Start:          start,
 			End:            end,

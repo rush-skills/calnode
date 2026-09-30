@@ -11,7 +11,17 @@ exact tag (`ghcr.io/calnode/calnode:0.1.0`) if you need stability between upgrad
 
 ## [Unreleased]
 
+### Added
+- **The event type's description now goes into the calendar invite.** Both the `.ics`
+  attachment and the Google / Outlook / CalDAV event the attendee is invited to lead with
+  the description written on the event type, followed by the existing "Booking with" and
+  booking-id lines. Reschedules, host reassignment and the reconciler use the same text.
+  Until now there was nowhere to set invite text at all.
+
 ### Fixed
+- **The timezone picker now lists every IANA zone**, not a hand-picked fifteen (India was
+  missing, among most of the world). It reads the browser's own table and falls back to
+  the short list only on very old browsers; a stored zone outside the list is kept.
 - **Availability now says which timezone it is in.** Weekly hours are interpreted in the
   host's profile timezone, but the page never said so, and a mismatch with the browser
   silently shifted every slot. The page now names the zone, flags a browser mismatch, and

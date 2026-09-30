@@ -64,12 +64,15 @@ export function fmtTime(iso: string, p: UserPrefs = get(prefs)): string {
 
 export const WEEK_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-export const TIMEZONES = [
+// Fallback only, for browsers without Intl.supportedValuesOf (pre-2022). Modern browsers
+// return the full IANA table (~420 zones), which is what the picker shows.
+const FALLBACK_TIMEZONES = [
 	'Pacific/Auckland',
 	'Australia/Sydney',
 	'Australia/Melbourne',
 	'Asia/Tokyo',
 	'Asia/Singapore',
+	'Asia/Kolkata',
 	'Asia/Dubai',
 	'Europe/London',
 	'Europe/Paris',
@@ -81,3 +84,24 @@ export const TIMEZONES = [
 	'America/Los_Angeles',
 	'UTC'
 ];
+
+function allTimezones(): string[] {
+	try {
+		const intl = Intl as unknown as { supportedValuesOf?: (k: string) => string[] };
+		const list = intl.supportedValuesOf?.('timeZone');
+		if (list && list.length) return list.includes('UTC') ? list : [...list, 'UTC'];
+	} catch {
+		// fall through
+	}
+	return FALLBACK_TIMEZONES;
+}
+
+export const TIMEZONES = allTimezones();
+
+/** The picker's options: every zone the browser knows, plus `current` if it is not among
+ *  them (a zone stored via the API or an older alias), so the stored value is never
+ *  silently blanked out of the form. */
+export function timezoneOptions(current: string): string[] {
+	if (current && !TIMEZONES.includes(current)) return [current, ...TIMEZONES];
+	return TIMEZONES;
+}

@@ -98,16 +98,16 @@ func (h *Handler) ReassignBooking(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Capture the old host + calendar event + summary fields before the move.
-	var oldHostID, extEventID, extProvider, etName, orgName, orgEmail, orgLocale string
+	var oldHostID, extEventID, extProvider, etName, etDescription, orgName, orgEmail, orgLocale string
 	err = h.db.QueryRowContext(r.Context(), `
 		SELECT b.host_id, COALESCE(b.external_event_id,''), COALESCE(bh.external_provider,''),
-		       et.name, COALESCE(a.name,''), COALESCE(a.email,''), COALESCE(a.locale,'')
+		       et.name, COALESCE(et.description,''), COALESCE(a.name,''), COALESCE(a.email,''), COALESCE(a.locale,'')
 		FROM bookings b
 		JOIN event_types et ON et.id = b.event_type_id
 		LEFT JOIN booking_attendees a ON a.booking_id = b.id AND a.is_organizer = 1
 		LEFT JOIN booking_hosts bh ON bh.booking_id = b.id AND bh.user_id = b.host_id
 		WHERE b.id = ?`, id).
-		Scan(&oldHostID, &extEventID, &extProvider, &etName, &orgName, &orgEmail, &orgLocale)
+		Scan(&oldHostID, &extEventID, &extProvider, &etName, &etDescription, &orgName, &orgEmail, &orgLocale)
 	if errors.Is(err, sql.ErrNoRows) {
 		h.writeError(w, http.StatusNotFound, "booking not found")
 		return
@@ -169,7 +169,7 @@ func (h *Handler) ReassignBooking(w http.ResponseWriter, r *http.Request) {
 			loc := i18n.Get(orgLocale) // nil (→ English) if empty/unrecognized; i18n.Locale.T handles nil safely
 			newEventID, _, newCalID, newProvider, err := gc.CreateEvent(ctx, newHostID, calendar.CreateEventParams{
 				Summary:        loc.Tf("calendar_event_summary", etName, orgName),
-				Description:    loc.Tf("calendar_event_booking_id", bCopy.ID),
+				Description:    calendarEventDescription(loc.Tf, bCopy.ID, etDescription),
 				Location:       bCopy.LocationValue, // keep the existing Meet link (don't mint a new one)
 				Start:          bCopy.StartAt,
 				End:            bCopy.EndAt,

@@ -35,6 +35,9 @@ func BuildICS(d BookingData, method string) []byte {
 	writeICSLine(&b, "DTEND:"+d.EndAt.UTC().Format(icsTimeLayout))
 	writeICSLine(&b, "SUMMARY:"+escapeICSText(d.EventTypeName))
 	desc := d.Tf("email_booking_with", d.HostName)
+	if et := strings.TrimSpace(d.EventTypeDescription); et != "" {
+		desc = et + "\n\n" + desc
+	}
 	if d.ManageURL != "" {
 		desc += "\n" + d.T("email_manage_this_booking") + " " + d.ManageURL
 	}
