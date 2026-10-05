@@ -1,6 +1,6 @@
 /* Shared booking UI styles — the single source of truth for the visual primitives
  * used by BOTH the server-rendered booking/manage pages and the embeddable widget
- * (injected into its Shadow DOM). Page chrome (body background, powered-by) and the
+ * (injected into its Shadow DOM). Page chrome (body background, legal footer) and the
  * per-context responsive layer (page @media vs widget @container) live with each
  * surface; everything that defines how the card/calendar/slots/form/confirm LOOK
  * lives here so the two never drift. Class names are shared verbatim. */
@@ -401,20 +401,21 @@
 .cookie-btn:hover { background: #f9fafb; }
 .cookie-btn-primary { background: #111827; border-color: #111827; color: #fff; }
 .cookie-btn-primary:hover { background: #1f2937; }
-/* ── Public-page footer (.powered-by) ──────────────────
-   Shared by book.html + manage.html (the "legalFooter" partial). Links + the
-   "Cookie settings" button share one rule so all footer items stay identical;
+/* ── Public-page footer (.legal-footer) ────────────────
+   Shared by book.html, manage.html + directory.html (the "legalFooter" partial):
+   the operator's legal links, the "Cookie settings" button and the language
+   switcher. Links + the button share one rule so all footer items stay identical;
    `font: inherit` is what stops the <button> from rendering in the UA font.
-   (The embed widget uses its own .powered class, not this.) */
-.powered-by {
+   (The embed widget renders no footer of its own.) */
+.legal-footer {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
   align-items: center;
   gap: .9rem;
 }
-.powered-by a,
-.powered-by .cookie-link {
+.legal-footer a,
+.legal-footer .cookie-link {
   display: inline-flex;
   align-items: center;
   gap: .375rem;
@@ -430,12 +431,12 @@
   cursor: pointer;
   transition: opacity .12s;
 }
-.powered-by a:hover,
-.powered-by .cookie-link:hover { opacity: .6; }
+.legal-footer a:hover,
+.legal-footer .cookie-link:hover { opacity: .6; }
 
 /* Language switcher — matches the footer links' size/weight/color so it reads as one
    of the footer items rather than a distinct form control. */
-.powered-by .lang-select {
+.legal-footer .lang-select {
   font: inherit;
   font-size: .75rem;
   font-weight: 600;

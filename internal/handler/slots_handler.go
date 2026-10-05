@@ -84,7 +84,16 @@ func (h *Handler) GetSlots(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	body := map[string]any{"slots": res.Slots, "hosts": res.Hosts}
+	// The host map (id → name/avatar) is what lets the booking surfaces narrow the header
+	// to a picked slot's actual host. With "Show host names" off it is sent empty: the
+	// slots keep their opaque host_ids, but no surface receives a name to render. The
+	// agent-facing callers (MCP, the assistant) go through computeSlots directly and are
+	// unaffected — this is a public-page presentation setting, not a data-access one.
+	hostMap := res.Hosts
+	if !h.loadBranding(r.Context()).ShowHostNames {
+		hostMap = map[string]map[string]string{}
+	}
+	body := map[string]any{"slots": res.Slots, "hosts": hostMap}
 	// Present only when an external calendar check failed mid-computation: the
 	// slots may include times a busy calendar would have removed. Surfaces show
 	// a warning; absent means fully checked (same absent-vs-empty convention as

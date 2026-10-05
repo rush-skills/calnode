@@ -122,8 +122,8 @@
   }
 
   // Widget-only layer: :host reset, container-query responsive layout (3-pane →
-  // letterbox banner → stacked), step-flow visibility, powered footer. The visual
-  // primitives all come from the shared booking.css <link>.
+  // letterbox banner → stacked), step-flow visibility. The visual primitives all
+  // come from the shared booking.css <link>.
   var STYLE = '' +
     ':host{all:initial;display:block;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#111827;line-height:1.5;}' +
     '.wrap{container-type:inline-size;}' +
@@ -162,9 +162,6 @@
     '.card.step-cal .right-col{display:none;}' +
     '.card.step-right .cal-col{display:none;}' +
     '.card.step-right .info{display:none;}' +
-    '.powered{text-align:center;font-size:.6875rem;color:#9ca3af;padding:10px;}' +
-    '.powered a{color:#6b7280;text-decoration:none;font-weight:600;}' +
-    '.powered a:hover{text-decoration:underline;}' +
     '.loading{padding:48px 24px;color:#6b7280;font-size:.875rem;text-align:center;}' +
     '.infotext{display:block;}' +
     '@media (max-width:560px){:host([data-modal]) .card{min-height:100dvh;border-radius:0;}}';
@@ -283,12 +280,19 @@
       // native page. Showing only hosts[0] surfaced one person (often one with no
       // availability) over slots that belong to someone else. Once a slot is picked,
       // narrow to that slot's actual assigned host(s), resolved from the id→host map.
+      //
+      // An empty `hosts` on the public payload means the workspace hides host names
+      // (Settings → Branding): the server then also sends an empty /slots host map, so
+      // there is nothing to narrow to. The header is the event name alone — no face
+      // stack and no host line — and the compact layout omits the faces column so the
+      // title still sits flush left (an empty flex child would leave a stray gap).
       var hosts, sel = this.state.slot;
-      if ((this.state.view === 'form' || this.state.view === 'confirm') && sel && sel.host_ids && this.hostMeta) {
+      var hostsShown = !!(this.info.hosts && this.info.hosts.length);
+      if (hostsShown && (this.state.view === 'form' || this.state.view === 'confirm') && sel && sel.host_ids && this.hostMeta) {
         var hm = this.hostMeta;
         hosts = sel.host_ids.map(function (id) { return hm[id]; }).filter(Boolean);
       }
-      if (!hosts || !hosts.length) hosts = (this.info.hosts && this.info.hosts.length) ? this.info.hosts : [];
+      if (!hosts || !hosts.length) hosts = hostsShown ? this.info.hosts : [];
       var faceKids = hosts.map(function (host, i) {
         var z = (hosts.length - i) * 10;
         var inner = host.avatar_url
@@ -305,7 +309,7 @@
       if (label) titleKids.push(el('p', { class: 'host-name', text: label }));
       titleKids.push(el('h1', { class: 'event-name', text: this.info.name }));
       var head = el('div', { class: 'info-head' }, [
-        el('div', { class: 'host-faces' }, faceKids),
+        faceKids.length ? el('div', { class: 'host-faces' }, faceKids) : null,
         el('div', { class: 'titlewrap' }, titleKids),
       ]);
       var meta = el('ul', { class: 'meta' }, [
@@ -702,7 +706,6 @@
       var toggle = this.card.querySelector('.desc-toggle');
       if (toggle) toggle.addEventListener('click', function () { self.descExpanded = !self.descExpanded; self.syncDesc(); });
       this.wrap.appendChild(this.card);
-      this.wrap.appendChild(el('div', { class: 'powered', html: t(this.i18n, 'powered_by') + ' <a href="https://calnode.com" target="_blank" rel="noopener">Calnode</a>' }));
       this.applyStep();
       this.cw = this.wrap.getBoundingClientRect().width || this.cw;
       requestAnimationFrame(function () { self.syncDesc(); });

@@ -207,6 +207,12 @@ func (h *Handler) TeamPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
+	// "Show host names" off: the roster IS a list of host names, so the whole section
+	// goes (an unnamed list of /u/ links would still identify people by handle). The
+	// person page is unaffected — it is about one named person by construction.
+	if !brand.ShowHostNames {
+		members = nil
+	}
 	h.renderDirectory(w, r, directoryPageData{
 		Title:    teamName,
 		Subtitle: loc.Tf("directory_team_subtitle", teamName),

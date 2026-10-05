@@ -39,6 +39,10 @@ type managePageData struct {
 	// bookPageData.SoleHostName. HostName can be a group label ("Alex, Sam & 2 others"),
 	// which no "%s has no available times" sentence can use grammatically.
 	SoleHostName string
+	// ShowHostNames is the workspace switch (Settings → Branding). renderManage blanks
+	// HostName/HostInitial/AvatarURL/SoleHostName when it is off, and the template drops
+	// the avatar + name block so the event name takes the title position.
+	ShowHostNames bool
 	// MinNoticeLabel is the translated minimum-notice duration ("4 hours") of the event
 	// type being rescheduled, or "" when it sets none. Reschedule goes through the same
 	// /slots endpoint as booking, so the same policy hides the same nearest times (#20).
@@ -185,6 +189,13 @@ func (h *Handler) renderManage(w http.ResponseWriter, r *http.Request, data mana
 	data.BannerOpacity = opacityCSS(brand.BannerOpacity)
 	data.PrivacyURL = brand.PrivacyURL
 	data.TermsURL = brand.TermsURL
+	// Enforced here, on the one path every manage render goes through, rather than in
+	// each caller that composes host fields: with "Show host names" off the page shows
+	// the event name only (the dataLayer host_name field reads as "" too).
+	data.ShowHostNames = brand.ShowHostNames
+	if !brand.ShowHostNames {
+		data.HostName, data.HostInitial, data.AvatarURL, data.SoleHostName = "", "", "", ""
+	}
 	data.CSSVersion = bookingCSSVersion
 	data.BookingLogicJS = template.JS(bookingLogicJS) // #nosec G203 -- our own bundled JS source constant, not user input
 	data.DemoMode = h.demoMode

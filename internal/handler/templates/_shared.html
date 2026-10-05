@@ -95,7 +95,7 @@
 {{/* SAFE (generic.html-templates.security.var-in-href, both links below): .PrivacyURL/.TermsURL
      are server-validated to require an absolute http(s) scheme before storage (validatedLegalURL
      in branding_settings.go) — a javascript: URI is rejected at write time, never at render time. */}}
-{{define "legalFooter"}}<footer class="powered-by">
+{{define "legalFooter"}}<footer class="legal-footer">
   {{if .PrivacyURL}}<a href="{{.PrivacyURL}}" target="_blank" rel="noopener noreferrer">{{call .T "privacy"}}</a>{{end}}  <!-- nosemgrep: generic.html-templates.security.var-in-href.var-in-href -->
   {{if .TermsURL}}<a href="{{.TermsURL}}" target="_blank" rel="noopener noreferrer">{{call .T "terms"}}</a>{{end}}  <!-- nosemgrep: generic.html-templates.security.var-in-href.var-in-href -->
   {{if or .GTMContainerID .GA4MeasurementID}}<button type="button" class="cookie-link" onclick="window.__calnodeOpenConsent && window.__calnodeOpenConsent()">{{call .T "cookie_settings"}}</button>{{end}}
@@ -122,7 +122,6 @@
   });
   </script>
   {{end}}
-  <a href="https://calnode.com" target="_blank" rel="noopener noreferrer">Calnode</a>
 </footer>{{end}}
 
 {{define "demoNoindex"}}{{if .DemoMode}}<meta name="robots" content="noindex,nofollow">{{end}}{{end}}

@@ -183,6 +183,22 @@ export type EmailSettings = {
 	enabled: boolean;
 };
 
+export type BrandingSettings = {
+	business_name: string;
+	logo_url: string;
+	logo_height: number;
+	logo_opacity: number;
+	banner_url: string;
+	banner_opacity: number;
+	privacy_url: string;
+	terms_url: string;
+	fallback_locale: string;
+	// Show host names + avatars on the public booking pages / widget (default true).
+	// Off = only the event/meeting name is shown; enforced server-side.
+	show_host_names: boolean;
+	supported_locales: { code: string; name: string }[];
+};
+
 export type GoogleSettings = {
 	client_id: string;
 	client_secret_set: boolean;

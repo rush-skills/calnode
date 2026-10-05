@@ -40,19 +40,30 @@ type brandingSettings struct {
 	// FallbackLocale is what a visitor sees when their browser doesn't ask for any
 	// locale Calnode supports — defaults to "en". See i18n.ResolveWithFallback.
 	FallbackLocale string
+	// ShowHostNames (default true) shows host names and avatars on the public booking
+	// surfaces: the book/manage pages, the public event-type JSON + /slots host map the
+	// embed widget consumes, the public create-booking response, and the team page's
+	// member roster. When false those surfaces carry only the event/meeting name — the
+	// names are withheld server-side, so no surface receives one it then has to hide.
+	// See docs/features/public-pages.md.
+	ShowHostNames bool
 }
 
 // loadBranding reads the brand identity from the singleton settings row.
 func (h *Handler) loadBranding(ctx context.Context) brandingSettings {
 	var b brandingSettings
+	// Scanned as an int that starts at its default so a failed Scan (no settings row yet)
+	// leaves the switch ON — the zero value of a bool would silently hide every host.
+	showHostNames := 1
 	_ = h.db.QueryRowContext(ctx, `
 		SELECT COALESCE(business_name,''), COALESCE(logo_url,''),
 		       COALESCE(logo_height,28), COALESCE(logo_opacity,100),
 		       COALESCE(banner_url,''), COALESCE(banner_opacity,100),
 		       COALESCE(privacy_url,''), COALESCE(terms_url,''),
-		       COALESCE(fallback_locale,'en')
+		       COALESCE(fallback_locale,'en'), COALESCE(show_host_names,1)
 		FROM server_settings WHERE id = 1`).Scan(&b.BusinessName, &b.LogoURL, &b.LogoHeight, &b.LogoOpacity,
-		&b.BannerURL, &b.BannerOpacity, &b.PrivacyURL, &b.TermsURL, &b.FallbackLocale)
+		&b.BannerURL, &b.BannerOpacity, &b.PrivacyURL, &b.TermsURL, &b.FallbackLocale, &showHostNames)
+	b.ShowHostNames = showHostNames != 0
 	if b.LogoHeight <= 0 {
 		b.LogoHeight = 28
 	}
@@ -140,6 +151,7 @@ func (h *Handler) GetBranding(w http.ResponseWriter, r *http.Request) {
 		"privacy_url":       b.PrivacyURL,
 		"terms_url":         b.TermsURL,
 		"fallback_locale":   b.FallbackLocale,
+		"show_host_names":   b.ShowHostNames,
 		"supported_locales": i18n.SupportedLocales(),
 	})
 }
@@ -159,10 +171,17 @@ func (h *Handler) PatchBranding(w http.ResponseWriter, r *http.Request) {
 		PrivacyURL     string `json:"privacy_url"`
 		TermsURL       string `json:"terms_url"`
 		FallbackLocale string `json:"fallback_locale"`
+		// Pointer, so an omitted key keeps the stored value rather than reading as
+		// false: a client that predates the field must not switch host names off.
+		ShowHostNames *bool `json:"show_host_names"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
+	}
+	showHostNames := h.loadBranding(r.Context()).ShowHostNames
+	if req.ShowHostNames != nil {
+		showHostNames = *req.ShowHostNames
 	}
 	req.BusinessName = strings.TrimSpace(req.BusinessName)
 	if len(req.BusinessName) > 200 {
@@ -219,8 +238,9 @@ func (h *Handler) PatchBranding(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := h.db.ExecContext(r.Context(), `
 		UPDATE server_settings SET business_name = ?, logo_height = ?, logo_opacity = ?,
-		       banner_opacity = ?, privacy_url = ?, terms_url = ?, fallback_locale = ?, updated_at = datetime('now')
-		WHERE id = 1`, req.BusinessName, req.LogoHeight, req.LogoOpacity, req.BannerOpacity, privacyURL, termsURL, req.FallbackLocale); err != nil {
+		       banner_opacity = ?, privacy_url = ?, terms_url = ?, fallback_locale = ?,
+		       show_host_names = ?, updated_at = datetime('now')
+		WHERE id = 1`, req.BusinessName, req.LogoHeight, req.LogoOpacity, req.BannerOpacity, privacyURL, termsURL, req.FallbackLocale, showHostNames); err != nil {
 		h.logger.ErrorContext(r.Context(), "branding settings: update", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return

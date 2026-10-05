@@ -1,29 +1,17 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api } from '$lib/api';
+	import { api, type BrandingSettings as Branding } from '$lib/api';
 	import { currentUser } from '$lib/stores';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
+	import { Switch } from '$lib/components/ui/switch';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import * as Select from '$lib/components/ui/select';
 	import { toast } from 'svelte-sonner';
 	import { saveOnCmdS } from '$lib/save-shortcut';
 	import { createAsyncFlag } from '$lib/async-action.svelte';
 	import type CropperType from 'cropperjs';
-
-	type Branding = {
-		business_name: string;
-		logo_url: string;
-		logo_height: number;
-		logo_opacity: number;
-		banner_url: string;
-		banner_opacity: number;
-		privacy_url: string;
-		terms_url: string;
-		fallback_locale: string;
-		supported_locales: { code: string; name: string }[];
-	};
 
 	// Both logo and banner share the same upload/crop dialog; cropTarget picks
 	// which endpoint + field name cropAndUpload() posts to.
@@ -41,6 +29,7 @@
 	let privacyUrl = $state('');
 	let termsUrl = $state('');
 	let fallbackLocale = $state('en');
+	let showHostNames = $state(true);
 	let supportedLocales = $state<{ code: string; name: string }[]>([]);
 	let fileInput = $state<HTMLInputElement | undefined>();
 	let bannerFileInput = $state<HTMLInputElement | undefined>();
@@ -82,6 +71,7 @@
 		privacyUrl = b.privacy_url ?? '';
 		termsUrl = b.terms_url ?? '';
 		fallbackLocale = b.fallback_locale || 'en';
+		showHostNames = b.show_host_names ?? true;
 		supportedLocales = b.supported_locales ?? [];
 	}, 'Could not load branding settings'));
 
@@ -166,7 +156,8 @@
 				banner_opacity: bannerOpacity,
 				privacy_url: privacyUrl,
 				terms_url: termsUrl,
-				fallback_locale: fallbackLocale
+				fallback_locale: fallbackLocale,
+				show_host_names: showHostNames
 			});
 			businessName = b.business_name ?? '';
 			logoHeight = b.logo_height || 28;
@@ -175,6 +166,7 @@
 			privacyUrl = b.privacy_url ?? '';
 			termsUrl = b.terms_url ?? '';
 			fallbackLocale = b.fallback_locale || 'en';
+			showHostNames = b.show_host_names ?? true;
 			toast.success('Branding saved');
 		}, 'Could not save branding settings');
 	}
@@ -281,6 +273,24 @@
 					entirely if not set. Displayed at up to 1600×800, so wide images work best. JPEG, PNG, GIF or
 					WebP, max 5 MB; it is re-encoded as a PNG.
 				</p>
+			</div>
+		</div>
+
+		<div class="rounded-lg border bg-card p-6">
+			<h2 class="text-sm font-semibold">Booking pages</h2>
+			<p class="mt-0.5 text-xs text-muted-foreground">
+				What visitors see on your public booking, manage and team pages and in the embed widget.
+			</p>
+			<div class="mt-4 flex items-start justify-between gap-4">
+				<div class="space-y-1">
+					<Label for="show-host-names">Show host names on booking pages</Label>
+					<p class="text-xs text-muted-foreground">
+						Shows who the meeting is with — the host's name and photo next to the event name. Turn
+						it off to show only the event name, for example when bookings are made with your business
+						rather than a specific person. Emails are not affected: they always name the host.
+					</p>
+				</div>
+				<Switch id="show-host-names" bind:checked={showHostNames} />
 			</div>
 		</div>
 

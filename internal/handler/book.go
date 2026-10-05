@@ -56,6 +56,10 @@ type bookPageData struct {
 	AvatarURL        string
 	Hosts            []hostDisplay // faces for the info panel (1 = single, >1 = group stack)
 	HostsLabel       string        // "Alex, Sam & 2 others" for the group case
+	// ShowHostNames is the workspace switch (Settings → Branding). When false, every host
+	// field above is already empty — the template additionally drops the face/name block
+	// so the event name takes the title position rather than leaving a blank row.
+	ShowHostNames bool
 	// SoleHostName is the host's name when this event type has exactly one, and "" when
 	// it has several. It is what lets an empty day read "Alex has no available times on
 	// …": a group label ("Alex, Sam & 2 others") in that sentence would need a plural
@@ -345,9 +349,15 @@ func (h *Handler) PublicEventType(w http.ResponseWriter, r *http.Request) {
 	}
 	accentColor = accentOrDefault(accentColor)
 
+	brand := h.loadBranding(r.Context())
 	hosts := h.displayHosts(r.Context(), etID, routingMode)
 	if len(hosts) == 0 {
 		hosts = []hostDisplay{{Name: hostName, AvatarURL: avatarURL}}
+	}
+	// "Show host names" off: the widget gets an empty host list and never sees a name
+	// or avatar it would then have to hide (it renders the event name alone).
+	if !brand.ShowHostNames {
+		hosts = nil
 	}
 	// Absolutise relative asset paths so they resolve from a remote embedding page.
 	abs := func(p string) string {
@@ -365,7 +375,6 @@ func (h *Handler) PublicEventType(w http.ResponseWriter, r *http.Request) {
 		outHosts = append(outHosts, pubHost{Name: hd.Name, AvatarURL: abs(hd.AvatarURL)})
 	}
 
-	brand := h.loadBranding(r.Context())
 	// The embed widget (a separate JS runtime on a third-party site, not server-rendered
 	// like book.html/manage.html) resolves its own locale client-side (navigator.language,
 	// or an explicit lang="" attribute on <calnode-booking>) and sends it as ?lang= here.
@@ -490,6 +499,8 @@ func (h *Handler) BookPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	track := h.loadTrackingSettings(r.Context())
+	brand := h.loadBranding(r.Context())
 	// Resolve the host face(s) by routing mode; fall back to the event-type owner
 	// if no hosts are configured (shouldn't happen post-backfill).
 	hosts := h.displayHosts(r.Context(), etID, routingMode)
@@ -499,8 +510,16 @@ func (h *Handler) BookPage(w http.ResponseWriter, r *http.Request) {
 	for i := range hosts {
 		hosts[i].Z = (len(hosts) - i) * 10
 	}
-	track := h.loadTrackingSettings(r.Context())
-	brand := h.loadBranding(r.Context())
+	// "Show host names" off: drop the hosts before any label is composed, so the page
+	// data (faces, label, the "%s has no available times" subject) carries no name. The
+	// /slots host map and the create-booking response are withheld the same way, so the
+	// page JS never receives a name either.
+	primary := hostDisplay{}
+	if !brand.ShowHostNames {
+		hosts = nil
+	} else {
+		primary = hosts[0]
+	}
 	dlFields, _ := json.Marshal(track.DataLayerFields)
 	qmap := make(map[string]string, len(questions))
 	for _, q := range questions {
@@ -519,12 +538,13 @@ func (h *Handler) BookPage(w http.ResponseWriter, r *http.Request) {
 		Name:                name,
 		Description:         renderMarkdown(description),
 		DurationLabel:       durationLabel(durMins, loc),
-		HostName:            hosts[0].Name,
-		HostInitial:         hosts[0].Initial,
-		AvatarURL:           hosts[0].AvatarURL,
+		HostName:            primary.Name,
+		HostInitial:         primary.Initial,
+		AvatarURL:           primary.AvatarURL,
 		Hosts:               hosts,
 		HostsLabel:          hostsLabel(hosts, loc),
 		SoleHostName:        soleHostName(hosts),
+		ShowHostNames:       brand.ShowHostNames,
 		MinNoticeLabel:      noticeLabel(minNotice, loc),
 		LocationLabel:       locationLabel(locType, locValue, loc),
 		PriceLabel:          formatPrice(priceCents, currency),

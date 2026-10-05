@@ -55,7 +55,6 @@
   "demo_public_label": "Public demo",
   "demo_public_text": "data here is visible to everyone and resets automatically. Don't enter anything private.",
   "demo_view_source": "View source",
-  "powered_by": "Powered by",
 
   "duration_min": "%d min",
   "duration_hour_one": "1 hour",
