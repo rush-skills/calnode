@@ -14,10 +14,10 @@ import (
 const (
 	sessionCookieName = "calnode_session"
 	stateCookieName   = "calnode_oauth_state"
-	// tzCookieName carries the browser's IANA timezone (from ?tz= on /v1/auth/login)
-	// across the Google round-trip so an auto-joined member's availability is seeded in
-	// their own zone rather than UTC. Same lifetime as the state cookie; only read when
-	// a user is being created, never for an existing one.
+	// tzCookieName carries the browser's IANA timezone (from ?tz= on the OAuth login
+	// URLs) across the provider round-trip so a member auto-provisioned from an allowed
+	// sign-in domain gets their availability seeded in their own zone rather than UTC.
+	// Same lifetime as the state cookie; only read when a user is being created.
 	tzCookieName    = "calnode_oauth_tz"
 	sessionDuration = 30 * 24 * time.Hour
 	stateDuration   = 5 * time.Minute
@@ -54,20 +54,29 @@ func (h *Handler) LoginGoogle(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	if tz := r.URL.Query().Get("tz"); tz != "" && tz != "UTC" && len(tz) <= 64 {
-		if _, err := time.LoadLocation(tz); err == nil {
-			http.SetCookie(w, &http.Cookie{ // #nosec G124 -- HttpOnly/SameSite/Secure are all set; Secure is h.secureCookie (dynamic on BASE_URL scheme), which gosec's static check can't verify
-				Name:     tzCookieName,
-				Value:    tz,
-				Path:     "/",
-				MaxAge:   int(stateDuration.Seconds()),
-				HttpOnly: true,
-				SameSite: http.SameSiteLaxMode,
-				Secure:   h.secureCookie,
-			})
-		}
-	}
+	h.rememberBrowserTimezone(w, r)
 	http.Redirect(w, r, ga.AuthCodeURL(state, oauth2.AccessTypeOnline), http.StatusFound)
+}
+
+// rememberBrowserTimezone stores a valid ?tz= IANA zone in a short-lived cookie for
+// browserTimezone to read on the callback. Invalid or absent values set nothing.
+func (h *Handler) rememberBrowserTimezone(w http.ResponseWriter, r *http.Request) {
+	tz := r.URL.Query().Get("tz")
+	if tz == "" || tz == "UTC" || len(tz) > 64 {
+		return
+	}
+	if _, err := time.LoadLocation(tz); err != nil {
+		return
+	}
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- HttpOnly/SameSite/Secure are all set; Secure is h.secureCookie (dynamic on BASE_URL scheme), which gosec's static check can't verify
+		Name:     tzCookieName,
+		Value:    tz,
+		Path:     "/",
+		MaxAge:   int(stateDuration.Seconds()),
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   h.secureCookie,
+	})
 }
 
 // browserTimezone returns the IANA zone the login page sent along, or "" when absent
@@ -127,18 +136,10 @@ func (h *Handler) CallbackGoogle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// No self-registration, with one gated exception: a verified Workspace account on
-	// an admin-allow-listed hosted domain gets a member row on first sign-in
-	// (google_auto_join.go). Everyone else must already exist.
-	tz := h.browserTimezone(w, r)
-	if created, err := h.autoProvisionGoogleUser(r.Context(), info, tz); err != nil {
-		h.logger.ErrorContext(r.Context(), "auth: auto-join provision", "error", err)
-		http.Redirect(w, r, "/admin/login?error=session", http.StatusFound)
-		return
-	} else if created {
-		h.logger.InfoContext(r.Context(), "auth: auto-joined member", "email", info.Email, "hd", info.HD)
-	}
-	h.finishOAuthLogin(w, r, info.Email)
+	// Known emails sign in; an unknown one only via an allowed sign-in domain, and
+	// only when Google says the address is verified — an unverified Google account
+	// can claim any address, so it must never mint a member for it.
+	h.finishOAuthLogin(w, r, info.Email, info.Name, info.VerifiedEmail, h.browserTimezone(w, r))
 }
 
 // Logout deletes the session record and clears the session cookie.
@@ -170,10 +171,6 @@ type googleUserInfo struct {
 	Email         string `json:"email"`
 	Name          string `json:"name"`
 	VerifiedEmail bool   `json:"verified_email"`
-	// HD is the Google Workspace hosted domain. Google sets it only for Workspace
-	// accounts and only after it has verified the domain, so it is the trustworthy
-	// signal for auto-join; the text after "@" in Email is not.
-	HD string `json:"hd"`
 }
 
 func fetchGoogleUserInfo(ctx context.Context, cfg *oauth2.Config, tok *oauth2.Token) (*googleUserInfo, error) {

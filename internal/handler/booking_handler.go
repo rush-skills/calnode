@@ -473,6 +473,8 @@ type bookableEventType struct {
 	// so the page can grey them out. Read by the public slots endpoint only: the MCP
 	// tool and the booking assistant must keep seeing bookable times and nothing else.
 	ShowTakenSlots bool
+	// CalendarMessage is the sanitized-HTML invite message (see calendarDescription).
+	CalendarMessage string
 }
 
 // loadBookableEventType loads an event type by slug for the booking-creation/slot paths.
@@ -487,12 +489,14 @@ func (h *Handler) loadBookableEventType(ctx context.Context, slug string) (*book
 		SELECT id, user_id, name, COALESCE(description, ''), duration_minutes, slot_interval_minutes,
 		       location_type, location_value, allow_phone_call, routing_mode, rr_strategy,
 		       buffer_before_minutes, buffer_after_minutes, min_notice_minutes, max_future_days,
-		       is_active, is_public, show_taken_slots, max_active_bookings, price_cents, currency
+		       is_active, is_public, show_taken_slots, max_active_bookings, price_cents, currency,
+		       COALESCE(calendar_message, '')
 		FROM event_types WHERE slug = ?`, slug).
 		Scan(&et.ID, &et.UserID, &et.Name, &et.Description, &et.DurationMinutes, &et.SlotIntervalMinutes,
 			&et.LocationType, &et.LocationValue, &et.AllowPhoneCall, &et.RoutingMode, &et.RRStrategy,
 			&et.BufferBeforeMinutes, &et.BufferAfterMinutes, &et.MinNoticeMinutes, &et.MaxFutureDays,
-			&isActive, &isPublic, &showTaken, &et.MaxActiveBookings, &et.PriceCents, &et.Currency)
+			&isActive, &isPublic, &showTaken, &et.MaxActiveBookings, &et.PriceCents, &et.Currency,
+			&et.CalendarMessage)
 	if err != nil || isActive == 0 || isPublic == 0 {
 		return nil, errEventTypeNotFound
 	}
@@ -576,14 +580,14 @@ func (h *Handler) createBookingForSlug(ctx context.Context, slug string, startAt
 		return nil, err
 	}
 	go h.dispatchBookingConfirmation(b, bookingConfirmationInput{ // #nosec G118 -- deliberately its own context.Background(); the request context is cancelled the moment this handler returns, which would abort these side effects immediately
-		EventTypeName:        et.Name,
-		EventTypeDescription: et.Description,
-		EventTypeSlug:        slug,
-		LocationType:         et.LocationType,
-		OrganizerName:        organizer.Name,
-		OrganizerEmail:       organizer.Email,
-		OrganizerTimezone:    organizer.IANATimezone,
-		OrganizerLocale:      organizer.Locale,
+		EventTypeName:     et.Name,
+		EventTypeSlug:     slug,
+		LocationType:      et.LocationType,
+		CalendarMessage:   et.CalendarMessage,
+		OrganizerName:     organizer.Name,
+		OrganizerEmail:    organizer.Email,
+		OrganizerTimezone: organizer.IANATimezone,
+		OrganizerLocale:   organizer.Locale,
 	})
 	return b, nil
 }
@@ -992,44 +996,32 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 	// Run calendar/email/webhook side effects in the background — the booking is
 	// committed; a side-effect failure must not roll it back or change the response.
 	go h.dispatchBookingConfirmation(b, bookingConfirmationInput{ // #nosec G118 -- deliberately its own context.Background(); see dispatchBookingConfirmation's doc comment
-		EventTypeName:        et.Name,
-		EventTypeDescription: et.Description,
-		EventTypeSlug:        req.EventTypeSlug,
-		LocationType:         et.LocationType,
-		OrganizerName:        req.Name,
-		OrganizerEmail:       req.Email,
-		OrganizerTimezone:    req.Timezone,
-		OrganizerLocale:      i18n.Resolve("", req.Language).Code,
+		EventTypeName:     et.Name,
+		EventTypeSlug:     req.EventTypeSlug,
+		LocationType:      et.LocationType,
+		CalendarMessage:   et.CalendarMessage,
+		OrganizerName:     req.Name,
+		OrganizerEmail:    req.Email,
+		OrganizerTimezone: req.Timezone,
+		OrganizerLocale:   i18n.Resolve("", req.Language).Code,
 	})
 }
 
 // bookingConfirmationInput carries the event-type and organizer details that the
 // post-create side effects need but that aren't stored on the booking row.
 type bookingConfirmationInput struct {
-	EventTypeName string
-	// EventTypeDescription feeds the calendar invite text (see calendarEventDescription).
-	EventTypeDescription string
-	EventTypeSlug        string
-	LocationType         string
-	OrganizerName        string
-	OrganizerEmail       string
-	OrganizerTimezone    string
+	EventTypeName     string
+	EventTypeSlug     string
+	LocationType      string
+	OrganizerName     string
+	OrganizerEmail    string
+	OrganizerTimezone string
 	// OrganizerLocale is the attendee's resolved locale code (e.g. "es") — same value
 	// stored on booking_attendees.locale, threaded into the confirmation email.
 	OrganizerLocale string
-}
-
-// calendarEventDescription is the text on the provider calendar event (Google, Outlook,
-// CalDAV) that the attendee is invited to: the event type's own description first, then
-// the booking id line the reconciler and support rely on. The .ics attachment uses the
-// same lead (mailer.BuildICS) so the two invite paths read alike. tf is the attendee's
-// locale formatter (BookingData.Tf or i18n.Locale.Tf).
-func calendarEventDescription(tf func(string, ...any) string, bookingID, etDescription string) string {
-	idLine := tf("calendar_event_booking_id", bookingID)
-	if d := strings.TrimSpace(etDescription); d != "" {
-		return d + "\n\n" + idLine
-	}
-	return idLine
+	// CalendarMessage is the event type's invite message (sanitized HTML), composed
+	// into every host's calendar event by calendarDescription.
+	CalendarMessage string
 }
 
 // hostPrefsOrDefault loads a host's notification prefs, defaulting to allOnPrefs and
@@ -1195,6 +1187,11 @@ func (h *Handler) createHostEventsAndNotify(ctx context.Context, b *booking.Book
 	gc := h.getCal()
 	primaryPrefs := allOnPrefs
 	confirmFailed := false
+	answers, err := h.loadAnswerLines(ctx, b.ID)
+	if err != nil {
+		h.logger.Error("booking confirmation: load answers for calendar event", "error", err, "booking_id", b.ID)
+	}
+	descPlain, descRich := calendarDescription(bData.Locale, in.CalendarMessage, answers, b.ID)
 	for _, host := range hosts {
 		// Create a calendar event on each host's connected calendar and record
 		// the per-host event ID so it can be cancelled later. The primary's id
@@ -1204,14 +1201,15 @@ func (h *Handler) createHostEventsAndNotify(ctx context.Context, b *booking.Book
 				// The attendee is added as a calendar invitee below, so this text reaches
 				// them via the provider's own native invite (Google/Outlook/CalDAV) —
 				// follows their locale like the confirmation email, not English/host-fixed.
-				Summary:        bData.Tf("calendar_event_summary", in.EventTypeName, in.OrganizerName),
-				Description:    calendarEventDescription(bData.Tf, b.ID, in.EventTypeDescription),
-				Location:       hostEventLocation(meetURL, livekitHostURL, bData.LocationValue), // empty until the primary creates it; secondary hosts get the link
-				Start:          b.StartAt,
-				End:            b.EndAt,
-				OrganizerName:  in.OrganizerName,
-				OrganizerEmail: in.OrganizerEmail,
-				AddMeet:        autoGenMeet && host.IsPrimary,
+				Summary:         bData.Tf("calendar_event_summary", in.EventTypeName, in.OrganizerName),
+				Description:     descPlain,
+				DescriptionHTML: descRich,
+				Location:        hostEventLocation(meetURL, livekitHostURL, bData.LocationValue), // empty until the primary creates it; secondary hosts get the link
+				Start:           b.StartAt,
+				End:             b.EndAt,
+				OrganizerName:   in.OrganizerName,
+				OrganizerEmail:  in.OrganizerEmail,
+				AddMeet:         autoGenMeet && host.IsPrimary,
 			})
 			if err != nil {
 				h.logger.Error("create gcal event", "error", err, "booking_id", b.ID, "host", host.UserID)
@@ -1299,18 +1297,18 @@ func (h *Handler) dispatchBookingConfirmation(b *booking.Booking, in bookingConf
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	bData := mailer.BookingData{
-		BookingID:            b.ID,
-		EventTypeName:        in.EventTypeName,
-		EventTypeDescription: in.EventTypeDescription,
-		EventTypeSlug:        in.EventTypeSlug,
-		OrganizerName:        in.OrganizerName,
-		OrganizerEmail:       in.OrganizerEmail,
-		OrganizerTimezone:    in.OrganizerTimezone,
-		StartAt:              b.StartAt,
-		EndAt:                b.EndAt,
-		LocationValue:        b.LocationValue,
-		BaseURL:              h.publicURL(),
-		Locale:               i18n.Get(in.OrganizerLocale),
+		BookingID:         b.ID,
+		EventTypeName:     in.EventTypeName,
+		EventTypeSlug:     in.EventTypeSlug,
+		OrganizerName:     in.OrganizerName,
+		OrganizerEmail:    in.OrganizerEmail,
+		OrganizerTimezone: in.OrganizerTimezone,
+		StartAt:           b.StartAt,
+		EndAt:             b.EndAt,
+		LocationValue:     b.LocationValue,
+		BaseURL:           h.publicURL(),
+		Locale:            i18n.Get(in.OrganizerLocale),
+		CalendarMessage:   calendarMessageText(in.CalendarMessage),
 	}
 	h.applyBranding(ctx, &bData)
 	// Every assigned host attends (Group books several; round-robin/Normal one).
@@ -1684,12 +1682,18 @@ func (h *Handler) CancelBooking(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Admins (and the owner) may cancel any booking — needed to resolve a
-	// departing member's meetings. Non-admin hosts can cancel only their own.
+	// departing member's meetings. Non-admin hosts can cancel only bookings they
+	// attend — as primary OR as a secondary host (canActOnBooking), the same gate
+	// the reschedule endpoint uses, so a booking listed under "My bookings" is one
+	// the viewer can actually act on.
 	var cancelErr error
-	if user.IsAdmin {
+	var primaryHostID string
+	if err := h.db.QueryRowContext(r.Context(), `SELECT host_id FROM bookings WHERE id = ?`, id).Scan(&primaryHostID); err != nil {
+		cancelErr = booking.ErrNotFound
+	} else if h.canActOnBooking(r.Context(), user, id, primaryHostID) {
 		cancelErr = h.bookingSvc.CancelByID(r.Context(), id, attribution)
 	} else {
-		cancelErr = h.bookingSvc.Cancel(r.Context(), user.ID, id, attribution)
+		cancelErr = booking.ErrNotFound
 	}
 	if err := cancelErr; err != nil {
 		switch {
@@ -2003,12 +2007,14 @@ func (h *Handler) loadCancellationData(ctx context.Context, b *booking.Booking) 
 	// Event type name + slug and the assigned host's name + email. The host
 	// comes from the booking (b.HostID), not the event-type owner: with
 	// multi-host event types the owner rarely hosts the booking (#48).
+	var calMsg string
 	err := h.db.QueryRowContext(ctx, `
-		SELECT et.name, et.slug, COALESCE(et.description, '') FROM event_types et WHERE et.id = ?`, b.EventTypeID).
-		Scan(&d.EventTypeName, &d.EventTypeSlug, &d.EventTypeDescription)
+		SELECT et.name, et.slug, COALESCE(et.calendar_message, '') FROM event_types et WHERE et.id = ?`, b.EventTypeID).
+		Scan(&d.EventTypeName, &d.EventTypeSlug, &calMsg)
 	if err != nil {
 		return d, fmt.Errorf("load event: %w", err)
 	}
+	d.CalendarMessage = calendarMessageText(calMsg)
 	if err := h.loadHostIntoData(ctx, b.HostID, &d); err != nil {
 		return d, fmt.Errorf("load host: %w", err)
 	}

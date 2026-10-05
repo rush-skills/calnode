@@ -147,7 +147,7 @@
 			{/if}
 
 			{#if showMicrosoft}
-				<Button variant="outline" class="h-11 w-full {showGoogle ? 'mt-3' : ''}" onclick={() => window.location.href = '/v1/auth/microsoft/login'}>
+				<Button variant="outline" class="h-11 w-full {showGoogle ? 'mt-3' : ''}" onclick={() => window.location.href = '/v1/auth/microsoft/login?tz=' + encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')}>
 					<svg width="16" height="16" viewBox="0 0 23 23" aria-hidden="true" class="mr-2">
 						<path fill="#F25022" d="M1 1h10v10H1z"/>
 						<path fill="#7FBA00" d="M12 1h10v10H12z"/>

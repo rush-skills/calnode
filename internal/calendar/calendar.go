@@ -17,13 +17,17 @@ import (
 // CreateEventParams holds the data needed to create a calendar event. Provider-
 // agnostic: AddMeet requests the provider's online-meeting (Google Meet / Teams).
 type CreateEventParams struct {
-	Summary        string
-	Description    string
-	Location       string // optional; e.g. the meeting link on secondary hosts' events
-	Start, End     time.Time
-	OrganizerName  string
-	OrganizerEmail string
-	AddMeet        bool
+	Summary     string
+	Description string // plain text; every provider can carry this
+	// DescriptionHTML is the same content as rich HTML for providers that render it
+	// (Google, Microsoft). Empty means "use Description". CalDAV ignores it: an .ics
+	// DESCRIPTION is text.
+	DescriptionHTML string
+	Location        string // optional; e.g. the meeting link on secondary hosts' events
+	Start, End      time.Time
+	OrganizerName   string
+	OrganizerEmail  string
+	AddMeet         bool
 }
 
 // CalendarInfo is one calendar the provider exposes for a connected account.

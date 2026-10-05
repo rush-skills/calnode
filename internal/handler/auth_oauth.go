@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"net/http"
 )
 
@@ -47,14 +48,34 @@ func (h *Handler) verifyOAuthState(w http.ResponseWriter, r *http.Request) bool 
 
 // finishOAuthLogin resolves an OAuth-verified email to an existing, non-archived
 // user and starts a session, redirecting to /admin on success or /admin/login with
-// an error otherwise. Self-registration is not allowed — only known emails sign in.
-func (h *Handler) finishOAuthLogin(w http.ResponseWriter, r *http.Request, email string) {
+// an error otherwise. An unknown email signs in only when the provider VERIFIED it
+// and its domain is on the admin's allowed sign-in list, in which case a member
+// account is created first (see signin_domains.go); otherwise it is refused, as it
+// always was. name is the provider's display name for that new account.
+func (h *Handler) finishOAuthLogin(w http.ResponseWriter, r *http.Request, email, name string, verified bool, tz string) {
 	var userID string
 	var archivedAt sql.NullString
-	if err := h.db.QueryRowContext(r.Context(),
-		`SELECT id, archived_at FROM users WHERE email = ?`, email).Scan(&userID, &archivedAt); err != nil {
-		h.logger.WarnContext(r.Context(), "auth: no account for email", "email", email)
-		http.Redirect(w, r, "/admin/login?error=no_account", http.StatusFound)
+	err := h.db.QueryRowContext(r.Context(),
+		`SELECT id, archived_at FROM users WHERE email = ?`, email).Scan(&userID, &archivedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		domains, derr := h.allowedSigninDomains(r.Context())
+		if derr != nil {
+			h.logger.ErrorContext(r.Context(), "auth: load allowed sign-in domains", "error", derr)
+		}
+		if !verified || !signinDomainAllowed(email, domains) {
+			h.logger.WarnContext(r.Context(), "auth: no account for email", "email", email, "verified", verified)
+			http.Redirect(w, r, "/admin/login?error=no_account", http.StatusFound)
+			return
+		}
+		userID, err = h.provisionOAuthUser(r.Context(), email, name, tz)
+		if err != nil {
+			h.logger.ErrorContext(r.Context(), "auth: provision user", "error", err, "email", email)
+			http.Redirect(w, r, "/admin/login?error=session", http.StatusFound)
+			return
+		}
+	} else if err != nil {
+		h.logger.ErrorContext(r.Context(), "auth: look up account", "error", err)
+		http.Redirect(w, r, "/admin/login?error=session", http.StatusFound)
 		return
 	}
 	if archivedAt.Valid {

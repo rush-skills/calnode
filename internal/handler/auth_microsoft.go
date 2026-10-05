@@ -47,6 +47,7 @@ func (h *Handler) LoginMicrosoft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// prompt=select_account so a cached SSO session can't silently pick the wrong one.
+	h.rememberBrowserTimezone(w, r)
 	http.Redirect(w, r, ma.AuthCodeURL(state, oauth2.AccessTypeOnline,
 		oauth2.SetAuthURLParam("prompt", "select_account")), http.StatusFound)
 }
@@ -75,18 +76,21 @@ func (h *Handler) CallbackMicrosoft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	email, err := fetchMicrosoftEmail(r.Context(), ma, tok)
+	email, name, err := fetchMicrosoftEmail(r.Context(), ma, tok)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "auth: microsoft user info", "error", err)
 		http.Redirect(w, r, "/admin/login?error=userinfo", http.StatusFound)
 		return
 	}
-	h.finishOAuthLogin(w, r, email)
+	// Entra ID verifies domain ownership at the tenant level (see fetchMicrosoftEmail),
+	// so a standard member's address counts as verified for allowed-domain sign-in.
+	h.finishOAuthLogin(w, r, email, name, true, h.browserTimezone(w, r))
 }
 
 type microsoftUserInfo struct {
 	Mail              string `json:"mail"`
 	UserPrincipalName string `json:"userPrincipalName"`
+	DisplayName       string `json:"displayName"`
 }
 
 // fetchMicrosoftEmail reads the signed-in account's email from Graph /me, preferring
@@ -102,29 +106,29 @@ type microsoftUserInfo struct {
 // UPN, which Microsoft synthesizes as "user_domain.com#EXT#@resourcetenant.onmicrosoft.com"
 // — rejected below so a guest identity in some other tenant can never be used as an email
 // to look up (and sign in as) an existing Calnode user.
-func fetchMicrosoftEmail(ctx context.Context, cfg *oauth2.Config, tok *oauth2.Token) (string, error) {
-	resp, err := cfg.Client(ctx, tok).Get("https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName")
+func fetchMicrosoftEmail(ctx context.Context, cfg *oauth2.Config, tok *oauth2.Token) (email, name string, err error) {
+	resp, err := cfg.Client(ctx, tok).Get("https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName,displayName")
 	if err != nil {
-		return "", fmt.Errorf("auth: graph /me request: %w", err)
+		return "", "", fmt.Errorf("auth: graph /me request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("auth: graph /me status %d", resp.StatusCode)
+		return "", "", fmt.Errorf("auth: graph /me status %d", resp.StatusCode)
 	}
 	var info microsoftUserInfo
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
-		return "", fmt.Errorf("auth: decode graph /me: %w", err)
+		return "", "", fmt.Errorf("auth: decode graph /me: %w", err)
 	}
-	email := strings.ToLower(strings.TrimSpace(info.Mail))
+	email = strings.ToLower(strings.TrimSpace(info.Mail))
 	if email == "" {
 		upn := strings.ToLower(strings.TrimSpace(info.UserPrincipalName))
 		if strings.Contains(upn, "#ext#") {
-			return "", fmt.Errorf("auth: Microsoft account is a B2B guest identity, not a verifiable email")
+			return "", "", fmt.Errorf("auth: Microsoft account is a B2B guest identity, not a verifiable email")
 		}
 		email = upn
 	}
 	if email == "" {
-		return "", fmt.Errorf("auth: empty email from Microsoft")
+		return "", "", fmt.Errorf("auth: empty email from Microsoft")
 	}
-	return email, nil
+	return email, strings.TrimSpace(info.DisplayName), nil
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestBuildICS_request(t *testing.T) {
@@ -135,26 +134,30 @@ func TestBuildRaw_multipartWithICS(t *testing.T) {
 	}
 }
 
-// The event type's description leads the invite text so the operator's own words reach
-// the attendee's calendar, with the standard "Booking with" line and manage link after.
-func TestBuildICS_leadsWithEventTypeDescription(t *testing.T) {
-	d := BookingData{
-		BookingID:            "bk1",
-		EventTypeName:        "Consultation",
-		EventTypeDescription: "Bring your ring size.\nWe meet at the studio.",
-		HostName:             "Ana",
-		ManageURL:            "https://x.test/manage/t",
-		StartAt:              time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC),
-		EndAt:                time.Date(2026, 1, 2, 10, 30, 0, 0, time.UTC),
+// The invite message rides at the top of the .ics DESCRIPTION and the add-to-calendar
+// links, so the attendee's own calendar entry reads like the host's Google/Outlook one.
+func TestBuildICSAndCalendarLinks_carryTheCalendarMessage(t *testing.T) {
+	d := testBookingData()
+	d.CalendarMessage = "Agenda\n- One"
+	d.ManageURL = "https://calnode.example.com/manage/tok"
+
+	ics := string(BuildICS(d, "REQUEST"))
+	// ICS folds long lines and escapes newlines as \n; the order is what matters.
+	if !strings.Contains(ics, "DESCRIPTION:Agenda\\n- One\\n\\n") {
+		t.Errorf("ICS DESCRIPTION should open with the message:\n%s", ics)
 	}
-	// Unfold RFC 5545 continuation lines (CRLF + space) before asserting on content.
-	unfold := func(b []byte) string { return strings.ReplaceAll(string(b), "\r\n ", "") }
-	ics := unfold(BuildICS(d, "REQUEST"))
-	if !strings.Contains(ics, `DESCRIPTION:Bring your ring size.\nWe meet at the studio.\n\nBooking with Ana`) {
-		t.Errorf("description missing or misordered:\n%s", ics)
+	if strings.Index(ics, "Agenda") > strings.Index(ics, "Alice") {
+		t.Errorf("message should precede the host line:\n%s", ics)
 	}
-	d.EventTypeDescription = "   "
-	if ics := unfold(BuildICS(d, "REQUEST")); !strings.Contains(ics, "DESCRIPTION:Booking with Ana") {
-		t.Errorf("blank description should be dropped:\n%s", ics)
+	for _, u := range []string{d.GoogleCalURL(), d.OutlookCalURL()} {
+		if !strings.Contains(u, "Agenda%0A-+One%0A%0A") {
+			t.Errorf("calendar link should carry the message first: %s", u)
+		}
+	}
+
+	// Without a message, nothing changes.
+	d.CalendarMessage = ""
+	if strings.Contains(string(BuildICS(d, "REQUEST")), "Agenda") || strings.Contains(d.GoogleCalURL(), "Agenda") {
+		t.Error("message leaked with CalendarMessage empty")
 	}
 }

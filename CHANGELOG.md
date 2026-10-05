@@ -11,13 +11,6 @@ exact tag (`ghcr.io/calnode/calnode:0.1.0`) if you need stability between upgrad
 
 ## [Unreleased]
 
-### Added
-- **The event type's description now goes into the calendar invite.** Both the `.ics`
-  attachment and the Google / Outlook / CalDAV event the attendee is invited to lead with
-  the description written on the event type, followed by the existing "Booking with" and
-  booking-id lines. Reschedules, host reassignment and the reconciler use the same text.
-  Until now there was nowhere to set invite text at all.
-
 ### Fixed
 - **The timezone picker now lists every IANA zone**, not a hand-picked fifteen (India was
   missing, among most of the world). It reads the browser's own table and falls back to
@@ -25,8 +18,7 @@ exact tag (`ghcr.io/calnode/calnode:0.1.0`) if you need stability between upgrad
 - **Availability now says which timezone it is in.** Weekly hours are interpreted in the
   host's profile timezone, but the page never said so, and a mismatch with the browser
   silently shifted every slot. The page now names the zone, flags a browser mismatch, and
-  links to Profile. Google auto-joined members also get their browser's timezone at first
-  sign-in instead of UTC (the login page passes it along; it is validated server-side).
+  links to Profile.
 - **Members could not staff an event type.** Opening the Hosts tab as a regular member
   failed with "admin access required": the member and team lists it fills its pickers from
   were admin-only reads. Any signed-in member can now read the member directory and the
@@ -40,12 +32,17 @@ exact tag (`ghcr.io/calnode/calnode:0.1.0`) if you need stability between upgrad
   archiving them, so admins cannot demote each other.
 
 ### Added
-- **Google Workspace auto-join.** Settings → Google OAuth has an "Auto-join domains" list.
-  A Google sign-in from a Workspace account on a listed domain creates a regular member
-  on first login instead of failing with "no account", so a team no longer has to invite
-  every colleague by hand. The check uses the hosted-domain claim Google verified for the
-  account, not the email text, so a personal Gmail address can't qualify. Off by default;
-  Microsoft sign-in is unchanged.
+- **Allowed sign-in domains.** Settings → Google OAuth lists email domains whose verified
+  Google or Microsoft sign-ins create a member account on first login, so a team no longer
+  invites every colleague by hand. Off by default (invite-only, as before). A member created
+  this way gets their browser's timezone rather than UTC.
+- **"Some always attend" staffing mode.** An event type can name hosts who are on every
+  booking (required or optional) alongside a rotation that supplies one more, for finer
+  control than "rotate" or "everyone attends".
+- **Calendar invite message per event type**, edited as rich text, placed on the attendee's
+  calendar invite and the .ics above the booking-id line. Email custom notes are rich text
+  too, and the booker's question answers are put on the host's calendar event.
+- **Any attending host can reschedule or cancel a booking**, not just the primary.
 
 ## [0.10.1] - 2026-09-29
 

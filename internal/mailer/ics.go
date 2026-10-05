@@ -34,14 +34,9 @@ func BuildICS(d BookingData, method string) []byte {
 	writeICSLine(&b, "DTSTART:"+d.StartAt.UTC().Format(icsTimeLayout))
 	writeICSLine(&b, "DTEND:"+d.EndAt.UTC().Format(icsTimeLayout))
 	writeICSLine(&b, "SUMMARY:"+escapeICSText(d.EventTypeName))
-	desc := d.Tf("email_booking_with", d.HostName)
-	if et := strings.TrimSpace(d.EventTypeDescription); et != "" {
-		desc = et + "\n\n" + desc
-	}
-	if d.ManageURL != "" {
-		desc += "\n" + d.T("email_manage_this_booking") + " " + d.ManageURL
-	}
-	writeICSLine(&b, "DESCRIPTION:"+escapeICSText(desc))
+	// Same text as the add-to-calendar links (calDetails), so the .ics and the deep
+	// links describe the booking identically.
+	writeICSLine(&b, "DESCRIPTION:"+escapeICSText(d.calDetails()))
 	if d.LocationValue != "" {
 		writeICSLine(&b, "LOCATION:"+escapeICSText(d.LocationValue))
 	}

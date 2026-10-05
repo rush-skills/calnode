@@ -98,16 +98,17 @@ func (h *Handler) ReassignBooking(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Capture the old host + calendar event + summary fields before the move.
-	var oldHostID, extEventID, extProvider, etName, etDescription, orgName, orgEmail, orgLocale string
+	var oldHostID, extEventID, extProvider, etName, orgName, orgEmail, orgLocale, calMsg string
 	err = h.db.QueryRowContext(r.Context(), `
 		SELECT b.host_id, COALESCE(b.external_event_id,''), COALESCE(bh.external_provider,''),
-		       et.name, COALESCE(et.description,''), COALESCE(a.name,''), COALESCE(a.email,''), COALESCE(a.locale,'')
+		       et.name, COALESCE(a.name,''), COALESCE(a.email,''), COALESCE(a.locale,''),
+		       COALESCE(et.calendar_message,'')
 		FROM bookings b
 		JOIN event_types et ON et.id = b.event_type_id
 		LEFT JOIN booking_attendees a ON a.booking_id = b.id AND a.is_organizer = 1
 		LEFT JOIN booking_hosts bh ON bh.booking_id = b.id AND bh.user_id = b.host_id
 		WHERE b.id = ?`, id).
-		Scan(&oldHostID, &extEventID, &extProvider, &etName, &etDescription, &orgName, &orgEmail, &orgLocale)
+		Scan(&oldHostID, &extEventID, &extProvider, &etName, &orgName, &orgEmail, &orgLocale, &calMsg)
 	if errors.Is(err, sql.ErrNoRows) {
 		h.writeError(w, http.StatusNotFound, "booking not found")
 		return
@@ -167,14 +168,20 @@ func (h *Handler) ReassignBooking(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			loc := i18n.Get(orgLocale) // nil (→ English) if empty/unrecognized; i18n.Locale.T handles nil safely
+			answers, aerr := h.loadAnswerLines(ctx, bCopy.ID)
+			if aerr != nil {
+				h.logger.Error("reassign: load answers for calendar event", "error", aerr, "booking_id", bCopy.ID)
+			}
+			descPlain, descRich := calendarDescription(loc, calMsg, answers, bCopy.ID)
 			newEventID, _, newCalID, newProvider, err := gc.CreateEvent(ctx, newHostID, calendar.CreateEventParams{
-				Summary:        loc.Tf("calendar_event_summary", etName, orgName),
-				Description:    calendarEventDescription(loc.Tf, bCopy.ID, etDescription),
-				Location:       bCopy.LocationValue, // keep the existing Meet link (don't mint a new one)
-				Start:          bCopy.StartAt,
-				End:            bCopy.EndAt,
-				OrganizerName:  orgName,
-				OrganizerEmail: orgEmail,
+				Summary:         loc.Tf("calendar_event_summary", etName, orgName),
+				Description:     descPlain,
+				DescriptionHTML: descRich,
+				Location:        bCopy.LocationValue, // keep the existing Meet link (don't mint a new one)
+				Start:           bCopy.StartAt,
+				End:             bCopy.EndAt,
+				OrganizerName:   orgName,
+				OrganizerEmail:  orgEmail,
 			})
 			if err != nil {
 				h.logger.Error("reassign: create new calendar event", "error", err, "booking_id", bCopy.ID)

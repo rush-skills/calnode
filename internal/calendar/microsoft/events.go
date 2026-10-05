@@ -74,7 +74,11 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 		Start:   graphDateTime{DateTime: p.Start.UTC().Format(graphTZ), TimeZone: "UTC"},
 		End:     graphDateTime{DateTime: p.End.UTC().Format(graphTZ), TimeZone: "UTC"},
 	}
-	if p.Description != "" {
+	// Graph takes the body as text or HTML; send the rich version when there is one so
+	// an admin's formatted calendar message keeps its formatting in Outlook.
+	if p.DescriptionHTML != "" {
+		reqBody.Body = &graphItemBody{ContentType: "html", Content: p.DescriptionHTML}
+	} else if p.Description != "" {
 		reqBody.Body = &graphItemBody{ContentType: "text", Content: p.Description}
 	}
 	if p.Location != "" {

@@ -51,6 +51,8 @@ export type EventType = {
 	subj_cancellation?: string;
 	subj_reschedule?: string;
 	subj_reminder?: string;
+	/** Sanitized HTML placed on every booking's calendar invite above the Booking ID line. */
+	calendar_message?: string | null;
 	msg_confirmation?: string;
 	msg_cancellation?: string;
 	msg_reschedule?: string;
@@ -189,8 +191,11 @@ export type GoogleSettings = {
 	configured: boolean;
 	/** Identity host the server builds OAuth redirect URIs from. */
 	base_url: string;
-	/** Google Workspace domains whose members may sign in without an invite; [] = off. */
-	auto_join_domains: string[];
+};
+
+export type SigninSettings = {
+	/** Email domains whose Google/Microsoft sign-ins create a member on first login. */
+	allowed_signin_domains: string[];
 };
 
 export type ZoomSettings = {

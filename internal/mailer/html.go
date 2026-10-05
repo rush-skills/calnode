@@ -42,7 +42,7 @@ const htmlLayout = `{{define "layout"}}<!doctype html>
 
 {{define "ref"}}<p style="margin:20px 0 0;font-size:12px;color:#a1a1aa;">{{.Tf "email_booking_reference" .BookingID}}</p>{{end}}
 
-{{define "note"}}{{if .CustomNote}}<div style="margin:16px 0 0;padding-top:16px;border-top:1px solid #e4e4e7;color:#52525b;font-size:13px;white-space:pre-line;">{{.CustomNote}}</div>{{end}}{{end}}
+{{define "note"}}{{if .CustomNote}}<div style="margin:16px 0 0;padding-top:16px;border-top:1px solid #e4e4e7;color:#52525b;font-size:13px;white-space:pre-line;">{{.CustomNoteHTML}}</div>{{end}}{{end}}
 
 {{define "rebook"}}<a href="{{.BaseURL}}/book/{{.EventTypeSlug}}" style="display:block;text-align:center;text-decoration:none;background:#18181b;color:#ffffff;font-size:14px;font-weight:500;padding:11px 16px;border-radius:8px;">{{.T "email_rebook_button"}}</a>{{end}}`
 
