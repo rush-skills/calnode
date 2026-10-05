@@ -261,10 +261,18 @@ func (h *Handler) CreateEventType(w http.ResponseWriter, r *http.Request) {
 	// slug derives from the name, as teams do; one that normalises to nothing is a 400
 	// rather than a silent fallback, because the caller did say what they wanted.
 	slug := slugify(req.Slug)
-	if strings.TrimSpace(req.Slug) == "" {
+	slugOmitted := strings.TrimSpace(req.Slug) == ""
+	if slugOmitted {
 		slug = slugify(req.Name)
 	}
 	if slug == "" {
+		if slugOmitted {
+			// Name the field the caller actually sent: a non-Latin name ("会議") yields
+			// nothing, and "slug must contain…" would point at a field they never filled.
+			h.writeError(w, http.StatusBadRequest,
+				"could not derive a booking link from the name; provide a slug with letters or numbers")
+			return
+		}
 		h.writeError(w, http.StatusBadRequest, "slug must contain letters or numbers")
 		return
 	}
@@ -810,7 +818,13 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 				"slug cannot be empty (letters and digits only, joined by hyphens)")
 			return
 		}
-		if newSlug != slug {
+		// A rename is a change from the STORED slug, compared in canonical form. A row
+		// the boot sweep left alone (non-canonical, with bookings - see
+		// NormalizeEventTypeSlugs) is resubmitted by the editor exactly as stored, and
+		// "Intro_Call" vs "intro-call" is not the operator asking for a rename; refusing
+		// it would lock every other field on that event type (CLAUDE.md: validate on
+		// change, not on mention).
+		if newSlug != slug && newSlug != slugify(slug) {
 			var bookings int
 			if err := h.db.QueryRowContext(r.Context(),
 				`SELECT COUNT(*) FROM bookings WHERE event_type_id = ?`, etID).Scan(&bookings); err != nil {

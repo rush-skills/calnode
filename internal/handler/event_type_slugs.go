@@ -22,15 +22,22 @@ const fallbackEventTypeSlug = "event-type"
 // handler; they need rewriting.
 //
 // Safety: bookings reference event types by id, not slug, so nothing downstream moves.
-// A link to a non-canonical slug was already broken, so rewriting it breaks nothing
-// that worked. Canonical slugs are never touched.
+// Canonical slugs are never touched. A row that already has bookings is ALSO left alone
+// (and logged at warn): the public pages match the stored slug byte-for-byte, so
+// "Intro_Call" - and even "Intro Call", once a browser percent-encodes it - did resolve,
+// and a booking is proof the link reached someone. Renaming it would break the manage
+// link in that booker's inbox and any embedded widget, which is exactly what
+// PatchEventType refuses with a 409. PatchEventType in turn tolerates a stored
+// non-canonical slug being resubmitted unchanged, so such rows stay editable.
 //
 // Collisions: the slugs are processed oldest-first, and a candidate already taken (by
 // an untouched row or an earlier rewrite) gets "-2", "-3", … appended, matching the
 // "-copy-N" convention the duplicate endpoint uses. Every change is logged with the
 // id, the old slug and the new one, so an operator can tell people whose links changed.
 func NormalizeEventTypeSlugs(ctx context.Context, db *sql.DB, logger *slog.Logger) error {
-	rows, err := db.QueryContext(ctx, `SELECT id, slug, name FROM event_types ORDER BY created_at, id`)
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, slug, name, (SELECT COUNT(*) FROM bookings WHERE event_type_id = event_types.id)
+		FROM event_types ORDER BY created_at, id`)
 	if err != nil {
 		return fmt.Errorf("normalize event type slugs: list: %w", err)
 	}
@@ -41,11 +48,18 @@ func NormalizeEventTypeSlugs(ctx context.Context, db *sql.DB, logger *slog.Logge
 	var fixes []fix
 	for rows.Next() {
 		var f fix
-		if err := rows.Scan(&f.id, &f.slug, &f.name); err != nil {
+		var bookings int
+		if err := rows.Scan(&f.id, &f.slug, &f.name, &bookings); err != nil {
 			return fmt.Errorf("normalize event type slugs: scan: %w", err)
 		}
 		if slugify(f.slug) == f.slug {
 			taken[f.slug] = true
+			continue
+		}
+		if bookings > 0 {
+			taken[f.slug] = true
+			logger.WarnContext(ctx, "event type slug is not canonical but has bookings; left as is",
+				"event_type_id", f.id, "slug", f.slug, "canonical", slugify(f.slug), "bookings", bookings)
 			continue
 		}
 		fixes = append(fixes, f)

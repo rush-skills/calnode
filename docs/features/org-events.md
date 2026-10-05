@@ -27,10 +27,24 @@ Canonical slugs are never touched; a second run is a no-op. It is wired into
 `server.BuildHandler` (`internal/server/server.go`), which runs after `db.Migrate` in
 `cmd/calnode/main.go`; a failure is logged, not fatal.
 
-Safety argument: bookings reference event types by id, so nothing moves; a non-canonical link
-was already broken, so rewriting it breaks nothing that worked. A canonical candidate can never
+**Deviation from the brief (deliberate): rows with bookings are skipped.** The brief assumed
+non-canonical links were already broken. They were not: `/book/{slug}`, `/slots` and
+`CreateBooking` match the stored slug byte-for-byte, so `Intro_Call` resolved, and even
+`Intro Call` did once a browser percent-encoded it. A booking is proof the link reached someone
+(a manage link in their inbox, an embed on a customer site), and renaming it is exactly what
+`PatchEventType` refuses with a 409. So the sweep rewrites only rows with zero bookings and logs
+the rest at `warn` (`event_type_id`, `slug`, `canonical`, `bookings`) for the operator to
+decide. To keep those rows editable, `PatchEventType` now treats a resubmitted slug as a rename
+only when its canonical form differs from the canonical form of the stored slug — the editor
+resubmits the whole form, and `"Intro_Call"` vs `"intro-call"` is not the operator asking for a
+rename (CLAUDE.md: validate on change, not on mention). Covered by
+`TestNormalizeEventTypeSlugs_sweep`.
+
+Bookings reference event types by id, so nothing else moves. A canonical candidate can never
 equal a non-canonical stored slug (one is a fixed point of `slugify`, the other is not), so the
-sweep only needs the set of untouched slugs plus its own rewrites to avoid collisions.
+sweep only needs the set of untouched slugs plus its own rewrites to avoid collisions. A sweep
+failure is logged, not fatal: with the PATCH tolerance above, an un-swept row costs nothing but
+a cosmetic slug.
 
 **Frontend.** `frontend/src/lib/slug.ts` is a commented mirror of the Go `slugify` (display
 only). The create form shows `Booking link: /book/<preview>` live (slug falls back to the name,
@@ -63,6 +77,10 @@ directory pages; the editor now labels that checkbox "Listing" to keep the two a
 - `eventTypeIDForViewer` backs the admin-side *reads* the editor needs (hosts list, admin
   questions list) so a read-only viewer sees the same panels an editor does; 404 when the
   event type is private to someone else.
+- Admin on someone else's **private** event type: reads 404 (private means not there, as far
+  as the rest of the workspace is concerned), writes 403 (the brief's matrix asks for it, and
+  the slug is public anyway). The two answers differ on purpose and are both tested; a reviewer
+  flagged the asymmetry, and it is accepted rather than leaking private rows into admin reads.
 
 **JSON.** `eventTypeJSON` gains `visibility`, `owner_id`, `can_edit`; `owner_name` /
 `owner_email` are now populated on list and get for everyone (they already were for
@@ -112,7 +130,21 @@ and per-event-type availability rules (keyed on the host's own `user_id`, not ow
   so the snippet can still be copied. A "Visibility in the admin" shadcn Select (Whole
   organisation / Only me) sits on the General tab, disabled for non-owners with an explanatory
   hint. Meeting-link hints show a neutral sentence for a non-owner editor, since the connected
-  calendar/Zoom status endpoints describe the caller, not the owner.
+  calendar/Zoom status endpoints describe the caller, not the owner. The Hosts tab's
+  "Just me / Every booking goes to you" copy names the owner when the viewer is not them, and
+  — the one real bug a review caught — the fixed-routing save PUTs `et.owner_id` as the
+  required host, not `$currentUser.id`: an admin fixing a typo on a colleague's event type
+  must not quietly become its host.
+
+## Review log
+
+Reviewed with the `code-review` skill (Fable 5.1, high) and a separate Opus 5.5 session on
+the full patch. Fable findings: admin save swapping the host list (fixed), sweep renaming
+working links (fixed: skip booked rows + PATCH tolerance), non-Latin name → confusing 400
+(fixed: error names the name field), whitespace-only slug blocking the create form (fixed),
+owner-blind Hosts-tab copy (fixed), admin-on-private 404/403 asymmetry (accepted, above), and
+two correlated owner subqueries in the list query (not changed: SQLite does them as PK lookups
+over a few dozen rows, and a JOIN would force qualifying every column in `etColumns`).
 - `api.ts`: `EventType` gains `visibility`, `owner_id`, `can_edit`.
 
 ## Tests

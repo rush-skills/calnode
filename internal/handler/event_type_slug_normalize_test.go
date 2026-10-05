@@ -99,7 +99,7 @@ func TestCreateEventType_duplicateAfterNormaliseIs409(t *testing.T) {
 // collisions get -2, -3 …, canonical slugs are untouched, and a slug with nothing
 // usable in it falls back to the name, then to "event-type".
 func TestNormalizeEventTypeSlugs_sweep(t *testing.T) {
-	h, database, _, ownerID := setupWorkspaceWithDB(t)
+	h, database, ownerKey, ownerID := setupWorkspaceWithDB(t)
 
 	ins := func(id, slug, name, createdAt string) {
 		t.Helper()
@@ -115,6 +115,11 @@ func TestNormalizeEventTypeSlugs_sweep(t *testing.T) {
 	ins("junk2", "???", "###", "2024-01-06T00:00:00Z")                // name is junk too → fallback
 	ins("junk3", "  ", "***", "2024-01-07T00:00:00Z")                 // second fallback → suffixed
 	ins("later", "Intro Call ", "Intro Call", "2024-01-08T00:00:00Z") // → intro-call-4
+	// Non-canonical AND booked: the link demonstrably reached someone, so it is left
+	// alone (the same rule PatchEventType applies to renames).
+	ins("booked", "Booked_Call", "Booked Call", "2024-01-09T00:00:00Z")
+	mustExec(t, database, `INSERT INTO bookings (id, event_type_id, host_id, start_at, end_at, status)
+		VALUES ('b1', 'booked', ?, '2026-06-15T10:00:00Z', '2026-06-15T10:30:00Z', 'cancelled')`, ownerID)
 
 	if err := handler.NormalizeEventTypeSlugs(context.Background(), database, slog.Default()); err != nil {
 		t.Fatalf("sweep: %v", err)
@@ -129,6 +134,7 @@ func TestNormalizeEventTypeSlugs_sweep(t *testing.T) {
 		"junk2":  "event-type",
 		"junk3":  "event-type-2",
 		"later":  "intro-call-4",
+		"booked": "Booked_Call",
 	}
 	for id, wantSlug := range want {
 		var got string
@@ -150,6 +156,24 @@ func TestNormalizeEventTypeSlugs_sweep(t *testing.T) {
 	}
 	if got != "intro-call-2" {
 		t.Errorf("second sweep moved a slug it had already fixed: %q", got)
+	}
+
+	// The booked row the sweep skipped must stay editable: the editor resubmits the
+	// slug exactly as stored, and that is not a rename request even though it is not
+	// canonical (PatchEventType compares canonical forms before refusing).
+	code, body := patchSlug(t, h, ownerKey, "Booked_Call", "Booked_Call")
+	if code != http.StatusOK {
+		t.Errorf("resubmitting a stored non-canonical slug: %d; want 200 - %v", code, body)
+	} else if body["slug"] != "Booked_Call" {
+		t.Errorf("stored slug changed on a no-op resubmit: %v", body["slug"])
+	}
+	// But typing its canonical form is not a rename either (same canonical form); a
+	// genuinely different slug is still refused because of the booking.
+	if code, _ := patchSlug(t, h, ownerKey, "Booked_Call", "booked-call"); code != http.StatusOK {
+		t.Errorf("resubmitting the canonical form of a stored slug: %d; want 200 (no-op)", code)
+	}
+	if code, _ := patchSlug(t, h, ownerKey, "Booked_Call", "other-call"); code != http.StatusConflict {
+		t.Errorf("renaming a booked event type: %d; want 409", code)
 	}
 
 	// The rewritten slug resolves on the public booking page; the old one never did.

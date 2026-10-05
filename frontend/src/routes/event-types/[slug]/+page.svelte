@@ -405,7 +405,9 @@
 				});
 			} else {
 				await api.put(`/v1/event-types/${effSlug}/hosts`, {
-					hosts: [{ user_id: $currentUser?.id, role: 'required', priority: 0 }],
+					// The OWNER, not the viewer: an admin saving a typo on a colleague's
+					// event type must not quietly make themselves its host.
+					hosts: [{ user_id: et?.owner_id ?? $currentUser?.id, role: 'required', priority: 0 }],
 				});
 			}
 			toast.success('Changes saved');
@@ -602,7 +604,7 @@
 					<Input id="et-slug" bind:value={form.slug} />
 				</div>
 				<p class="text-xs text-muted-foreground">
-					{#if form.slug && slugNormalised !== form.slug}
+					{#if form.slug && form.slug !== et?.slug && slugNormalised !== form.slug}
 						<span data-testid="slug-preview">Will be saved as <code>/book/{slugNormalised || '…'}</code>.</span>
 					{/if}
 					Editable until the first booking, after which the links are already in
@@ -819,7 +821,7 @@
 				<div class="inline-flex rounded-lg border bg-muted/40 p-0.5">
 					<button type="button" onclick={() => setScope('me')}
 						class="rounded-md px-3 py-1.5 text-sm font-medium transition-colors {hostScope === 'me' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground'}">
-						Just me
+						{et && !et.owned ? `Just ${et.owner_name || 'the owner'}` : 'Just me'}
 					</button>
 					<button type="button" onclick={() => setScope('people')}
 						class="rounded-md px-3 py-1.5 text-sm font-medium transition-colors {hostScope === 'people' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground'}">
@@ -828,7 +830,7 @@
 				</div>
 				<p class="text-xs text-muted-foreground">
 					{#if hostScope === 'me'}
-						Every booking goes to you.
+						Every booking goes to {et && !et.owned ? (et.owner_name || 'the owner') : 'you'}.
 					{:else}
 						Pick who can take these bookings — add members individually or pull in a whole team.
 					{/if}

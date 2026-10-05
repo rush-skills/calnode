@@ -18,7 +18,7 @@
 	let form = $state({ slug: '', name: '', description: '', duration_minutes: 30 });
 	// Live preview of the booking link. The slug falls back to the name, exactly as the
 	// server derives it; what the server returns is still what gets used.
-	const slugPreview = $derived(slugify(form.slug || form.name));
+	const slugPreview = $derived(slugify(form.slug.trim() || form.name));
 	let creating = $state(false);
 	let deleteOpen = $state(false);
 	let deleteSlug = $state('');
@@ -50,7 +50,9 @@
 			return;
 		}
 		if (!slugPreview) {
-			toast.error('The booking link needs at least one letter or number.');
+			toast.error(form.slug.trim()
+				? 'The slug needs at least one letter or number.'
+				: 'A booking link could not be made from this name — add a slug with letters or numbers.');
 			return;
 		}
 		creating = true;
