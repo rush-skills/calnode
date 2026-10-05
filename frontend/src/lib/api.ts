@@ -62,9 +62,17 @@ export type EventType = {
 	rr_strategy: 'even' | 'soonest' | 'priority';
 	/** True when archived — hidden from the default list, is_active forced off. Reversible. */
 	archived?: boolean;
-	/** True if the current user owns this event type; false if they only host it (read-only). */
+	/** Who in the workspace sees it in the admin: everyone ('org', the default; admins may
+	 *  edit) or only its owner ('private'). Unrelated to is_public (the public directory). */
+	visibility: 'org' | 'private';
+	/** The creator (event_types.user_id): seeded as first host; their calendar mints links. */
+	owner_id: string;
+	/** True if the current user owns this event type. */
 	owned?: boolean;
-	/** Owner identity, returned only when the viewer is a read-only host. */
+	/** True if the current user may change it: the owner, or an admin on an org-wide one.
+	 *  The editor renders read-only when false; the server enforces the same rule. */
+	can_edit?: boolean;
+	/** Owner identity, so a read-only viewer knows who created it and who to ask. */
 	owner_name?: string;
 	owner_email?: string;
 };

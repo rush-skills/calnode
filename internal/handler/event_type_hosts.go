@@ -42,28 +42,12 @@ func (h *Handler) resolveEventTypeHosts(ctx context.Context, eventTypeID string)
 	return out, rows.Err()
 }
 
-// eventTypeIDForOwner resolves an event type's id from its slug, scoped to the
-// authenticated owner. Returns "" (and writes the response) if not found.
-func (h *Handler) eventTypeIDForOwner(w http.ResponseWriter, r *http.Request, slug, userID string) string {
-	var id string
-	err := h.db.QueryRowContext(r.Context(),
-		`SELECT id FROM event_types WHERE slug = ? AND user_id = ?`, slug, userID).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		h.writeError(w, http.StatusNotFound, "event type not found")
-		return ""
-	}
-	if err != nil {
-		h.logger.ErrorContext(r.Context(), "event type hosts: resolve id", "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal error")
-		return ""
-	}
-	return id
-}
-
 // ListEventTypeHosts handles GET /v1/event-types/{slug}/hosts.
 func (h *Handler) ListEventTypeHosts(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
-	etID := h.eventTypeIDForOwner(w, r, r.PathValue("slug"), user.ID)
+	// A read: anyone who can see the event type may see who hosts it, so the editor
+	// renders the same host list for a read-only viewer.
+	etID := h.eventTypeIDForViewer(w, r, r.PathValue("slug"), user)
 	if etID == "" {
 		return
 	}
@@ -107,7 +91,7 @@ func (h *Handler) ListEventTypeHosts(w http.ResponseWriter, r *http.Request) {
 // entire host list. Body: {"hosts":[{"user_id","role","priority"}]}.
 func (h *Handler) SetEventTypeHosts(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
-	etID := h.eventTypeIDForOwner(w, r, r.PathValue("slug"), user.ID)
+	etID := h.eventTypeIDForEditor(w, r, r.PathValue("slug"), user)
 	if etID == "" {
 		return
 	}

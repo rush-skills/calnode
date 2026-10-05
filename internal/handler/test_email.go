@@ -34,7 +34,13 @@ func (h *Handler) SendTestEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Load the event type and its custom messages (verifies ownership first).
+	// Resolve access first, so 404/403 take precedence over "email not configured".
+	etID := h.eventTypeIDForEditor(w, r, slug, user)
+	if etID == "" {
+		return
+	}
+
+	// Load the event type and its custom messages.
 	var etName string
 	var durationMinutes int
 	var locVal, msgConf, msgCancel, msgResched, msgRemind sql.NullString
@@ -44,7 +50,7 @@ func (h *Handler) SendTestEmail(w http.ResponseWriter, r *http.Request) {
 		       msg_confirmation, msg_cancellation, msg_reschedule, msg_reminder,
 		       subj_confirmation, subj_cancellation, subj_reschedule, subj_reminder
 		FROM event_types
-		WHERE slug = ? AND user_id = ?`, slug, user.ID).
+		WHERE id = ?`, etID).
 		Scan(&etName, &durationMinutes, &locVal,
 			&msgConf, &msgCancel, &msgResched, &msgRemind,
 			&subjConf, &subjCancel, &subjResched, &subjRemind)

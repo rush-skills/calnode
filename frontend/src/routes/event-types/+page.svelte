@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api, type EventType } from '$lib/api';
+	import { slugify } from '$lib/slug';
 	import { Button, buttonVariants } from '$lib/components/ui/button';
 	import { ConfirmDialog } from '$lib/components/ui/confirm-dialog';
 	import { Badge } from '$lib/components/ui/badge';
@@ -15,6 +16,9 @@
 	let showCreate = $state(false);
 
 	let form = $state({ slug: '', name: '', description: '', duration_minutes: 30 });
+	// Live preview of the booking link. The slug falls back to the name, exactly as the
+	// server derives it; what the server returns is still what gets used.
+	const slugPreview = $derived(slugify(form.slug || form.name));
 	let creating = $state(false);
 	let deleteOpen = $state(false);
 	let deleteSlug = $state('');
@@ -41,20 +45,25 @@
 	onMount(load);
 
 	async function create() {
-		if (!form.slug || !form.name || !form.duration_minutes) {
-			toast.error('Slug, name, and duration are required.');
+		if (!form.name.trim() || !form.duration_minutes) {
+			toast.error('Name and duration are required.');
+			return;
+		}
+		if (!slugPreview) {
+			toast.error('The booking link needs at least one letter or number.');
 			return;
 		}
 		creating = true;
 		try {
-			await api.post('/v1/event-types', {
-				slug: form.slug,
-				name: form.name,
+			const created = await api.post<EventType>('/v1/event-types', {
+				slug: form.slug.trim(),
+				name: form.name.trim(),
 				description: form.description || undefined,
 				duration_minutes: Number(form.duration_minutes)
 			});
 			form = { slug: '', name: '', description: '', duration_minutes: 30 };
 			showCreate = false;
+			toast.success(`Created — booking link is /book/${created.slug}`);
 			await load();
 		} catch (e: any) {
 			toast.error(e.message || 'Could not create event type');
@@ -115,6 +124,15 @@
 	function bookLink(slug: string) {
 		return `${window.location.origin}/book/${slug}`;
 	}
+
+	async function copyLink(slug: string) {
+		try {
+			await navigator.clipboard.writeText(bookLink(slug));
+			toast.success('Booking link copied');
+		} catch {
+			toast.error('Could not copy — ' + bookLink(slug));
+		}
+	}
 </script>
 
 <ConfirmDialog
@@ -131,7 +149,7 @@
 <div class="mb-8 flex items-center justify-between">
 	<div>
 		<h1 class="text-2xl font-semibold tracking-tight">Event Types</h1>
-		<p class="mt-1 text-sm text-muted-foreground">Manage the types of meetings people can book with you.</p>
+		<p class="mt-1 text-sm text-muted-foreground">The meetings people can book across your organisation. You can edit your own, and admins can edit anything shared with the organisation.</p>
 	</div>
 	<Button onclick={() => { showCreate = !showCreate; }}>
 		{showCreate ? 'Cancel' : 'New event type'}
@@ -148,7 +166,10 @@
 			</div>
 			<div class="space-y-1.5">
 				<Label for="et-slug">Slug (URL)</Label>
-				<Input id="et-slug" bind:value={form.slug} placeholder="30-min-call" />
+				<Input id="et-slug" bind:value={form.slug} placeholder="Optional — derived from the name" />
+				<p class="text-xs text-muted-foreground" data-testid="slug-preview">
+					Booking link: <code>/book/{slugPreview || '…'}</code>
+				</p>
 			</div>
 			<div class="space-y-1.5">
 				<Label for="et-dur">Duration (minutes)</Label>
@@ -197,11 +218,12 @@
 				{#each visible as et}
 					<tr class="transition-colors hover:bg-muted/30">
 						<td class="px-4 py-3">
-							<div class="flex items-center gap-2">
+							<div class="flex flex-wrap items-center gap-2">
 								<span class="font-medium">{et.name}</span>
-								{#if et.owned === false}
-									<Badge variant="secondary" class="text-[10px]">You host</Badge>
+								{#if !et.owned && et.owner_name}
+									<Badge variant="secondary" class="text-[10px]">by {et.owner_name}</Badge>
 								{/if}
+								<Badge variant="outline" class="text-[10px]">{et.visibility === 'private' ? 'Only me' : 'Org-wide'}</Badge>
 							</div>
 							<div class="text-xs text-muted-foreground">{et.slug}</div>
 						</td>
@@ -218,10 +240,20 @@
 									</Tooltip.Trigger>
 									<Tooltip.Content>{bookLink(et.slug)}</Tooltip.Content>
 								</Tooltip.Root>
+								<Tooltip.Root>
+									<Tooltip.Trigger
+										class={buttonVariants({ variant: 'ghost', size: 'icon' })}
+										onclick={() => copyLink(et.slug)}
+									>
+										<!-- Link icon -->
+										<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+									</Tooltip.Trigger>
+									<Tooltip.Content>Copy booking link</Tooltip.Content>
+								</Tooltip.Root>
 							</Tooltip.Provider>
 						</td>
 						<td class="px-4 py-3">
-							<Switch bind:checked={et.is_active} onCheckedChange={(v) => saveActive(et, v)} disabled={et.owned === false || et.archived} />
+							<Switch bind:checked={et.is_active} onCheckedChange={(v) => saveActive(et, v)} disabled={!et.can_edit || et.archived} />
 						</td>
 						<td class="px-4 py-3">
 							<Tooltip.Provider>
@@ -234,10 +266,10 @@
 											<!-- Gear/Settings icon -->
 											<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
 										</Tooltip.Trigger>
-										<Tooltip.Content>Settings</Tooltip.Content>
+										<Tooltip.Content>{et.can_edit ? 'Settings' : 'View settings (read-only)'}</Tooltip.Content>
 									</Tooltip.Root>
 
-									{#if et.owned !== false}
+									{#if et.can_edit}
 										<Tooltip.Root>
 											<Tooltip.Trigger
 												class={buttonVariants({ variant: 'ghost', size: 'icon' })}

@@ -5,6 +5,7 @@
 	import { base } from '$app/paths';
 	import { api, type EventType, type EventTypeHost, type TeamMember, type Team, type CalendarStatus, type ZoomStatus } from '$lib/api';
 	import { currentUser } from '$lib/stores';
+	import { slugify } from '$lib/slug';
 	import { Button, buttonVariants } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
@@ -40,8 +41,17 @@
 		phone: '+1 555 123 4567 (required)', in_person: 'Address (optional)',
 	};
 
+	const VISIBILITY_OPTIONS = [
+		{ value: 'org',     label: 'Whole organisation' },
+		{ value: 'private', label: 'Only me' },
+	] as const;
+
 	// ── Event type ───────────────────────────────────────────────────────────────
 	let et = $state<EventType | null>(null);
+	// Server-decided: the owner, or an admin on an org-wide event type. When false the
+	// whole editor renders read-only (one disabled <fieldset>, Save hidden); the server
+	// enforces the same rule on every write, so this is a courtesy, not the guard.
+	const canEdit = $derived(!!et?.can_edit);
 	const TABS = [
 		{ id: 'general', label: 'General' },
 		{ id: 'hosts', label: 'Hosts' },
@@ -70,10 +80,14 @@
 		min_notice_minutes: 0, max_future_days: 60,
 		max_active_bookings: 1,
 		price_cents: 0, currency: 'usd',
+		visibility: 'org' as 'org' | 'private',
 	});
 
 	// Price is edited in major units (e.g. dollars); stored as integer cents.
 	let priceMajor = $state('0');
+
+	// What the server will store for the slug as typed (display only; see $lib/slug).
+	const slugNormalised = $derived(slugify(form.slug));
 
 	// True when the connected calendar will auto-generate the chosen platform's link.
 	const meetAutoGen = $derived(
@@ -294,6 +308,7 @@
 				max_active_bookings: et.max_active_bookings,
 				price_cents: et.price_cents ?? 0,
 				currency: et.currency ?? 'usd',
+				visibility: et.visibility ?? 'org',
 			};
 			priceMajor = ((et.price_cents ?? 0) / 100).toFixed(2);
 			reminders = et.reminders ?? [];
@@ -319,6 +334,7 @@
 	}
 
 	async function saveET() {
+		if (!canEdit) return;
 		if (!form.name.trim()) { toast.error('Name is required.'); return; }
 		if (form.duration_minutes < 5) { toast.error('Duration must be at least 5 minutes.'); return; }
 		// Matches the API, which only requires a positive value. A stricter floor here would
@@ -353,6 +369,9 @@
 				max_active_bookings: Number(form.max_active_bookings),
 				price_cents: Math.max(0, Math.round(Number(priceMajor) * 100)) || 0,
 				currency: form.currency.trim().toLowerCase() || 'usd',
+				// Resent as loaded for non-owners; the server only refuses a CHANGE by
+				// someone other than the owner, and the control is disabled for them.
+				visibility: form.visibility,
 				routing_mode: routingMode,
 				rr_strategy: rrStrategy,
 				reminders,
@@ -450,11 +469,14 @@
 
 	onMount(async () => {
 		await loadET();
-		// Editor-only data (owner-scoped endpoints) — skip for read-only hosts.
-		if (et?.owned === false) return;
-		// Connected calendar — best-effort; drives the meeting-link hint only.
-		api.get<CalendarStatus>('/v1/calendar/status').then((s) => (calStatus = s)).catch(() => {});
-	api.get<ZoomStatus>('/v1/zoom/status').then((s) => (zoomStatus = s)).catch(() => {});
+		if (!et) return;
+		// Connected calendar / Zoom — best-effort; they drive the meeting-link hints,
+		// which describe the OWNER's connections, so only fetch when that is who we are.
+		if (et.owned) {
+			api.get<CalendarStatus>('/v1/calendar/status').then((s) => (calStatus = s)).catch(() => {});
+			api.get<ZoomStatus>('/v1/zoom/status').then((s) => (zoomStatus = s)).catch(() => {});
+		}
+		// Hosts are readable by anyone who can see the event type.
 		await loadHosts();
 		if (hostScope === 'people') {
 			loadMembers();
@@ -500,7 +522,7 @@
 {/snippet}
 
 <svelte:head><title>{et?.name ?? slug} — Event Type — Calnode</title></svelte:head>
-<svelte:window onkeydown={saveOnCmdS(saveET, () => !etSaving)} />
+<svelte:window onkeydown={saveOnCmdS(saveET, () => !etSaving && canEdit)} />
 
 <div class="mb-8">
 	<a href="{base}/event-types" class="mb-2 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
@@ -528,35 +550,22 @@
 	<p class="py-8 text-sm text-muted-foreground">Loading…</p>
 {:else if etError}
 	<p class="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{etError}</p>
-{:else if et && et.owned === false}
+{:else if et}
 
-<!-- Read-only: the user hosts this event type but doesn't own it -->
-<div class="mb-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-	{#if et.owner_email}
-		<span class="font-medium">{et.owner_name || et.owner_email}</span> created this event type.
-		<a href="mailto:{et.owner_email}?subject={encodeURIComponent('Change request: ' + et.name)}" class="font-medium underline">Message them</a> to request changes.
-	{:else if et.owner_name}
-		<span class="font-medium">{et.owner_name}</span> created this event type. Message them to request changes.
-	{:else}
-		This event type is managed by its owner. Contact them to request changes.
-	{/if}
-</div>
-<div class="rounded-lg border bg-card p-6">
-	<dl class="grid grid-cols-[140px_1fr] gap-x-4 gap-y-3 text-sm">
-		<dt class="text-muted-foreground">Name</dt><dd class="font-medium">{et.name}</dd>
-		{#if et.description}<dt class="text-muted-foreground">Description</dt><dd class="whitespace-pre-line">{et.description}</dd>{/if}
-		<dt class="text-muted-foreground">Duration</dt><dd>{et.duration_minutes} min</dd>
-		{#if et.slot_interval_minutes !== et.duration_minutes}
-			<dt class="text-muted-foreground">Slot interval</dt><dd>{et.slot_interval_minutes} min</dd>
+{#if !canEdit}
+	<!-- Read-only: the viewer can see this event type but may not change it. Same amber
+	     notice pattern the editor already uses for its hints. -->
+	<div class="mb-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800" role="status" data-testid="view-only-notice">
+		<span class="font-medium">View only</span> — created by
+		<span class="font-medium">{et.owner_name || et.owner_email || 'its owner'}</span>.
+		{#if et.owner_email}
+			<a href="mailto:{et.owner_email}?subject={encodeURIComponent('Change request: ' + et.name)}" class="font-medium underline">Message them</a>
+			{et.visibility === 'org' ? 'or an admin' : ''} to request changes.
+		{:else}
+			Ask them{et.visibility === 'org' ? ' or an admin' : ''} to request changes.
 		{/if}
-		<dt class="text-muted-foreground">Location</dt><dd>{LOCATION_TYPES.find((l) => l.value === et?.location_type)?.label ?? et.location_type}{#if et.location_value} · {et.location_value}{/if}</dd>
-		<dt class="text-muted-foreground">Routing</dt><dd class="capitalize">{et.routing_mode.replace('_', ' ')}</dd>
-		<dt class="text-muted-foreground">Status</dt><dd>{et.is_active ? 'Active' : 'Inactive'} · {et.is_public ? 'Listed' : 'Unlisted (link only)'}</dd>
-		<dt class="text-muted-foreground">Booking page</dt><dd><a href="/book/{et.slug}" target="_blank" rel="noopener" class="text-primary underline">/book/{et.slug}</a></dd>
-	</dl>
-</div>
-
-{:else}
+	</div>
+{/if}
 
 <div class="mb-6 flex gap-1 overflow-x-auto border-b">
 	{#each TABS as t}
@@ -569,6 +578,12 @@
 		</button>
 	{/each}
 </div>
+
+<!-- One native disabled fieldset turns every control below (shadcn inputs, selects,
+     checkboxes, switches, buttons — they all honour :disabled) read-only at once, so a
+     viewer sees exactly the form an editor sees. The Embed tab stays outside: copying
+     the snippet is fine for anyone who can see the event type. -->
+<fieldset disabled={!canEdit} class="min-w-0" data-testid="event-type-form">
 
 {#if activeTab === 'general'}
 <!-- General Settings -->
@@ -587,6 +602,9 @@
 					<Input id="et-slug" bind:value={form.slug} />
 				</div>
 				<p class="text-xs text-muted-foreground">
+					{#if form.slug && slugNormalised !== form.slug}
+						<span data-testid="slug-preview">Will be saved as <code>/book/{slugNormalised || '…'}</code>.</span>
+					{/if}
 					Editable until the first booking, after which the links are already in
 					circulation. Mainly useful right after duplicating, where the copy arrives
 					with <code>-copy</code> on the end.
@@ -617,11 +635,29 @@
 				</div>
 			</div>
 			<div class="space-y-1.5">
-				<p class="text-sm font-medium">Visibility</p>
+				<p class="text-sm font-medium">Listing</p>
 				<div class="flex items-center gap-2">
 					<Checkbox id="is-public" bind:checked={form.is_public} />
-					<Label for="is-public" class="cursor-pointer font-normal">Public (visible in booking page)</Label>
+					<Label for="is-public" class="cursor-pointer font-normal">Public (listed on booking pages)</Label>
 				</div>
+			</div>
+			<div class="col-span-2 space-y-1.5">
+				<Label for="et-visibility">Visibility in the admin</Label>
+				<Select.Root type="single" bind:value={form.visibility} disabled={!et?.owned}>
+					<Select.Trigger id="et-visibility" class="w-full sm:w-72">
+						{VISIBILITY_OPTIONS.find((o) => o.value === form.visibility)?.label ?? 'Select…'}
+					</Select.Trigger>
+					<Select.Content>
+						{#each VISIBILITY_OPTIONS as o}
+							<Select.Item value={o.value} label={o.label}>{o.label}</Select.Item>
+						{/each}
+					</Select.Content>
+				</Select.Root>
+				<p class="text-xs text-muted-foreground">
+					Whole organisation: every member sees it in their list and admins can edit it.
+					Only me: just you (and anyone you assign as a host, read-only).
+					{#if et && !et.owned}Only the owner can change this.{/if}
+				</p>
 			</div>
 		</div>
 
@@ -666,7 +702,11 @@
 					{#if isOnlineMeeting(form.location_type)}
 						{@const platform = form.location_type === 'teams' ? 'Microsoft Teams' : 'Google Meet'}
 						<Label for="et-loc-val">{platform} link</Label>
-						{#if meetAutoGen}
+						{#if et && !et.owned}
+							<p class="rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+								A {platform} link is generated from {et.owner_name || 'the owner'}'s connected calendar when it can be; otherwise the link below is used.
+							</p>
+						{:else if meetAutoGen}
 							<p class="rounded-md border border-green-600/20 bg-green-50 px-3 py-2 text-sm text-green-700">
 								A {platform} link is generated automatically for each booking from your connected calendar.{#if form.location_type === 'teams'} Personal Microsoft accounts can't generate Teams links — add one below as a fallback.{/if}
 							</p>
@@ -681,7 +721,11 @@
 						<Input id="et-loc-val" bind:value={form.location_value} placeholder={meetAutoGen ? 'Optional fallback link' : `Paste a ${platform} link`} />
 					{:else if form.location_type === 'zoom'}
 						<Label for="et-loc-val">Zoom link</Label>
-						{#if zoomAutoGen}
+						{#if et && !et.owned}
+							<p class="rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+								A Zoom meeting is created under the assigned host's connected Zoom account when it can be; otherwise the link below is used.
+							</p>
+						{:else if zoomAutoGen}
 							<p class="rounded-md border border-green-600/20 bg-green-50 px-3 py-2 text-sm text-green-700">
 								A Zoom meeting is created automatically for each booking under the assigned host's connected Zoom account.
 							</p>
@@ -1082,7 +1126,7 @@
 </div>
 {/if}
 
-{#if activeTab === 'hosts' && $currentUser?.is_admin}
+{#if activeTab === 'hosts' && $currentUser?.is_admin && et?.owned}
 	<div class="mt-6 space-y-3 border-t pt-5">
 		<Label for="transfer-owner">Transfer ownership</Label>
 		<p class="text-sm text-muted-foreground">Choose a saved required host. The booking URL stays the same. Transfer is available only when there are no upcoming bookings. Calendar connections and global availability stay with each account.</p>
@@ -1098,11 +1142,13 @@
 	<QuestionsPanel slug={slug ?? ''} />
 {/if}
 
+</fieldset>
+
 {#if activeTab === 'embed'}
 	<EmbedPanel slug={et?.slug ?? ''} />
 {/if}
 
-{#if activeTab === 'general' || activeTab === 'hosts' || activeTab === 'notifications'}
+{#if canEdit && (activeTab === 'general' || activeTab === 'hosts' || activeTab === 'notifications')}
 	<div class="sticky bottom-0 mt-4 flex justify-end border-t bg-background/90 py-3 backdrop-blur">
 		<Button onclick={saveET} disabled={etSaving}>
 			{etSaving ? 'Saving…' : 'Save changes'}

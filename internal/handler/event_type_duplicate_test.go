@@ -420,9 +420,11 @@ func TestDuplicateEventType_onlyTheOwnerMayDuplicate(t *testing.T) {
 		INSERT INTO event_type_hosts (id, event_type_id, user_id, role, priority)
 		VALUES ('h2', 'src', ?, 'rotation', 1)`, memberID)
 
+	// Org-wide by default, so u2 can see it; a non-admin who is not the owner still
+	// cannot duplicate it. 403, not 404: they just saw it in their list.
 	rec := duplicate(t, h, hostKey, "intro-call")
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("assigned host duplicating: got %d; want 404 — %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("assigned host duplicating: got %d; want 403 — %s", rec.Code, rec.Body.String())
 	}
 	var copies int
 	if err := database.QueryRow(
@@ -604,6 +606,7 @@ func TestDuplicateEventType_handlesEveryEventTypeColumn(t *testing.T) {
 		"subj_confirmation": true, "subj_cancellation": true, "subj_reschedule": true,
 		"subj_reminder": true,
 		"price_cents":   true, "currency": true,
+		"visibility": true,
 	}
 	// Deliberately not inherited, with the reason.
 	notInherited := map[string]string{
