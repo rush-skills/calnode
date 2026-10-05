@@ -350,14 +350,14 @@ func (h *Handler) PublicEventType(w http.ResponseWriter, r *http.Request) {
 	accentColor = accentOrDefault(accentColor)
 
 	brand := h.loadBranding(r.Context())
-	hosts := h.displayHosts(r.Context(), etID, routingMode)
-	if len(hosts) == 0 {
-		hosts = []hostDisplay{{Name: hostName, AvatarURL: avatarURL}}
-	}
 	// "Show host names" off: the widget gets an empty host list and never sees a name
 	// or avatar it would then have to hide (it renders the event name alone).
-	if !brand.ShowHostNames {
-		hosts = nil
+	var hosts []hostDisplay
+	if brand.ShowHostNames {
+		hosts = h.displayHosts(r.Context(), etID, routingMode)
+		if len(hosts) == 0 {
+			hosts = []hostDisplay{{Name: hostName, AvatarURL: avatarURL}}
+		}
 	}
 	// Absolutise relative asset paths so they resolve from a remote embedding page.
 	abs := func(p string) string {
@@ -503,21 +503,21 @@ func (h *Handler) BookPage(w http.ResponseWriter, r *http.Request) {
 	brand := h.loadBranding(r.Context())
 	// Resolve the host face(s) by routing mode; fall back to the event-type owner
 	// if no hosts are configured (shouldn't happen post-backfill).
-	hosts := h.displayHosts(r.Context(), etID, routingMode)
-	if len(hosts) == 0 {
-		hosts = []hostDisplay{{Name: hostName, Initial: firstRune(hostName), AvatarURL: avatarURL}}
-	}
-	for i := range hosts {
-		hosts[i].Z = (len(hosts) - i) * 10
-	}
-	// "Show host names" off: drop the hosts before any label is composed, so the page
-	// data (faces, label, the "%s has no available times" subject) carries no name. The
-	// /slots host map and the create-booking response are withheld the same way, so the
-	// page JS never receives a name either.
+	//
+	// "Show host names" off: no hosts are resolved at all, so the page data (faces,
+	// label, the "%s has no available times" subject) carries no name. The /slots host
+	// map and the create-booking response are withheld the same way, so the page JS
+	// never receives a name either.
+	var hosts []hostDisplay
 	primary := hostDisplay{}
-	if !brand.ShowHostNames {
-		hosts = nil
-	} else {
+	if brand.ShowHostNames {
+		hosts = h.displayHosts(r.Context(), etID, routingMode)
+		if len(hosts) == 0 {
+			hosts = []hostDisplay{{Name: hostName, Initial: firstRune(hostName), AvatarURL: avatarURL}}
+		}
+		for i := range hosts {
+			hosts[i].Z = (len(hosts) - i) * 10
+		}
 		primary = hosts[0]
 	}
 	dlFields, _ := json.Marshal(track.DataLayerFields)

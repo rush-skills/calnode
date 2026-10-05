@@ -79,6 +79,15 @@ func (h *Handler) loadBranding(ctx context.Context) brandingSettings {
 	return b
 }
 
+// hostNamesShown is the one-column form of loadBranding().ShowHostNames for the public
+// hot paths (/slots on every calendar month, the create-booking response) that need
+// nothing else from the branding row. Same default-ON-on-failure rule as loadBranding.
+func (h *Handler) hostNamesShown(ctx context.Context) bool {
+	shown := 1
+	_ = h.db.QueryRowContext(ctx, `SELECT COALESCE(show_host_names,1) FROM server_settings WHERE id = 1`).Scan(&shown)
+	return shown != 0
+}
+
 // pageLogoHeight scales the email logo height up ~1.3× for the roomier public
 // booking/manage page headers.
 func pageLogoHeight(emailPx int) int {
@@ -172,16 +181,15 @@ func (h *Handler) PatchBranding(w http.ResponseWriter, r *http.Request) {
 		TermsURL       string `json:"terms_url"`
 		FallbackLocale string `json:"fallback_locale"`
 		// Pointer, so an omitted key keeps the stored value rather than reading as
-		// false: a client that predates the field must not switch host names off.
+		// false: a client that predates the field must not switch host names off. (The
+		// other fields keep their whole-form, overwrite-on-omit semantics — the editor
+		// always sends all of them; this one is the exception because its zero value is
+		// the destructive one.) Bound as-is below: nil → NULL → COALESCE keeps the row's.
 		ShowHostNames *bool `json:"show_host_names"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
-	}
-	showHostNames := h.loadBranding(r.Context()).ShowHostNames
-	if req.ShowHostNames != nil {
-		showHostNames = *req.ShowHostNames
 	}
 	req.BusinessName = strings.TrimSpace(req.BusinessName)
 	if len(req.BusinessName) > 200 {
@@ -239,8 +247,8 @@ func (h *Handler) PatchBranding(w http.ResponseWriter, r *http.Request) {
 	if _, err := h.db.ExecContext(r.Context(), `
 		UPDATE server_settings SET business_name = ?, logo_height = ?, logo_opacity = ?,
 		       banner_opacity = ?, privacy_url = ?, terms_url = ?, fallback_locale = ?,
-		       show_host_names = ?, updated_at = datetime('now')
-		WHERE id = 1`, req.BusinessName, req.LogoHeight, req.LogoOpacity, req.BannerOpacity, privacyURL, termsURL, req.FallbackLocale, showHostNames); err != nil {
+		       show_host_names = COALESCE(?, show_host_names), updated_at = datetime('now')
+		WHERE id = 1`, req.BusinessName, req.LogoHeight, req.LogoOpacity, req.BannerOpacity, privacyURL, termsURL, req.FallbackLocale, req.ShowHostNames); err != nil {
 		h.logger.ErrorContext(r.Context(), "branding settings: update", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return

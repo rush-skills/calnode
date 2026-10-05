@@ -32,13 +32,22 @@ behaviour is unchanged until an operator flips it.
 ### API
 
 `GET/PATCH /v1/settings/branding` gains `show_host_names` (bool). The PATCH field is a
-`*bool`: an omitted key keeps the stored value, so an API client or form that predates
-the field cannot switch names off by accident. (The branding editor submits the whole
-form; this is the "validate/apply on change, not on mention" rule from CLAUDE.md.)
+`*bool` bound straight into `show_host_names = COALESCE(?, show_host_names)`: an
+omitted key (nil → NULL) keeps the stored value with no read-then-write, so an API
+client or form that predates the field cannot switch names off by accident. Note the
+asymmetry, which is deliberate and matches the task: the *other* branding fields keep
+their existing whole-form, overwrite-on-omit semantics (the editor always sends all of
+them). A partial `PATCH {"show_host_names":false}` from a script therefore still resets
+the fields it omits, exactly as it did before this change — send the whole form.
 
 `loadBranding` scans the column into an int initialised to `1`, so a failed scan (no
 settings row yet) leaves the switch ON — the zero value of a bool would have silently
-hidden every host.
+hidden every host. `hostNamesShown(ctx)` is the one-column form for the two public hot
+paths (`/slots`, create-booking) that need nothing else from the branding row.
+
+With the switch off the hosts are not *resolved* at all on the book page, the public
+JSON and the team page (no `displayHosts`/members query), rather than resolved and
+discarded.
 
 ### What OFF does — enforced server-side
 
@@ -113,6 +122,23 @@ as `EmailSettings`/`LLMSettings`).
 
 ### Not done / deliberate
 
+- **Transient after upgrade:** `embed.js` is served with `max-age=300, must-revalidate`.
+  A customer page holding the previous script for up to five minutes will fetch the new
+  public payload (whose `i18n` table no longer has `powered_by`) and its `t()` falls
+  back to the key, so the footer reads "powered_by Calnode" for that window, then
+  disappears on the next revalidation. Keeping a dead key in nine locale files for one
+  release was judged worse than a five-minute glitch on a footer being removed; a CDN
+  that ignores `must-revalidate` lengthens the window, which DEPLOY.md already warns
+  about for `/public`.
+- The migration number (00071) was assigned by the integrator while 00068–00070 are
+  on sibling branches. `goose.Up` runs without `WithAllowMissing`, so a *development*
+  database migrated on this branch alone will refuse to start once the lower-numbered
+  files merge ("missing migrations before current version"); a fresh database, or one
+  migrated after the merge, applies them in order and is fine.
+- The enforcement is per public call site (six `ShowHostNames` checks) rather than a
+  single `publicHosts` wrapper around `displayHosts`/`displayHostsForBooking`, because
+  the admin/MCP callers of those helpers must keep receiving names and each public
+  site also needs the flag for its template. A new public caller must check the flag.
 - No "mobile" browser verification was possible in this environment; the layout change
   is structural (the host block is removed, not restyled) and the existing responsive
   rules apply unchanged. Worth a quick look on a phone for each of the three surfaces.

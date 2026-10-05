@@ -90,7 +90,7 @@ func (h *Handler) GetSlots(w http.ResponseWriter, r *http.Request) {
 	// agent-facing callers (MCP, the assistant) go through computeSlots directly and are
 	// unaffected — this is a public-page presentation setting, not a data-access one.
 	hostMap := res.Hosts
-	if !h.loadBranding(r.Context()).ShowHostNames {
+	if !h.hostNamesShown(r.Context()) {
 		hostMap = map[string]map[string]string{}
 	}
 	body := map[string]any{"slots": res.Slots, "hosts": hostMap}
