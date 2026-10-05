@@ -167,6 +167,13 @@ func (h *Handler) ReassignBooking(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			loc := i18n.Get(orgLocale) // nil (→ English) if empty/unrecognized; i18n.Locale.T handles nil safely
+			// The recreated event carries the default participants like the original did,
+			// minus the booker and the booking's hosts (booking_hosts already names the new
+			// host - it was synced above, before this goroutine started).
+			var extra []string
+			if defaults := h.loadDefaultAttendees(ctx, "reassign"); len(defaults) > 0 {
+				extra = extraAttendeesFor(defaults, append([]string{orgEmail}, h.bookingHostEmails(ctx, bCopy.ID)...)...)
+			}
 			newEventID, _, newCalID, newProvider, err := gc.CreateEvent(ctx, newHostID, calendar.CreateEventParams{
 				Summary:        loc.Tf("calendar_event_summary", etName, orgName),
 				Description:    loc.Tf("calendar_event_booking_id", bCopy.ID),
@@ -175,6 +182,7 @@ func (h *Handler) ReassignBooking(w http.ResponseWriter, r *http.Request) {
 				End:            bCopy.EndAt,
 				OrganizerName:  orgName,
 				OrganizerEmail: orgEmail,
+				ExtraAttendees: extra,
 			})
 			if err != nil {
 				h.logger.Error("reassign: create new calendar event", "error", err, "booking_id", bCopy.ID)

@@ -86,6 +86,13 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 		a.EmailAddress.Name = p.OrganizerName
 		reqBody.Attendees = append(reqBody.Attendees, a)
 	}
+	// Default participants (e.g. a notetaker bot): required attendees, so Graph sends them
+	// the same native invite as the organizer and they appear on the Teams roster.
+	for _, e := range p.ExtraAttendees {
+		a := graphAttendee{Type: "required"}
+		a.EmailAddress.Address = e
+		reqBody.Attendees = append(reqBody.Attendees, a)
+	}
 	if p.AddMeet {
 		reqBody.IsOnlineMeeting = true
 		reqBody.OnlineMeetingProvider = "teamsForBusiness"

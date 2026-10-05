@@ -227,6 +227,12 @@ export type LLMSettings = {
 	base_prompt: string;
 };
 
+/** Workspace default participants: addresses invited on the host's calendar event of every
+ *  booking (calendar invite only - never emailed by Calnode, never shown to bookers). */
+export type ParticipantSettings = {
+	default_attendee_emails: string[];
+};
+
 export type TeamMember = {
 	id: string;
 	email: string;

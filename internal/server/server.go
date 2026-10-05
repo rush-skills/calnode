@@ -382,6 +382,8 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	mux.HandleFunc("PATCH /v1/settings/stripe", settingsRL(h.RequireAuth(h.PatchStripeSettings)))
 	mux.HandleFunc("GET /v1/settings/tracking", h.RequireAuth(h.GetTrackingSettings))
 	mux.HandleFunc("PATCH /v1/settings/tracking", settingsRL(h.RequireAuth(h.PatchTrackingSettings)))
+	mux.HandleFunc("GET /v1/settings/participants", h.RequireAuth(h.GetParticipantSettings))
+	mux.HandleFunc("PATCH /v1/settings/participants", settingsRL(h.RequireAuth(h.PatchParticipantSettings)))
 	mux.HandleFunc("GET /v1/settings/llm", h.RequireAuth(h.GetLLMSettings))
 	mux.HandleFunc("PATCH /v1/settings/llm", settingsRL(h.RequireAuth(h.PatchLLMSettings)))
 	mux.HandleFunc("POST /v1/settings/llm/test", settingsRL(h.RequireAuth(h.TestLLMSettings)))

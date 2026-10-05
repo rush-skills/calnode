@@ -1151,6 +1151,17 @@ func (h *Handler) createHostEventsAndNotify(ctx context.Context, b *booking.Book
 	gc := h.getCal()
 	primaryPrefs := allOnPrefs
 	confirmFailed := false
+	// Default participants (a notetaker bot, a shared mailbox) go on every host's event -
+	// the same list for each, minus the booker and every host of the booking, who are on it
+	// already. Loaded once for the booking; a failed load logs and proceeds without them.
+	var extra []string
+	if gc != nil {
+		exclude := []string{in.OrganizerEmail}
+		for _, host := range hosts {
+			exclude = append(exclude, host.Email)
+		}
+		extra = extraAttendeesFor(h.loadDefaultAttendees(ctx, "create booking"), exclude...)
+	}
 	for _, host := range hosts {
 		// Create a calendar event on each host's connected calendar and record
 		// the per-host event ID so it can be cancelled later. The primary's id
@@ -1168,6 +1179,7 @@ func (h *Handler) createHostEventsAndNotify(ctx context.Context, b *booking.Book
 				OrganizerName:  in.OrganizerName,
 				OrganizerEmail: in.OrganizerEmail,
 				AddMeet:        autoGenMeet && host.IsPrimary,
+				ExtraAttendees: extra,
 			})
 			if err != nil {
 				h.logger.Error("create gcal event", "error", err, "booking_id", b.ID, "host", host.UserID)

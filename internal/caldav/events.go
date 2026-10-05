@@ -24,7 +24,7 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 	}
 	id := uid.New()
 	resourceURL := joinURL(cn.calURL, id+".ics")
-	ics := buildICS(id, p.Start, p.End, p.Summary, p.Description, p.Location, p.OrganizerName, p.OrganizerEmail, 0)
+	ics := buildICS(id, p.Start, p.End, p.Summary, p.Description, p.Location, p.OrganizerName, p.OrganizerEmail, p.ExtraAttendees, 0)
 
 	status, _, err := c.putICS(ctx, resourceURL, cn.username, cn.password, ics, "*", "")
 	if err != nil {
@@ -326,15 +326,21 @@ func joinURL(base, name string) string {
 }
 
 // buildICS renders a VCALENDAR/VEVENT for a booking. Times are emitted as UTC. Text values are
-// escaped and long lines folded per RFC 5545.
-func buildICS(id string, start, end time.Time, summary, description, location, orgName, orgEmail string, sequence int) string {
+// escaped and long lines folded per RFC 5545. attendees are the workspace's default
+// participants; each becomes an ATTENDEE line with RSVP=TRUE so a scheduling-aware server
+// (or the client reading the calendar) sends them the invite. UpdateEvent rewrites only the
+// time lines of the stored object, so these lines survive a reschedule untouched.
+func buildICS(id string, start, end time.Time, summary, description, location, orgName, orgEmail string, attendees []string, sequence int) string {
 	var b strings.Builder
 	w := func(line string) { b.WriteString(foldLine(line)); b.WriteString("\r\n") }
 	w("BEGIN:VCALENDAR")
 	w("VERSION:2.0")
 	w("PRODID:-//Calnode//Booking//EN")
 	w("CALSCALE:GREGORIAN")
-	w("METHOD:REQUEST")
+	// No METHOD: RFC 4791 §4.1 forbids it in a stored calendar object resource (it belongs
+	// only to iTIP messages, i.e. the emailed .ics). Harmless while the object had no
+	// ATTENDEE, but METHOD:REQUEST plus ATTENDEE lines reads as an iTIP message and strict
+	// servers reject that as an invalid resource.
 	w("BEGIN:VEVENT")
 	w("UID:" + id + "@calnode")
 	w("DTSTAMP:" + icsUTC(time.Now()))
@@ -353,6 +359,9 @@ func buildICS(id string, start, end time.Time, summary, description, location, o
 			org += ";CN=" + escapeText(orgName)
 		}
 		w(org + ":mailto:" + orgEmail)
+	}
+	for _, a := range attendees {
+		w("ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:" + a)
 	}
 	w(fmt.Sprintf("SEQUENCE:%d", sequence))
 	w("STATUS:CONFIRMED")

@@ -90,6 +90,11 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 			DisplayName: p.OrganizerName,
 		})
 	}
+	// Default participants (e.g. a notetaker bot) ride on the same sendUpdates=all request
+	// below, so Google emails them the invite exactly as it does the organizer.
+	for _, e := range p.ExtraAttendees {
+		attendees = append(attendees, calEventAttendee{Email: e})
+	}
 
 	reqBody := calEventReq{
 		Summary:     p.Summary,
