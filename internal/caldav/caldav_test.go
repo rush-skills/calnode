@@ -401,7 +401,7 @@ func TestRewriteEventTimes(t *testing.T) {
 	in := "BEGIN:VEVENT\r\nUID:x@y\r\nDTSTART;TZID=Pacific/Auckland:20260625T090000\r\nDTEND;TZID=Pacific/Auckland:20260625T093000\r\nSUMMARY:Keep me\r\nSEQUENCE:2\r\nEND:VEVENT\r\n"
 	start := time.Date(2026, 6, 26, 1, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 6, 26, 1, 30, 0, 0, time.UTC)
-	out := rewriteEventTimes(in, start, end)
+	out := rewriteEventTimes(in, start, end, "")
 	if !strings.Contains(out, "DTSTART:20260626T010000Z") {
 		t.Errorf("missing rewritten DTSTART:\n%s", out)
 	}
@@ -482,5 +482,37 @@ func TestPropfind_stripsAuthOnCrossOriginRedirect(t *testing.T) {
 	}
 	if gotAuthAtB {
 		t.Error("redirect target saw Authorization header; credentials must not cross origins")
+	}
+}
+
+// A re-minted LiveKit link after a reschedule replaces LOCATION (folded or not, once) and is
+// added when the stored object had none; "" leaves the existing one alone. Attendees survive.
+func TestRewriteEventTimes_location(t *testing.T) {
+	start := time.Date(2026, 6, 26, 1, 0, 0, 0, time.UTC)
+	end := start.Add(30 * time.Minute)
+	folded := "LOCATION:https://old.example/room/" + strings.Repeat("x", 80)
+	in := "BEGIN:VEVENT\r\nUID:x@y\r\nDTSTART:20260625T090000Z\r\nDTEND:20260625T093000Z\r\n" +
+		foldLine(folded) + "\r\nATTENDEE;RSVP=TRUE:mailto:notes@example.com\r\nEND:VEVENT\r\n"
+
+	out := rewriteEventTimes(in, start, end, "https://new.example/room/abc")
+	if strings.Count(out, "LOCATION:") != 1 || !strings.Contains(out, "LOCATION:https://new.example/room/abc") {
+		t.Errorf("location not replaced exactly once:\n%s", out)
+	}
+	if strings.Contains(out, "old.example") || strings.Contains(out, "xxxx") {
+		t.Errorf("old (folded) location survived:\n%s", out)
+	}
+	if !strings.Contains(out, "ATTENDEE;RSVP=TRUE:mailto:notes@example.com") {
+		t.Errorf("attendee dropped:\n%s", out)
+	}
+
+	keep := rewriteEventTimes(in, start, end, "")
+	if !strings.Contains(strings.Join(unfold(keep), ""), "old.example") {
+		t.Errorf("empty location must keep the stored one:\n%s", keep)
+	}
+
+	none := "BEGIN:VEVENT\r\nUID:x@y\r\nDTSTART:20260625T090000Z\r\nDTEND:20260625T093000Z\r\nEND:VEVENT\r\n"
+	added := rewriteEventTimes(none, start, end, "https://new.example/room/abc")
+	if !strings.Contains(added, "LOCATION:https://new.example/room/abc\r\nEND:VEVENT") {
+		t.Errorf("location not added before END:VEVENT:\n%s", added)
 	}
 }

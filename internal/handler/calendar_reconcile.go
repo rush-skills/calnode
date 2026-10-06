@@ -108,7 +108,7 @@ func (h *Handler) reconcileReschedules(ctx context.Context, gc *calendar.Service
 			}
 			continue
 		}
-		if err := gc.UpdateEvent(ctx, d.userID, d.calendarID, d.eventID, d.provider, start, end); err != nil {
+		if err := gc.UpdateEvent(ctx, d.userID, d.calendarID, d.eventID, d.provider, start, end, ""); err != nil {
 			if !errors.Is(err, calendar.ErrEventUnreachable) {
 				h.logger.Error("reconcile: re-apply event time", "error", err, "booking_id", d.bookingID, "host", d.userID)
 				continue // leave the flag set; retry next sweep

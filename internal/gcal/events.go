@@ -145,10 +145,11 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 	return evResp.ID, evResp.meetLink(), calID, nil
 }
 
-// UpdateEvent moves an existing event to a new start/end (used on reschedule).
-// Returns nil if eventID is empty or the user has no connection. sendUpdates=all
-// so the attendee is notified of the new time.
-func (c *Client) UpdateEvent(ctx context.Context, userID, calendarID, eventID string, start, end time.Time) error {
+// UpdateEvent moves an existing event to a new start/end (used on reschedule), and
+// replaces its location when one is given. Returns nil if eventID is empty or the user
+// has no connection. sendUpdates=all so the attendee is notified of the new time. The
+// PATCH names only the fields it changes, so attendees survive untouched.
+func (c *Client) UpdateEvent(ctx context.Context, userID, calendarID, eventID string, start, end time.Time, location string) error {
 	if eventID == "" {
 		return nil
 	}
@@ -168,11 +169,13 @@ func (c *Client) UpdateEvent(ctx context.Context, userID, calendarID, eventID st
 	}
 
 	body, err := json.Marshal(struct {
-		Start calEventDateTime `json:"start"`
-		End   calEventDateTime `json:"end"`
+		Start    calEventDateTime `json:"start"`
+		End      calEventDateTime `json:"end"`
+		Location string           `json:"location,omitempty"`
 	}{
-		Start: calEventDateTime{DateTime: start.UTC().Format(time.RFC3339), TimeZone: "UTC"},
-		End:   calEventDateTime{DateTime: end.UTC().Format(time.RFC3339), TimeZone: "UTC"},
+		Start:    calEventDateTime{DateTime: start.UTC().Format(time.RFC3339), TimeZone: "UTC"},
+		End:      calEventDateTime{DateTime: end.UTC().Format(time.RFC3339), TimeZone: "UTC"},
+		Location: location,
 	})
 	if err != nil {
 		return fmt.Errorf("gcal: update event marshal: %w", err)

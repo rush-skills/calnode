@@ -315,7 +315,7 @@ func (h *Handler) syncLiveEventCalendarTime(ctx context.Context, ev *liveEvent, 
 	if !end.After(start) {
 		end = start.Add(time.Minute)
 	}
-	if err := gc.UpdateEvent(ctx, ev.HostUserID, ev.externalCalendarID, ev.externalEventID, ev.externalProvider, start, end); err != nil {
+	if err := gc.UpdateEvent(ctx, ev.HostUserID, ev.externalCalendarID, ev.externalEventID, ev.externalProvider, start, end, ""); err != nil {
 		h.logger.Error("live events: update calendar event", "error", err, "live_event_id", ev.ID)
 	}
 }

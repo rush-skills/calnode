@@ -144,13 +144,14 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 	return evResp.ID, join, destCal, nil
 }
 
-// UpdateEvent moves an existing event to a new start/end (reschedule). Graph
-// notifies attendees. No-op if eventID is empty or the user has no connection.
+// UpdateEvent moves an existing event to a new start/end (reschedule) and, when location
+// is non-empty, replaces its location. Graph notifies attendees. No-op if eventID is empty
+// or the user has no connection.
 //
 // calendarID is accepted for interface parity but deliberately unused: Graph addresses an
 // event by id at /me/events/{id} regardless of which of the user's calendars holds it, so
 // unlike Google and CalDAV there is nothing to re-target.
-func (c *Client) UpdateEvent(ctx context.Context, userID, calendarID, eventID string, start, end time.Time) error {
+func (c *Client) UpdateEvent(ctx context.Context, userID, calendarID, eventID string, start, end time.Time, location string) error {
 	if eventID == "" {
 		return nil
 	}
@@ -159,13 +160,18 @@ func (c *Client) UpdateEvent(ctx context.Context, userID, calendarID, eventID st
 		return err
 	}
 
-	body, err := json.Marshal(struct {
-		Start graphDateTime `json:"start"`
-		End   graphDateTime `json:"end"`
+	patch := struct {
+		Start    graphDateTime  `json:"start"`
+		End      graphDateTime  `json:"end"`
+		Location *graphLocation `json:"location,omitempty"`
 	}{
 		Start: graphDateTime{DateTime: start.UTC().Format(graphTZ), TimeZone: "UTC"},
 		End:   graphDateTime{DateTime: end.UTC().Format(graphTZ), TimeZone: "UTC"},
-	})
+	}
+	if location != "" {
+		patch.Location = &graphLocation{DisplayName: location}
+	}
+	body, err := json.Marshal(patch)
 	if err != nil {
 		return fmt.Errorf("microsoft: update event marshal: %w", err)
 	}

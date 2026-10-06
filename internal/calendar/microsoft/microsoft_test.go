@@ -164,7 +164,7 @@ func TestUpdateEvent_patchesNewTime(t *testing.T) {
 	c.apiBase = srv.URL
 
 	start := time.Date(2026, 6, 22, 21, 0, 0, 0, time.UTC)
-	if err := c.UpdateEvent(context.Background(), "u1", "", "evt-1", start, start.Add(30*time.Minute)); err != nil {
+	if err := c.UpdateEvent(context.Background(), "u1", "", "evt-1", start, start.Add(30*time.Minute), ""); err != nil {
 		t.Fatalf("UpdateEvent: %v", err)
 	}
 	if gotMethod != http.MethodPatch {
@@ -182,7 +182,7 @@ func TestUpdateEvent_emptyIDNoOp(t *testing.T) {
 	c := newTestClient(t)
 	connect(t, c, "u1")
 	// No server set; an empty eventID must short-circuit before any HTTP call.
-	if err := c.UpdateEvent(context.Background(), "u1", "", "", time.Now(), time.Now()); err != nil {
+	if err := c.UpdateEvent(context.Background(), "u1", "", "", time.Now(), time.Now(), ""); err != nil {
 		t.Errorf("UpdateEvent(emptyID): %v; want nil no-op", err)
 	}
 }
@@ -572,5 +572,35 @@ func TestCreateEvent_bodyContentTypeFollowsDescription(t *testing.T) {
 				t.Errorf("body = %+v; want %s %q", got.Body, tc.wantType, tc.wantContent)
 			}
 		})
+	}
+}
+
+func TestUpdateEvent_locationPatchedOnlyWhenGiven(t *testing.T) {
+	c := newTestClient(t)
+	connect(t, c, "u1")
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(b))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"evt-1"}`))
+	}))
+	defer srv.Close()
+	c.apiBase = srv.URL
+	start := time.Date(2026, 6, 22, 21, 0, 0, 0, time.UTC)
+	if err := c.UpdateEvent(context.Background(), "u1", "", "evt-1", start, start.Add(30*time.Minute), "https://cal.example/room/abc"); err != nil {
+		t.Fatalf("UpdateEvent: %v", err)
+	}
+	if err := c.UpdateEvent(context.Background(), "u1", "", "evt-1", start, start.Add(30*time.Minute), ""); err != nil {
+		t.Fatalf("UpdateEvent: %v", err)
+	}
+	if !strings.Contains(bodies[0], `"location":{"displayName":"https://cal.example/room/abc"}`) {
+		t.Errorf("location missing from PATCH: %s", bodies[0])
+	}
+	if strings.Contains(bodies[0], "attendees") {
+		t.Errorf("PATCH must not restate attendees: %s", bodies[0])
+	}
+	if strings.Contains(bodies[1], "location") {
+		t.Errorf("empty location must be omitted: %s", bodies[1])
 	}
 }

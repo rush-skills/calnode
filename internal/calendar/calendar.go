@@ -109,8 +109,10 @@ type Provider interface {
 	CreateEvent(ctx context.Context, userID string, p CreateEventParams) (eventID, joinURL, calendarID string, err error)
 
 	// calendarID is the one CreateEvent reported. Empty means "resolve the destination the
-	// old way" - correct for bookings made before that was recorded.
-	UpdateEvent(ctx context.Context, userID, calendarID, eventID string, start, end time.Time) error
+	// old way" - correct for bookings made before that was recorded. location replaces the
+	// event's location when non-empty (a re-minted LiveKit join link after a reschedule);
+	// "" leaves it as it is. Attendees, including ExtraAttendees, are never touched.
+	UpdateEvent(ctx context.Context, userID, calendarID, eventID string, start, end time.Time, location string) error
 	CancelEvent(ctx context.Context, userID, calendarID, eventID string) error
 }
 
@@ -525,9 +527,9 @@ func (s *Service) providerForEvent(ctx context.Context, userID, eventID, storedP
 // UpdateEvent moves an event. calendarID is the one recorded at creation; provider is
 // the stamped provider recorded alongside it ("" for pre-stamp rows: recognition, then
 // the user's current destination).
-func (s *Service) UpdateEvent(ctx context.Context, userID, calendarID, eventID, provider string, start, end time.Time) error {
+func (s *Service) UpdateEvent(ctx context.Context, userID, calendarID, eventID, provider string, start, end time.Time, location string) error {
 	if pr := s.providerForEvent(ctx, userID, eventID, provider); pr != nil {
-		return pr.UpdateEvent(ctx, userID, calendarID, eventID, start, end)
+		return pr.UpdateEvent(ctx, userID, calendarID, eventID, start, end, location)
 	}
 	return nil
 }

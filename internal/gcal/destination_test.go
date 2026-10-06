@@ -135,7 +135,7 @@ func TestUpdateEvent_usesTheStoredCalendar(t *testing.T) {
 	pickSubCalendar(t, c, "user-1", "", "newly-chosen@company.com")
 
 	now := time.Now()
-	if err := c.UpdateEvent(context.Background(), "user-1", "work@company.com", "evt-1", now, now.Add(time.Hour)); err != nil {
+	if err := c.UpdateEvent(context.Background(), "user-1", "work@company.com", "evt-1", now, now.Add(time.Hour), ""); err != nil {
 		t.Fatalf("UpdateEvent: %v", err)
 	}
 	if !strings.Contains(*path, "work@company.com") {

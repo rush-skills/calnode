@@ -55,7 +55,7 @@ func (p *stuckProvider) ListEvents(context.Context, string, time.Time, time.Time
 func (p *stuckProvider) CreateEvent(context.Context, string, calendar.CreateEventParams) (string, string, string, error) {
 	return "", "", "", nil
 }
-func (p *stuckProvider) UpdateEvent(context.Context, string, string, string, time.Time, time.Time) error {
+func (p *stuckProvider) UpdateEvent(context.Context, string, string, string, time.Time, time.Time, string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.updates++

@@ -300,7 +300,7 @@ func TestUpdateEvent_sendsPatchWithNewTimes(t *testing.T) {
 	saveDestinationConnection(t, c, "user-1", "primary")
 
 	start := time.Date(2027, 6, 18, 10, 0, 0, 0, time.UTC)
-	if err := c.UpdateEvent(context.Background(), "user-1", "", "evt-1", start, start.Add(30*time.Minute)); err != nil {
+	if err := c.UpdateEvent(context.Background(), "user-1", "", "evt-1", start, start.Add(30*time.Minute), ""); err != nil {
 		t.Fatalf("UpdateEvent: %v", err)
 	}
 	if gotMethod != http.MethodPatch {
@@ -324,7 +324,7 @@ func TestUpdateEvent_emptyEventID_noOp(t *testing.T) {
 	c.apiBase = srv.URL
 	saveDestinationConnection(t, c, "user-1", "primary")
 
-	if err := c.UpdateEvent(context.Background(), "user-1", "", "", time.Now(), time.Now()); err != nil {
+	if err := c.UpdateEvent(context.Background(), "user-1", "", "", time.Now(), time.Now(), ""); err != nil {
 		t.Errorf("UpdateEvent(\"\") = %v; want nil", err)
 	}
 }
@@ -347,5 +347,38 @@ func TestCreateEvent_prefersHTMLDescriptionWhenGiven(t *testing.T) {
 	c.CreateEvent(context.Background(), "user-1", p) //nolint:errcheck
 	if gotReq.Description != p.DescriptionHTML {
 		t.Errorf("Description = %q; want the HTML %q", gotReq.Description, p.DescriptionHTML)
+	}
+}
+
+// A reschedule of a LiveKit booking carries the re-minted link: the PATCH names start,
+// end and location, and nothing else (attendees are not restated, so they survive).
+func TestUpdateEvent_locationPatchedOnlyWhenGiven(t *testing.T) {
+	var bodies []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var m map[string]any
+		json.NewDecoder(r.Body).Decode(&m) //nolint:errcheck
+		bodies = append(bodies, m)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"id":"evt-1"}`)) //nolint:errcheck
+	}))
+	t.Cleanup(srv.Close)
+	c := newTestClient(t)
+	c.apiBase = srv.URL
+	saveDestinationConnection(t, c, "user-1", "primary")
+	start := time.Date(2027, 6, 18, 10, 0, 0, 0, time.UTC)
+	if err := c.UpdateEvent(context.Background(), "user-1", "", "evt-1", start, start.Add(30*time.Minute), "https://cal.example/room/abc?t=new"); err != nil {
+		t.Fatalf("UpdateEvent: %v", err)
+	}
+	if err := c.UpdateEvent(context.Background(), "user-1", "", "evt-1", start, start.Add(30*time.Minute), ""); err != nil {
+		t.Fatalf("UpdateEvent: %v", err)
+	}
+	if got := bodies[0]["location"]; got != "https://cal.example/room/abc?t=new" {
+		t.Errorf("location = %v; want the new link", got)
+	}
+	if _, has := bodies[0]["attendees"]; has {
+		t.Errorf("PATCH must not restate attendees: %v", bodies[0])
+	}
+	if _, has := bodies[1]["location"]; has {
+		t.Errorf("empty location must be omitted from the PATCH: %v", bodies[1])
 	}
 }

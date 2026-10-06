@@ -38,7 +38,7 @@ func (p *recordProvider) ListEvents(context.Context, string, time.Time, time.Tim
 func (p *recordProvider) CreateEvent(context.Context, string, CreateEventParams) (string, string, string, error) {
 	return "", "", "", nil
 }
-func (p *recordProvider) UpdateEvent(context.Context, string, string, string, time.Time, time.Time) error {
+func (p *recordProvider) UpdateEvent(context.Context, string, string, string, time.Time, time.Time, string) error {
 	*p.log = append(*p.log, p.name+":update")
 	return nil
 }
@@ -106,7 +106,7 @@ func TestProviderForEvent_prefersStampedProvider(t *testing.T) {
 	}
 	for _, tc := range cases {
 		log = nil
-		if err := svc.UpdateEvent(ctx, "host", "cal", tc.eventID, tc.stamp, start, start.Add(time.Hour)); err != nil {
+		if err := svc.UpdateEvent(ctx, "host", "cal", tc.eventID, tc.stamp, start, start.Add(time.Hour), ""); err != nil {
 			t.Fatalf("%s: UpdateEvent: %v", tc.name, err)
 		}
 		if len(log) != 1 || log[0] != tc.want+":update" {

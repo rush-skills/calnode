@@ -310,7 +310,12 @@ func (h *Handler) rescheduleSideEffects(bCopy booking.Booking, capturedEtID stri
 	// LiveKit join URLs expire with the original meeting: re-mint them first so the
 	// email data loaded below, the manage page, and the stored record all carry
 	// links valid past the new end (#98). Same room, new expiry.
-	h.remintLiveKitLinks(ctx, &bCopy)
+	// The host events' location follows the re-minted link (the attendee-safe one, as at
+	// creation: see hostEventLocation); for every other location type it is unchanged.
+	newLocation := ""
+	if h.remintLiveKitLinks(ctx, &bCopy) {
+		newLocation = bCopy.LocationValue
+	}
 
 	d, err := h.loadCancellationData(ctx, &bCopy)
 	if err != nil {
@@ -323,7 +328,7 @@ func (h *Handler) rescheduleSideEffects(bCopy booking.Booking, capturedEtID stri
 	h.applyBranding(ctx, &d)
 
 	// Move the calendar event(s) to the new time (all hosts, for Group bookings).
-	h.moveCalendarEvents(ctx, bCopy.ID, bCopy.StartAt, bCopy.EndAt)
+	h.moveCalendarEvents(ctx, bCopy.ID, bCopy.StartAt, bCopy.EndAt, newLocation)
 	// Update the Zoom meeting time too (the join URL is unchanged).
 	h.rescheduleZoomMeeting(ctx, &bCopy)
 

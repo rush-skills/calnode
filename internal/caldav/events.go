@@ -40,13 +40,14 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 }
 
 // UpdateEvent moves an existing event to new start/end times. CalDAV has no partial update, so
-// it GETs the current object, rewrites DTSTART/DTEND (and bumps SEQUENCE/DTSTAMP), and PUTs it
-// back — preserving summary, description, location, and attendees.
+// it GETs the current object, rewrites DTSTART/DTEND (and bumps SEQUENCE/DTSTAMP), replaces
+// LOCATION when a new one is given, and PUTs it back — preserving summary, description and
+// attendees.
 //
 // It authenticates as the account that holds the event (eventConn), not as the current
 // destination, and returns an error without sending anything when that account cannot be
 // established.
-func (c *Client) UpdateEvent(ctx context.Context, userID, calendarID, eventID string, start, end time.Time) error {
+func (c *Client) UpdateEvent(ctx context.Context, userID, calendarID, eventID string, start, end time.Time, location string) error {
 	cn, ok, err := c.eventConn(ctx, userID, calendarID, eventID)
 	if err != nil || !ok {
 		return err
@@ -61,7 +62,7 @@ func (c *Client) UpdateEvent(ctx context.Context, userID, calendarID, eventID st
 	if status != http.StatusOK {
 		return fmt.Errorf("caldav: fetch event for update returned status %d", status)
 	}
-	updated := rewriteEventTimes(body, start, end)
+	updated := rewriteEventTimes(body, start, end, location)
 	putStatus, _, err := c.putICS(ctx, eventID, cn.username, cn.password, updated, "", etag)
 	if err != nil {
 		return err
@@ -374,14 +375,18 @@ func buildICS(id string, start, end time.Time, summary, description, location, o
 // UTC times, drops any DURATION (now redundant), refreshes DTSTAMP/LAST-MODIFIED, and bumps
 // SEQUENCE — preserving every other line. Operates on raw (unfolded-safe) lines so it never
 // disturbs the rest of the object.
-func rewriteEventTimes(ics string, start, end time.Time) string {
+func rewriteEventTimes(ics string, start, end time.Time, location string) string {
 	lines := strings.Split(strings.ReplaceAll(ics, "\r\n", "\n"), "\n")
 	var out []string
-	sawSeq := false
+	sawSeq, sawLoc, dropCont := false, false, false
 	for _, ln := range lines {
 		if ln == "" {
 			continue
 		}
+		if dropCont && (strings.HasPrefix(ln, " ") || strings.HasPrefix(ln, "\t")) {
+			continue // continuation of the LOCATION line we replaced
+		}
+		dropCont = false
 		upper := strings.ToUpper(ln)
 		head := propName(upper)
 		switch head {
@@ -389,6 +394,16 @@ func rewriteEventTimes(ics string, start, end time.Time) string {
 			out = append(out, "DTSTART:"+icsUTC(start))
 		case "DTEND":
 			out = append(out, "DTEND:"+icsUTC(end))
+		case "LOCATION":
+			if location == "" {
+				out = append(out, ln)
+			} else {
+				if !sawLoc {
+					out = append(out, foldLine("LOCATION:"+escapeText(location)))
+				}
+				dropCont = true
+			}
+			sawLoc = true
 		case "DURATION":
 			// drop — DTEND is now authoritative
 		case "DTSTAMP", "LAST-MODIFIED":
@@ -397,9 +412,15 @@ func rewriteEventTimes(ics string, start, end time.Time) string {
 			sawSeq = true
 			out = append(out, fmt.Sprintf("SEQUENCE:%d", seqPlusOne(ln)))
 		case "END":
-			if strings.EqualFold(strings.TrimSpace(propValue(ln)), "VEVENT") && !sawSeq {
-				out = append(out, "SEQUENCE:1")
-				sawSeq = true
+			if strings.EqualFold(strings.TrimSpace(propValue(ln)), "VEVENT") {
+				if !sawSeq {
+					out = append(out, "SEQUENCE:1")
+					sawSeq = true
+				}
+				if location != "" && !sawLoc {
+					out = append(out, foldLine("LOCATION:"+escapeText(location)))
+					sawLoc = true
+				}
 			}
 			out = append(out, ln)
 		default:

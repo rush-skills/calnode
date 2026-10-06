@@ -5,10 +5,12 @@ import (
 	"log/slog"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/calnode/calnode/internal/booking"
+	"github.com/calnode/calnode/internal/calendar"
 	"github.com/calnode/calnode/internal/db"
 	"github.com/calnode/calnode/internal/livekit"
 )
@@ -115,5 +117,71 @@ func TestRemintLiveKitLinks_skipsWhenNothingToDo(t *testing.T) {
 	h2.db.QueryRowContext(ctx, `SELECT location_value FROM bookings WHERE id = 'b1'`).Scan(&stored) //nolint:errcheck
 	if stored != "https://meet.example.com/manual" {
 		t.Errorf("non-LiveKit location changed: %q", stored)
+	}
+}
+
+// locProvider records the location each UpdateEvent carried.
+type locProvider struct {
+	calendar.Provider
+	mu        sync.Mutex
+	locations []string
+}
+
+func (p *locProvider) Name() string                                         { return "google" }
+func (p *locProvider) InvitesGuests() bool                                  { return true }
+func (p *locProvider) HasDestination(context.Context, string) (bool, error) { return true, nil }
+func (p *locProvider) UpdateEvent(_ context.Context, _, _, _ string, _, _ time.Time, location string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.locations = append(p.locations, location)
+	return nil
+}
+
+// After a LiveKit reschedule every host's calendar event must carry the re-minted
+// (attendee-safe) link as its location; a booking with no room moves with "" (unchanged).
+func TestMoveCalendarEvents_carriesRemintedLiveKitLink(t *testing.T) {
+	h := newLiveKitTestHandler(t, true)
+	ctx := context.Background()
+	p := &locProvider{}
+	svc := calendar.NewService(h.db)
+	svc.Register(p)
+	h.SetCalendar(svc)
+	for _, q := range []string{
+		`INSERT INTO users (id, email, name, iana_timezone) VALUES ('u2','c@example.com','Cohost','UTC')`,
+		`INSERT INTO calendar_connections (id,user_id,provider,access_token_enc,calendar_id,is_destination) VALUES ('c1','u1','google','t','primary',1)`,
+		`INSERT INTO calendar_connections (id,user_id,provider,access_token_enc,calendar_id,is_destination) VALUES ('c2','u2','google','t','primary',1)`,
+	} {
+		if _, err := h.db.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldEnd := time.Now().UTC().Add(-time.Hour)
+	b := seedLiveKitBooking(t, h, oldEnd, "booking-b1", "https://calnode.example.com/room/booking-b1?t=old")
+	for _, q := range []string{
+		`INSERT INTO booking_hosts (id,booking_id,user_id,is_primary,external_event_id,external_provider) VALUES ('bh1','b1','u1',1,'evt-1','google')`,
+		`INSERT INTO booking_hosts (id,booking_id,user_id,is_primary,external_event_id,external_provider) VALUES ('bh2','b1','u2',0,'evt-2','google')`,
+	} {
+		if _, err := h.db.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b.EndAt = time.Now().UTC().Add(25 * time.Hour).Truncate(time.Second)
+	b.StartAt = b.EndAt.Add(-30 * time.Minute)
+	newLocation := ""
+	if h.remintLiveKitLinks(ctx, &b) {
+		newLocation = b.LocationValue
+	}
+	if newLocation == "" || strings.Contains(newLocation, "t=old") || strings.Contains(newLocation, "host") {
+		t.Fatalf("re-minted attendee link = %q", newLocation)
+	}
+	h.moveCalendarEvents(ctx, b.ID, b.StartAt, b.EndAt, newLocation)
+	if len(p.locations) != 2 || p.locations[0] != newLocation || p.locations[1] != newLocation {
+		t.Errorf("host events moved with locations %v; want both = %q", p.locations, newLocation)
+	}
+
+	// No room: the location argument stays empty, so providers leave it alone.
+	h2 := newLiveKitTestHandler(t, false)
+	if h2.remintLiveKitLinks(ctx, &b) {
+		t.Error("remint without LiveKit reported true")
 	}
 }

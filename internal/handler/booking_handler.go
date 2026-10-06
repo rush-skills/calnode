@@ -1144,24 +1144,27 @@ func (h *Handler) mintMeetingLink(ctx context.Context, b *booking.Booking, in bo
 // stored record keep pointing at tokens that die with the original date (#98).
 // Updates bookings.location_value (attendee link) and b in place; the room column
 // is unchanged. No-op when LiveKit is disabled or the booking never minted a room.
-func (h *Handler) remintLiveKitLinks(ctx context.Context, b *booking.Booking) {
+// Reports whether the links were re-minted, so the caller knows the hosts' calendar
+// events need the new link as their location (moveCalendarEvents).
+func (h *Handler) remintLiveKitLinks(ctx context.Context, b *booking.Booking) bool {
 	lk := h.getLiveKit()
 	if lk == nil {
-		return
+		return false
 	}
 	var room string
 	if err := h.db.QueryRowContext(ctx,
 		`SELECT COALESCE(livekit_room,'') FROM bookings WHERE id = ?`, b.ID).Scan(&room); err != nil || room == "" {
-		return
+		return false
 	}
 	exp := b.EndAt.Add(2 * time.Hour)
 	attendeeURL := lk.BookingJoinURL(h.baseURL, room, "", exp)
 	if _, err := h.db.ExecContext(ctx,
 		`UPDATE bookings SET location_value = ? WHERE id = ?`, attendeeURL, b.ID); err != nil {
 		h.logger.Error("livekit: refresh location on reschedule", "error", err, "booking_id", b.ID)
-		return
+		return false
 	}
 	b.LocationValue = attendeeURL
+	return true
 }
 
 // hostEventLocation picks the Location for a host's calendar event. That event adds the
@@ -1885,8 +1888,11 @@ func (h *Handler) cancelZoomMeeting(ctx context.Context, b *booking.Booking) {
 
 // moveCalendarEvents moves every assigned host's calendar event to a new
 // start/end after a reschedule. Best-effort; a failure leaves that host's event
-// at the old time (logged). Group bookings move all hosts' events.
-func (h *Handler) moveCalendarEvents(ctx context.Context, bookingID string, start, end time.Time) {
+// at the old time (logged). Group bookings move all hosts' events. location, when
+// non-empty, replaces each event's location too: a LiveKit booking's join links are
+// signed with an expiry tied to the meeting end, so after a reschedule every host's
+// calendar must carry the re-minted link or it would open a dead room.
+func (h *Handler) moveCalendarEvents(ctx context.Context, bookingID string, start, end time.Time, location string) {
 	gc := h.getCal()
 	if gc == nil {
 		return
@@ -1900,7 +1906,7 @@ func (h *Handler) moveCalendarEvents(ctx context.Context, bookingID string, star
 		if host.ExternalEventID == "" {
 			continue
 		}
-		if err := gc.UpdateEvent(ctx, host.UserID, host.ExternalCalendarID, host.ExternalEventID, host.ExternalProvider, start, end); err != nil {
+		if err := gc.UpdateEvent(ctx, host.UserID, host.ExternalCalendarID, host.ExternalEventID, host.ExternalProvider, start, end, location); err != nil {
 			// The event is now at the wrong time — flag it so the reconciler re-applies
 			// the move on a later sweep (drift can't be inferred from booking state).
 			h.logger.Error("reschedule: move gcal event", "error", err, "booking_id", bookingID, "host", host.UserID)

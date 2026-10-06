@@ -94,7 +94,7 @@ func TestBuildICS_noAttendeesWithoutDefaults(t *testing.T) {
 func TestRewriteEventTimes_keepsAttendeeLines(t *testing.T) {
 	ics := buildICS("id", time.Date(2026, 7, 1, 9, 0, 0, 0, time.UTC), time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC),
 		"Intro", "", "", "Booker", "booker@x.test", []string{"notes@example.com"}, 0)
-	moved := strings.Join(unfold(rewriteEventTimes(ics, moveStart, moveEnd)), "\n")
+	moved := strings.Join(unfold(rewriteEventTimes(ics, moveStart, moveEnd, "")), "\n")
 	if !strings.Contains(moved, "RSVP=TRUE:mailto:notes@example.com") {
 		t.Errorf("attendee dropped on reschedule:\n%s", moved)
 	}

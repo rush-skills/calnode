@@ -43,7 +43,7 @@ func (p *liveCalendar) CreateEvent(_ context.Context, _ string, in calendar.Crea
 	}
 	return "evt-" + in.Summary, link, "primary", nil
 }
-func (p *liveCalendar) UpdateEvent(_ context.Context, _, _, _ string, start, end time.Time) error {
+func (p *liveCalendar) UpdateEvent(_ context.Context, _, _, _ string, start, end time.Time, _ string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.updates = append(p.updates, [2]time.Time{start, end})
