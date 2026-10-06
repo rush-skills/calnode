@@ -345,6 +345,7 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	// Users
 	mux.HandleFunc("GET /v1/users", h.RequireAuth(h.ListUsers))
 	mux.HandleFunc("DELETE /v1/users/{id}", h.RequireAuth(h.DeleteUser))
+	mux.HandleFunc("GET /v1/users/{id}/removal-preview", h.RequireAuth(h.GetRemovalPreview))
 	mux.HandleFunc("PATCH /v1/users/{id}/role", h.RequireAuth(h.SetUserRole))
 	mux.HandleFunc("POST /v1/users/{id}/transfer-ownership", h.RequireAuth(h.TransferOwnership))
 	mux.HandleFunc("POST /v1/users/{id}/archive", h.RequireAuth(h.ArchiveUser))

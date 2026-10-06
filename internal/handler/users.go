@@ -3,7 +3,6 @@ package handler
 import (
 	"database/sql"
 	"net/http"
-	"time"
 )
 
 // ListUsers handles GET /v1/users — admin only. Returns all users.
@@ -121,102 +120,4 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeJSON(w, http.StatusOK, out)
-}
-
-// DeleteUser handles DELETE /v1/users/{id} — admin only.
-//
-// Guards (PRD §8.10):
-//   - cannot delete yourself;
-//   - the owner cannot be removed (transfer ownership first);
-//   - only the owner may remove another admin;
-//   - removal is blocked while the user still has upcoming bookings as host —
-//     no silent orphaning; those must be reassigned or cancelled first.
-func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
-	admin, ok := userFromContext(r.Context())
-	if !ok || !admin.IsAdmin {
-		h.writeError(w, http.StatusForbidden, "admin access required")
-		return
-	}
-	targetID := r.PathValue("id")
-	if targetID == admin.ID {
-		h.writeError(w, http.StatusBadRequest, "you cannot delete your own account")
-		return
-	}
-
-	var targetIsAdmin, targetIsOwner int
-	err := h.db.QueryRowContext(r.Context(),
-		`SELECT is_admin, is_owner FROM users WHERE id = ?`, targetID).
-		Scan(&targetIsAdmin, &targetIsOwner)
-	if err == sql.ErrNoRows {
-		h.writeError(w, http.StatusNotFound, "user not found")
-		return
-	}
-	if err != nil {
-		h.logger.ErrorContext(r.Context(), "delete user: load target", "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	if targetIsOwner != 0 {
-		h.writeError(w, http.StatusBadRequest, "cannot remove the workspace owner; transfer ownership first")
-		return
-	}
-	if targetIsAdmin != 0 && !admin.IsOwner {
-		h.writeError(w, http.StatusForbidden, "only the workspace owner can remove an admin")
-		return
-	}
-
-	// Block removal while the user still hosts upcoming bookings, so attendees
-	// are never silently orphaned. They must be reassigned or cancelled first.
-	// Group/round-robin seats live in booking_hosts, not bookings.host_id, so a
-	// member check covers both — otherwise a non-primary attendee passes the
-	// guard and the delete either FK-aborts or silently drops their seat.
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	var upcoming int
-	if err := h.db.QueryRowContext(r.Context(), `
-		SELECT COUNT(DISTINCT b.id) FROM bookings b
-		LEFT JOIN booking_hosts bh ON bh.booking_id = b.id
-		WHERE (b.host_id = ? OR bh.user_id = ?)
-		  AND b.status != 'cancelled' AND b.end_at > ?`,
-		targetID, targetID, now).Scan(&upcoming); err != nil {
-		h.logger.ErrorContext(r.Context(), "delete user: count bookings", "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	if upcoming > 0 {
-		h.writeError(w, http.StatusConflict,
-			"this member still has upcoming bookings; reassign or cancel them before removing the member")
-		return
-	}
-
-	// Past and cancelled bookings still reference their primary host
-	// (bookings.host_id has no ON DELETE action, deliberately: deleting a user
-	// must not cascade-delete booking history out from under other attendees).
-	// Non-primary seats and MCP tokens cascade away via migration 00063, so only
-	// primary-host rows block here. Reassigning a booking moves its host_id and
-	// clears this guard.
-	var historical int
-	if err := h.db.QueryRowContext(r.Context(), `
-		SELECT COUNT(*) FROM bookings WHERE host_id = ?`,
-		targetID).Scan(&historical); err != nil {
-		h.logger.ErrorContext(r.Context(), "delete user: count hosted bookings", "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	if historical > 0 {
-		h.writeError(w, http.StatusConflict,
-			"this member still hosts past bookings; reassign them before removing the member")
-		return
-	}
-
-	res, err := h.db.ExecContext(r.Context(), `DELETE FROM users WHERE id = ?`, targetID)
-	if err != nil {
-		h.logger.ErrorContext(r.Context(), "delete user: exec", "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		h.writeError(w, http.StatusNotFound, "user not found")
-		return
-	}
-	h.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

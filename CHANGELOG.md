@@ -26,6 +26,12 @@ exact tag (`ghcr.io/calnode/calnode:0.1.0`) if you need stability between upgrad
   stay admin-only).
 
 ### Changed
+- **Removing a member is a guided, permanent delete.** Members → Remove shows what will be
+  lost, then either transfers their event types, upcoming meetings (moved through the
+  reassign flow, so invites move calendars), past bookings and live events to another
+  member, or deletes their event types and past bookings. Delete is only offered when
+  nothing is upcoming. Any admin can remove any member, other admins included; the owner
+  cannot be removed. Archive is unchanged for reversible offboarding.
 - **The "Powered by Calnode" line is gone from the public booking surfaces** (booking page,
   manage page, embed widget, person and team pages). The legal footer (privacy, terms,
   language) stays.

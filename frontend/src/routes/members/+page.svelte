@@ -55,6 +55,32 @@
 	let resolveBusy = $state(false);
 	let resolveError = $state('');
 
+	// After the upcoming meetings are resolved, continue with archive or removal.
+	let resolveThen = $state<'archive' | 'remove'>('archive');
+
+	// --- Remove member (delete the account) ---
+	type RemovalPreview = {
+		event_types: string[];
+		upcoming_hosted: number;
+		upcoming_on_their_event_types: number;
+		past_hosted: number;
+		past_on_their_event_types: number;
+		live_events: number;
+		calendar_connections: number;
+		api_keys: number;
+		can_delete: boolean;
+		can_transfer: boolean;
+		blocked_reason?: string;
+	};
+	let removeOpen = $state(false);
+	let removeMember = $state<TeamMember | null>(null);
+	let removePreview = $state<RemovalPreview | null>(null);
+	let removeMode = $state<'transfer' | 'delete'>('transfer');
+	let removeTo = $state('');
+	let removeBusy = $state(false);
+	let removeError = $state('');
+	let removeTargets = $derived(members.filter((m) => !m.archived && m.id !== removeMember?.id));
+
 	let reassignTargets = $derived(members.filter((m) => !m.archived && m.id !== resolveMember?.id));
 
 	async function load() {
@@ -156,12 +182,54 @@
 		});
 	}
 
+	async function startRemove(m: TeamMember) {
+		error = '';
+		try {
+			const p = await api.get<RemovalPreview>(`/v1/users/${m.id}/removal-preview`);
+			removeMember = m;
+			removePreview = p;
+			removeMode = p.can_delete && p.event_types.length === 0 && p.past_hosted === 0 ? 'delete' : 'transfer';
+			removeTo = '';
+			removeError = '';
+			removeOpen = true;
+		} catch (e: any) { toast.error(e.message || 'Could not prepare removal'); }
+	}
+
+	async function doRemove() {
+		if (!removeMember) return;
+		if (removeMode === 'transfer' && !removeTo) { removeError = 'Choose who receives their event types and history.'; return; }
+		removeBusy = true; removeError = '';
+		try {
+			if (removeMode === 'transfer' && (removePreview?.upcoming_hosted ?? 0) > 0) {
+				// Move their upcoming meetings through the reassign flow first, so each
+				// calendar invite moves to the new host's calendar and attendees are told.
+				const res = await api.get<{ items: UpcomingBooking[] }>(`/v1/users/${removeMember.id}/upcoming-bookings`);
+				for (const b of res.items) {
+					try {
+						await api.post(`/v1/bookings/${b.id}/reassign`, { host_id: removeTo });
+					} catch (e: any) {
+						const when = new Date(b.start_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+						throw new Error(`Couldn't move the meeting on ${when}: ${e.message}. Meetings already moved stay moved; pick someone else or cancel that meeting, then try again.`);
+					}
+				}
+			}
+			await api.del(`/v1/users/${removeMember.id}`,
+				removeMode === 'transfer' ? { mode: 'transfer', transfer_to: removeTo } : { mode: 'delete' });
+			toast.success(`${removeMember.name} removed`);
+			removeOpen = false;
+			removeMember = null;
+			await load();
+		} catch (e: any) { removeError = e.message || 'Could not remove member'; }
+		finally { removeBusy = false; }
+	}
+
 	// --- Archive / restore ---
 	async function startArchive(m: TeamMember) {
 		error = '';
 		try {
 			const res = await api.get<{ items: UpcomingBooking[] }>(`/v1/users/${m.id}/upcoming-bookings`);
 			if (res.items.length > 0) {
+				resolveThen = 'archive';
 				resolveMember = m;
 				resolveBookings = res.items;
 				resolveChoice = {};
@@ -225,10 +293,15 @@
 
 	async function finishResolveIfDone() {
 		if (resolveBookings.length === 0 && resolveMember) {
-			const id = resolveMember.id;
+			const m = resolveMember;
 			resolveOpen = false;
 			resolveMember = null;
-			await doArchive(id);
+			if (resolveThen === 'remove') {
+				await load();
+				await startRemove(m);
+				return;
+			}
+			await doArchive(m.id);
 		}
 	}
 
@@ -291,13 +364,76 @@
 />
 
 <!-- Resolve-meetings dialog (shown when archiving a member with upcoming bookings) -->
+<Dialog.Root bind:open={removeOpen}>
+	<Dialog.Content class="max-w-lg">
+		<Dialog.Header>
+			<Dialog.Title>Remove {removeMember?.name}?</Dialog.Title>
+			<Dialog.Description>
+				This permanently deletes their account. It can't be undone — archive them instead if you may need them back.
+			</Dialog.Description>
+		</Dialog.Header>
+		{#if removePreview}
+			{@const p = removePreview}
+			<div class="space-y-4 text-sm">
+				<div class="rounded-md border border-destructive/30 bg-destructive/5 p-3">
+					<p class="font-medium">Lost with the account</p>
+					<ul class="mt-1 list-disc space-y-0.5 pl-5 text-muted-foreground">
+						<li>Their sign-in, sessions{p.api_keys ? ` and ${p.api_keys} API key${p.api_keys === 1 ? '' : 's'}` : ''}</li>
+						<li>Availability, profile and notification settings</li>
+						{#if p.calendar_connections}<li>{p.calendar_connections} connected calendar{p.calendar_connections === 1 ? '' : 's'}</li>{/if}
+						<li>Their seats as a host on other people's event types</li>
+					</ul>
+				</div>
+				<div class="space-y-1.5">
+					<Label for="remove-mode">Their event types and history</Label>
+					<Select.Root type="single" value={removeMode} onValueChange={(v) => { if (v) removeMode = v as 'transfer' | 'delete'; }}>
+						<Select.Trigger id="remove-mode" class="w-full">{removeMode === 'transfer' ? 'Transfer to another member' : 'Delete them'}</Select.Trigger>
+						<Select.Content>
+							<Select.Item value="transfer" label="Transfer to another member">Transfer to another member</Select.Item>
+							<Select.Item value="delete" label="Delete them" disabled={!p.can_delete}>Delete them</Select.Item>
+						</Select.Content>
+					</Select.Root>
+					{#if removeMode === 'transfer'}
+						<p class="text-xs text-muted-foreground">
+							{p.event_types.length} event type{p.event_types.length === 1 ? '' : 's'}{p.event_types.length ? ` (${p.event_types.join(', ')})` : ''},
+							{p.upcoming_hosted ? `${p.upcoming_hosted} upcoming meeting${p.upcoming_hosted === 1 ? '' : 's'} (invites move to the new host's calendar), ` : ''}{p.past_hosted} past booking{p.past_hosted === 1 ? '' : 's'} they hosted and {p.live_events} live event{p.live_events === 1 ? '' : 's'} move to:
+						</p>
+						<Select.Root type="single" value={removeTo} onValueChange={(v) => (removeTo = v ?? '')}>
+							<Select.Trigger class="w-full" aria-label="Transfer to">{removeTargets.find((m) => m.id === removeTo)?.name ?? 'Choose a member'}</Select.Trigger>
+							<Select.Content>
+								{#each removeTargets as t (t.id)}<Select.Item value={t.id} label={t.name}>{t.name}</Select.Item>{/each}
+							</Select.Content>
+						</Select.Root>
+					{:else}
+						<p class="text-xs text-destructive">
+							Deletes {p.event_types.length} event type{p.event_types.length === 1 ? '' : 's'}{p.event_types.length ? ` (${p.event_types.join(', ')})` : ''}
+							and their booking links, {p.past_on_their_event_types} past booking{p.past_on_their_event_types === 1 ? '' : 's'} of those event types,
+							and {p.past_hosted} past booking{p.past_hosted === 1 ? '' : 's'} they hosted. Live events they created stay, credited to you.
+						</p>
+					{/if}
+					{#if p.blocked_reason && !p.can_delete}
+						<p class="text-xs text-muted-foreground">{p.blocked_reason}</p>
+					{/if}
+				</div>
+				{#if removeError}<p class="text-sm text-destructive">{removeError}</p>{/if}
+			</div>
+		{/if}
+		<Dialog.Footer>
+			<Button variant="outline" disabled={removeBusy} onclick={() => (removeOpen = false)}>Cancel</Button>
+			<Button variant="destructive" disabled={removeBusy || (removeMode === 'transfer' && !removeTo)} onclick={doRemove}>
+				{removeBusy ? 'Removing…' : 'Remove member'}
+			</Button>
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>
+
 <Dialog.Root bind:open={resolveOpen}>
 	<Dialog.Content class="max-w-2xl">
 		<Dialog.Header>
 			<Dialog.Title>Resolve {resolveMember?.name}'s upcoming meetings</Dialog.Title>
 			<Dialog.Description>
 				{resolveBookings.length} upcoming meeting{resolveBookings.length === 1 ? '' : 's'} remaining.
-				Reassign each to another member or cancel it. When all are resolved, the member is archived automatically.
+				Reassign each to another member or cancel it. When all are resolved, {resolveThen === 'remove' ? 'you can choose what happens to their event types and remove them' : 'the member is archived automatically'}.
 			</Dialog.Description>
 		</Dialog.Header>
 
@@ -532,6 +668,10 @@
 													{#if !m.is_owner && (!m.is_admin || $currentUser.is_owner)}
 														<Button size="sm" variant="ghost" class="h-7 text-xs" onclick={() => startReset(m.id)}>Reset password</Button>
 														<Button size="sm" variant="ghost" class="h-7 text-xs text-destructive hover:text-destructive" onclick={() => startArchive(m)}>Archive</Button>
+													{/if}
+													<!-- Any admin may remove any member except the owner and themselves. -->
+													{#if !m.is_owner && m.id !== $currentUser.id}
+														<Button size="sm" variant="ghost" class="h-7 text-xs text-destructive hover:text-destructive" onclick={() => startRemove(m)}>Remove</Button>
 													{/if}
 												{/if}
 											{/if}

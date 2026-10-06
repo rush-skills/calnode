@@ -3,6 +3,7 @@ package handler_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -188,7 +189,8 @@ func TestDeleteUser_cannotRemoveOwner(t *testing.T) {
 	}
 }
 
-func TestDeleteUser_adminCannotRemoveAdmin(t *testing.T) {
+// Any admin may remove another admin (the owner still cannot be removed).
+func TestDeleteUser_adminCanRemoveAdmin(t *testing.T) {
 	h, database, _, _ := setupWorkspaceWithDB(t)
 	adminKey := "admin-del-admin-key"
 	database.Exec(`INSERT INTO users (id,email,name,iana_timezone,is_admin,is_owner) VALUES ('u2','a@example.com','Admin','UTC',1,0)`)
@@ -199,8 +201,8 @@ func TestDeleteUser_adminCannotRemoveAdmin(t *testing.T) {
 	req.SetPathValue("id", "u3")
 	rec := httptest.NewRecorder()
 	h.RequireAuth(h.DeleteUser)(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("got %d; want 403 (admin cannot remove admin)", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Errorf("got %d; want 200 (an admin may remove another admin) — %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -289,7 +291,7 @@ func TestAdminSetPassword_revokesTargetSessions(t *testing.T) {
 }
 
 func TestDeleteUser_blockedByUpcomingBookings(t *testing.T) {
-	h, database, ownerKey, _ := setupWorkspaceWithDB(t)
+	h, database, ownerKey, ownerID := setupWorkspaceWithDB(t)
 	database.Exec(`INSERT INTO users (id,email,name,iana_timezone,is_admin) VALUES ('u2','host2@example.com','Host','UTC',0)`)
 	database.Exec(`INSERT INTO event_types (id,user_id,slug,name,duration_minutes) VALUES ('et1','u2','et-slug','E',30)`)
 	// Future, non-cancelled booking hosted by u2.
@@ -304,18 +306,24 @@ func TestDeleteUser_blockedByUpcomingBookings(t *testing.T) {
 		t.Fatalf("got %d; want 409 (upcoming bookings block removal) — %s", rec.Code, rec.Body.String())
 	}
 
-	// Cancelling the upcoming booking clears the upcoming guard, but the member
-	// is still the booking's primary host, so removal stays blocked: deleting
-	// them would break the booking's host reference (bookings.host_id has no
-	// ON DELETE action by design). Reassigning the booking away is the way out.
+	// Once nothing is upcoming, past and cancelled history no longer blocks: in "delete"
+	// mode the member's event types and their past bookings go with them.
 	database.Exec(`UPDATE bookings SET status='cancelled' WHERE id='b1'`)
 	req = authReq(http.MethodDelete, "/v1/users/u2", "", ownerKey)
 	req.SetPathValue("id", "u2")
 	rec = httptest.NewRecorder()
 	h.RequireAuth(h.DeleteUser)(rec, req)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("cancelled primary booking should still block removal, got %d — %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("history only: got %d; want 200 — %s", rec.Code, rec.Body.String())
 	}
+	var left int
+	database.QueryRow(`SELECT (SELECT COUNT(*) FROM bookings WHERE id='b1') + (SELECT COUNT(*) FROM event_types WHERE id='et1')`).Scan(&left)
+	if left != 0 {
+		t.Errorf("delete mode left %d rows of history behind; want 0", left)
+	}
+	database.Exec(`INSERT INTO event_types (id,user_id,slug,name,duration_minutes) VALUES ('et0',?,'et0-slug','E0',30)`, ownerID)
+	database.Exec(`INSERT INTO bookings (id,event_type_id,host_id,start_at,end_at,status)
+		VALUES ('b1','et0',?,'2020-01-01T10:00:00Z','2020-01-01T10:30:00Z','confirmed')`, ownerID)
 
 	// A member who only ever attended as a non-primary seat (plus a stale MCP
 	// token) deletes cleanly: seats and tokens cascade away (migration 00063).
@@ -340,7 +348,7 @@ func TestDeleteUser_blockedByUpcomingBookings(t *testing.T) {
 	// the member would silently drop them from a meeting that still needs them.
 	database.Exec(`INSERT INTO users (id,email,name,iana_timezone,is_admin) VALUES ('u4','upcoming-seat@example.com','Upcoming','UTC',0)`)
 	database.Exec(`INSERT INTO bookings (id,event_type_id,host_id,start_at,end_at,status)
-		VALUES ('b2','et1','u2','2099-02-01T10:00:00Z','2099-02-01T10:30:00Z','confirmed')`)
+		VALUES ('b2','et0',?,'2099-02-01T10:00:00Z','2099-02-01T10:30:00Z','confirmed')`, ownerID)
 	database.Exec(`INSERT INTO booking_hosts (id,booking_id,user_id,is_primary) VALUES ('seat2','b2','u4',0)`)
 	req = authReq(http.MethodDelete, "/v1/users/u4", "", ownerKey)
 	req.SetPathValue("id", "u4")
@@ -348,5 +356,62 @@ func TestDeleteUser_blockedByUpcomingBookings(t *testing.T) {
 	h.RequireAuth(h.DeleteUser)(rec, req)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("upcoming non-primary seat should block removal, got %d — %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Transfer mode: event types, past bookings and live events move to the chosen member
+// and the links keep working; delete mode refuses while other hosts still have upcoming
+// bookings on the member's event types.
+func TestDeleteUser_transferModeKeepsEventTypesAndHistory(t *testing.T) {
+	h, database, ownerKey, ownerID := setupWorkspaceWithDB(t)
+	for _, q := range []string{
+		`INSERT INTO users (id,email,name,iana_timezone,is_admin) VALUES ('u2','leaver@example.com','Leaver','UTC',1)`,
+		`INSERT INTO event_types (id,user_id,slug,name,duration_minutes) VALUES ('etx','u2','leaver-call','Call',30)`,
+		`INSERT INTO event_type_hosts (id,event_type_id,user_id,role,priority) VALUES ('h1','etx','u2','required',0)`,
+		`INSERT INTO bookings (id,event_type_id,host_id,start_at,end_at,status) VALUES ('past','etx','u2','2020-01-01T10:00:00Z','2020-01-01T10:30:00Z','confirmed')`,
+		`INSERT INTO bookings (id,event_type_id,host_id,start_at,end_at,status) VALUES ('future','etx','` + ownerID + `','2099-01-01T10:00:00Z','2099-01-01T10:30:00Z','confirmed')`,
+		// An upcoming meeting the leaver hosts: transfer carries it, delete refuses.
+		`INSERT INTO bookings (id,event_type_id,host_id,start_at,end_at,status) VALUES ('mine','etx','u2','2099-02-01T10:00:00Z','2099-02-01T10:30:00Z','confirmed')`,
+		`INSERT INTO booking_hosts (id,booking_id,user_id,is_primary) VALUES ('bh1','mine','u2',1)`,
+	} {
+		if _, err := database.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	del := func(body string) *httptest.ResponseRecorder {
+		req := authReq(http.MethodDelete, "/v1/users/u2", body, ownerKey)
+		req.SetPathValue("id", "u2")
+		rec := httptest.NewRecorder()
+		h.RequireAuth(h.DeleteUser)(rec, req)
+		return rec
+	}
+	prev := httptest.NewRecorder()
+	preq := authReq(http.MethodGet, "/v1/users/u2/removal-preview", "", ownerKey)
+	preq.SetPathValue("id", "u2")
+	h.RequireAuth(h.GetRemovalPreview)(prev, preq)
+	if !strings.Contains(prev.Body.String(), `"can_delete":false`) || !strings.Contains(prev.Body.String(), `"can_transfer":true`) {
+		t.Errorf("preview = %s; want transfer-only (upcoming booking on their event type)", prev.Body.String())
+	}
+	if rec := del(`{"mode":"delete"}`); rec.Code != http.StatusConflict {
+		t.Errorf("delete with another host's upcoming booking on their event type: %d; want 409", rec.Code)
+	}
+	if rec := del(`{"mode":"transfer","transfer_to":"u2"}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("transfer to self: %d; want 400", rec.Code)
+	}
+	if rec := del(`{"mode":"transfer","transfer_to":"` + ownerID + `"}`); rec.Code != http.StatusOK {
+		t.Fatalf("transfer: %d — %s", rec.Code, rec.Body.String())
+	}
+	var etOwner, pastHost, hostSeat string
+	database.QueryRow(`SELECT user_id FROM event_types WHERE id='etx'`).Scan(&etOwner)
+	database.QueryRow(`SELECT host_id FROM bookings WHERE id='past'`).Scan(&pastHost)
+	database.QueryRow(`SELECT user_id FROM event_type_hosts WHERE event_type_id='etx'`).Scan(&hostSeat)
+	var upcomingHost, upcomingSeat string
+	database.QueryRow(`SELECT host_id FROM bookings WHERE id='mine'`).Scan(&upcomingHost)
+	database.QueryRow(`SELECT user_id FROM booking_hosts WHERE booking_id='mine'`).Scan(&upcomingSeat)
+	if upcomingHost != ownerID || upcomingSeat != ownerID {
+		t.Errorf("upcoming meeting after transfer: host %q seat %q; want %q", upcomingHost, upcomingSeat, ownerID)
+	}
+	if etOwner != ownerID || pastHost != ownerID || hostSeat != ownerID {
+		t.Errorf("after transfer: et owner %q, past host %q, host seat %q; want all %q", etOwner, pastHost, hostSeat, ownerID)
 	}
 }
