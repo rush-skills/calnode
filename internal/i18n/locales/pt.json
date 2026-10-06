@@ -40,6 +40,8 @@
   "others": "outros",
   "list_separator": ", ",
   "list_conjunction": " e ",
+  "hosts_team_label": "Equipe %s",
+  "hosts_team_generic": "Nossa equipe",
   "language_switcher_aria": "Idioma",
   "cookie_consent_aria": "Consentimento de cookies",
   "cookie_text": "Utilizamos cookies analíticos para perceber como esta página de marcações é usada; só são ativados com o seu consentimento.",

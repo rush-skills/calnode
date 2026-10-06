@@ -90,8 +90,13 @@ func (h *Handler) GetSlots(w http.ResponseWriter, r *http.Request) {
 	// agent-facing callers (MCP, the assistant) go through computeSlots directly and are
 	// unaffected — this is a public-page presentation setting, not a data-access one.
 	hostMap := res.Hosts
-	if !h.hostNamesShown(r.Context()) {
-		hostMap = map[string]map[string]string{}
+	if !h.hostNamesShown(r.Context()) && len(res.Hosts) > 0 {
+		// Several hosts behind a team entry: send no names to narrow to.
+		var etID string
+		_ = h.db.QueryRowContext(r.Context(), `SELECT id FROM event_types WHERE slug = ?`, slug).Scan(&etID)
+		if etID == "" || h.eventHostCount(r.Context(), etID) > 1 {
+			hostMap = map[string]map[string]string{}
+		}
 	}
 	body := map[string]any{"slots": res.Slots, "hosts": hostMap}
 	// Present only when an external calendar check failed mid-computation: the

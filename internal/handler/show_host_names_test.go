@@ -1,6 +1,7 @@
 package handler_test
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -86,36 +87,57 @@ func renderBookPage(t *testing.T, h *handler.Handler, slug string) string {
 // host's name — not in the face stack, the host line, the "%s has no available times"
 // subject (SOLE_HOST) or anywhere else — and drops the host block entirely rather than
 // leaving an empty row above the title.
+// addSecondHost turns an event type into a two-host event: the owner and a second
+// member ("Second Host"), both required.
+func addSecondHost(t *testing.T, database *sql.DB, etID, ownerID string) {
+	t.Helper()
+	for _, q := range []string{
+		`INSERT INTO users (id,email,name,iana_timezone,is_admin) VALUES ('second-host','second@example.com','Second Host','UTC',0)`,
+		`DELETE FROM event_type_hosts WHERE event_type_id = '` + etID + `'`,
+		`INSERT INTO event_type_hosts (id,event_type_id,user_id,role,priority) VALUES ('eth-1','` + etID + `','` + ownerID + `','required',0)`,
+		`INSERT INTO event_type_hosts (id,event_type_id,user_id,role,priority) VALUES ('eth-2','` + etID + `','second-host','required',1)`,
+		// Same hours as the owner, so required-host bookings still find free slots.
+		`INSERT INTO availability_rules (id,user_id,event_type_id,day_of_week,start_time,end_time)
+		 SELECT 'sh-' || id, 'second-host', event_type_id, day_of_week, start_time, end_time
+		 FROM availability_rules WHERE user_id = '` + ownerID + `'`,
+	} {
+		if _, err := database.Exec(q); err != nil {
+			t.Fatalf("seed second host: %v", err)
+		}
+	}
+}
+
+// With "Show host names" off, a single-host event still shows its host; an event with
+// several hosts shows one team entry and no individual names.
 func TestBookPage_showHostNamesOff(t *testing.T) {
-	h, apiKey, _ := setupWorkspace(t) // owner is "Test User"
-	slug, _ := seedEventTypeHTTP(t, h, apiKey)
-
-	body := renderBookPage(t, h, slug)
-	if !strings.Contains(body, "Test User") {
-		t.Fatalf("with the default (on), the page should name the host; body: %.800s", body)
-	}
-	if !strings.Contains(body, `id="host-faces"`) || !strings.Contains(body, `id="host-name"`) {
-		t.Error("with the default (on), the page should render the host face/name block")
-	}
-
+	h, database, apiKey, ownerID := setupWorkspaceWithDB(t)
+	slug, etID := seedEventTypeHTTP(t, h, apiKey)
 	setShowHostNames(t, h, apiKey, false)
-	body = renderBookPage(t, h, slug)
-	if strings.Contains(body, "Test User") {
-		t.Errorf("host name leaked into the booking page with show_host_names off:\n%s", excerptAround(body, "Test User"))
+
+	if body := renderBookPage(t, h, slug); !strings.Contains(body, "Test Host") {
+		t.Fatalf("single host with the switch off should still be named; body: %.800s", body)
 	}
-	if !strings.Contains(body, "Test Meeting") {
-		t.Error("event name missing from the booking page with show_host_names off")
+	addSecondHost(t, database, etID, ownerID)
+	body := renderBookPage(t, h, slug)
+	for _, name := range []string{"Test Host", "Second Host"} {
+		if strings.Contains(body, name) {
+			t.Errorf("%s leaked into a multi-host booking page:\n%s", name, excerptAround(body, name))
+		}
 	}
-	if strings.Contains(body, `id="host-faces"`) || strings.Contains(body, `id="host-name"`) {
-		t.Error("host face/name block should be omitted (not just emptied) with show_host_names off")
+	if !strings.Contains(body, "Our team") || !strings.Contains(body, "Test Meeting") {
+		t.Error("multi-host page should show the team label and the event name")
+	}
+	setShowHostNames(t, h, apiKey, true)
+	if body := renderBookPage(t, h, slug); !strings.Contains(body, "Second Host") && !strings.Contains(body, "Second") {
+		t.Error("with the switch on, the hosts are named")
 	}
 }
 
 func TestPublicEventType_showHostNamesOff(t *testing.T) {
-	h, apiKey, _ := setupWorkspace(t)
-	slug, _ := seedEventTypeHTTP(t, h, apiKey)
-
-	fetch := func() (string, []any) {
+	h, database, apiKey, ownerID := setupWorkspaceWithDB(t)
+	slug, etID := seedEventTypeHTTP(t, h, apiKey)
+	patchBranding(t, h, apiKey, `{"business_name":"Acme","show_host_names":false}`)
+	fetch := func() string {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "/v1/event-types/"+slug+"/public", nil)
 		req.SetPathValue("slug", slug)
@@ -124,43 +146,31 @@ func TestPublicEventType_showHostNamesOff(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("public: %d — %s", rec.Code, rec.Body.String())
 		}
-		var resp struct {
-			Hosts []any `json:"hosts"`
-		}
-		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		return rec.Body.String(), resp.Hosts
+		return rec.Body.String()
 	}
-
-	if body, hosts := fetch(); len(hosts) != 1 || !strings.Contains(body, "Test User") {
-		t.Fatalf("with the default (on), hosts = %v; want the owner", hosts)
+	if body := fetch(); !strings.Contains(body, `"hosts":[{"name":"Test Host"`) {
+		t.Fatalf("single host: want the owner named; %s", body)
 	}
-
-	setShowHostNames(t, h, apiKey, false)
-	body, hosts := fetch()
-	if len(hosts) != 0 {
-		t.Errorf("hosts = %v; want an empty list with show_host_names off", hosts)
+	addSecondHost(t, database, etID, ownerID)
+	body := fetch()
+	if strings.Contains(body, "Test Host") || strings.Contains(body, "Second Host") {
+		t.Errorf("host name leaked into the multi-host public JSON")
 	}
-	if strings.Contains(body, "Test User") {
-		t.Errorf("host name leaked into the public event-type JSON: %s", body)
-	}
-	if !strings.Contains(body, `"name":"Test Meeting"`) {
-		t.Errorf("event name missing from the public event-type JSON: %s", body)
+	if !strings.Contains(body, `"hosts":[{"name":"Acme team"`) {
+		t.Errorf("want one team entry named after the business; got %.300s", body[strings.Index(body, `"hosts"`):])
 	}
 }
 
-// TestGetSlots_showHostNamesOff: the id → name/avatar map the pages use to narrow the
-// header to a picked slot's host is sent empty, while the slots keep their opaque ids.
+// The /slots id → name map is withheld for multi-host events (so the page can't narrow
+// the team entry to a person) and kept for single-host events.
 func TestGetSlots_showHostNamesOff(t *testing.T) {
-	h, apiKey, userID := setupWorkspace(t)
-	slug, _ := seedEventTypeHTTP(t, h, apiKey) // wide-open availability
-
+	h, database, apiKey, ownerID := setupWorkspaceWithDB(t)
+	slug, etID := seedEventTypeHTTP(t, h, apiKey)
+	setShowHostNames(t, h, apiKey, false)
 	day := time.Now().UTC().AddDate(0, 0, 3).Format("2006-01-02")
-	fetch := func() (string, map[string]map[string]string, int) {
+	fetch := func() (string, int) {
 		t.Helper()
-		req := httptest.NewRequest(http.MethodGet,
-			"/v1/event-types/"+slug+"/slots?from="+day+"&to="+day+"&tz=UTC", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/event-types/"+slug+"/slots?from="+day+"&to="+day+"&tz=UTC", nil)
 		req.SetPathValue("slug", slug)
 		rec := httptest.NewRecorder()
 		h.GetSlots(rec, req)
@@ -168,74 +178,57 @@ func TestGetSlots_showHostNamesOff(t *testing.T) {
 			t.Fatalf("slots: %d — %s", rec.Code, rec.Body.String())
 		}
 		var resp struct {
-			Slots []slotResp                   `json:"slots"`
-			Hosts map[string]map[string]string `json:"hosts"`
+			Slots []slotResp `json:"slots"`
 		}
-		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		return rec.Body.String(), resp.Hosts, len(resp.Slots)
+		_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+		return rec.Body.String(), len(resp.Slots)
 	}
-
-	if _, hosts, n := fetch(); n == 0 || hosts[userID]["name"] != "Test User" {
-		t.Fatalf("with the default (on): %d slots, hosts = %v; want slots and the owner's name", n, hosts)
+	if body, n := fetch(); n == 0 || !strings.Contains(body, "Test Host") {
+		t.Fatalf("single host: want slots and the host map; %d slots", n)
 	}
-
-	setShowHostNames(t, h, apiKey, false)
-	body, hosts, n := fetch()
+	addSecondHost(t, database, etID, ownerID)
+	body, n := fetch()
 	if n == 0 {
-		t.Error("slots disappeared with show_host_names off; the setting is presentation-only")
+		t.Error("slots disappeared; the setting is presentation-only")
 	}
-	if len(hosts) != 0 {
-		t.Errorf("hosts = %v; want an empty map with show_host_names off", hosts)
-	}
-	if strings.Contains(body, "Test User") {
-		t.Errorf("host name leaked into the slots response: %s", body)
+	if strings.Contains(body, "Test Host") || strings.Contains(body, "Second Host") {
+		t.Error("host name leaked into the multi-host slots response")
 	}
 }
 
-// TestCreateBooking_showHostNamesOff: the public create response is what book.html uses
-// to show the assigned host on the confirmation screen, so it is withheld too.
 func TestCreateBooking_showHostNamesOff(t *testing.T) {
-	h, apiKey, _ := setupWorkspace(t)
-	slug, _ := seedEventTypeHTTP(t, h, apiKey)
+	h, database, apiKey, ownerID := setupWorkspaceWithDB(t)
+	slug, etID := seedEventTypeHTTP(t, h, apiKey)
 	setShowHostNames(t, h, apiKey, false)
-
-	start := time.Now().UTC().AddDate(0, 0, 3).Truncate(24 * time.Hour).Add(10 * time.Hour)
-	body := fmt.Sprintf(`{"event_type_slug":%q,"start_at":%q,"name":"Test Attendee","email":"attendee@example.com","timezone":"UTC"}`,
-		slug, start.Format(time.RFC3339))
-	req := httptest.NewRequest(http.MethodPost, "/v1/bookings", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	h.CreateBooking(rec, req)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("create booking: %d — %s", rec.Code, rec.Body.String())
+	book := func(hour int, email string) string {
+		t.Helper()
+		start := time.Now().UTC().AddDate(0, 0, 3).Truncate(24 * time.Hour).Add(time.Duration(hour) * time.Hour)
+		body := fmt.Sprintf(`{"event_type_slug":%q,"start_at":%q,"name":"Test Attendee","email":%q,"timezone":"UTC"}`,
+			slug, start.Format(time.RFC3339), email)
+		req := httptest.NewRequest(http.MethodPost, "/v1/bookings", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		h.CreateBooking(rec, req)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create booking: %d — %s", rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
 	}
-	var resp struct {
-		ID    string `json:"id"`
-		Hosts []any  `json:"hosts"`
+	if body := book(10, "a@example.com"); !strings.Contains(body, "Test Host") {
+		t.Errorf("single host: the confirmation should name the host; %s", body)
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp.ID == "" {
-		t.Fatal("booking id missing: the setting must not affect booking itself")
-	}
-	if len(resp.Hosts) != 0 {
-		t.Errorf("hosts = %v; want none on the public create response with show_host_names off", resp.Hosts)
-	}
-	if strings.Contains(rec.Body.String(), "Test User") {
-		t.Errorf("host name leaked into the create-booking response: %s", rec.Body.String())
+	addSecondHost(t, database, etID, ownerID)
+	if body := book(12, "b@example.com"); strings.Contains(body, "Test Host") || strings.Contains(body, "Second Host") {
+		t.Errorf("host name leaked into a multi-host create response: %s", body)
 	}
 }
 
 func TestManagePage_showHostNamesOff(t *testing.T) {
-	h, database, apiKey, _ := setupWorkspaceWithDB(t) // owner is "Test Host"
-	slug, _ := seedEventTypeHTTP(t, h, apiKey)
+	h, database, apiKey, ownerID := setupWorkspaceWithDB(t) // owner is "Test Host"
+	slug, etID := seedEventTypeHTTP(t, h, apiKey)
 	start := time.Now().UTC().AddDate(0, 0, 3).Truncate(24 * time.Hour).Add(9 * time.Hour)
 	bookingID := createBookingViaHTTP(t, h, slug, start.Format(time.RFC3339))
 	tok := issueTestToken(t, database, bookingID)
-
 	render := func() string {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "/manage/"+tok, nil)
@@ -247,21 +240,17 @@ func TestManagePage_showHostNamesOff(t *testing.T) {
 		}
 		return rec.Body.String()
 	}
-
-	if body := render(); !strings.Contains(body, "Test Host") {
-		t.Fatalf("with the default (on), the manage page should name the host; body: %.800s", body)
-	}
-
 	setShowHostNames(t, h, apiKey, false)
+	if body := render(); !strings.Contains(body, "Test Host") {
+		t.Fatalf("single host: the manage page should name the host")
+	}
+	addSecondHost(t, database, etID, ownerID)
 	body := render()
 	if strings.Contains(body, "Test Host") {
-		t.Errorf("host name leaked into the manage page with show_host_names off:\n%s", excerptAround(body, "Test Host"))
+		t.Errorf("host name leaked into a multi-host manage page:\n%s", excerptAround(body, "Test Host"))
 	}
-	if !strings.Contains(body, "Test Meeting") {
-		t.Error("event name missing from the manage page with show_host_names off")
-	}
-	if strings.Contains(body, `class="host-name"`) || strings.Contains(body, `class="avatar-initials"`) {
-		t.Error("host avatar/name block should be omitted with show_host_names off")
+	if !strings.Contains(body, "Our team") {
+		t.Error("multi-host manage page should show the team label")
 	}
 }
 

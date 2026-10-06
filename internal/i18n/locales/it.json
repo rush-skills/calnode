@@ -40,6 +40,8 @@
   "others": "altri",
   "list_separator": ", ",
   "list_conjunction": " e ",
+  "hosts_team_label": "Team %s",
+  "hosts_team_generic": "Il nostro team",
   "language_switcher_aria": "Lingua",
   "cookie_consent_aria": "Consenso ai cookie",
   "cookie_text": "Usiamo cookie analitici per capire come viene utilizzata questa pagina di prenotazione; vengono attivati solo con il suo consenso.",

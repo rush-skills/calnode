@@ -40,6 +40,8 @@
   "others": "till",
   "list_separator": ", ",
   "list_conjunction": " och ",
+  "hosts_team_label": "%s-teamet",
+  "hosts_team_generic": "Vårt team",
   "language_switcher_aria": "Språk",
   "cookie_consent_aria": "Samtycke till kakor",
   "cookie_text": "Vi använder analyskakor för att förstå hur den här bokningssidan används – de sätts bara om du samtycker.",

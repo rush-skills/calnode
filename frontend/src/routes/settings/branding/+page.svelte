@@ -283,11 +283,12 @@
 			</p>
 			<div class="mt-4 flex items-start justify-between gap-4">
 				<div class="space-y-1">
-					<Label for="show-host-names">Show host names on booking pages</Label>
+					<Label for="show-host-names">Show every host's name on booking pages</Label>
 					<p class="text-xs text-muted-foreground">
-						Shows who the meeting is with — the host's name and photo next to the event name. Turn
-						it off to show only the event name, for example when bookings are made with your business
-						rather than a specific person. Emails are not affected: they always name the host.
+						On: events with several hosts list them ("Alex, Sam &amp; Ruchi"). Off: those events show
+						a single "{businessName ? `${businessName} team` : 'Our team'}" entry instead, and no
+						individual names reach the page. Events with one host always show that host. Emails are
+						not affected.
 					</p>
 				</div>
 				<Switch id="show-host-names" bind:checked={showHostNames} />

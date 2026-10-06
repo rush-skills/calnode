@@ -40,6 +40,8 @@
   "others": "andere",
   "list_separator": ", ",
   "list_conjunction": " en ",
+  "hosts_team_label": "%s-team",
+  "hosts_team_generic": "Ons team",
   "language_switcher_aria": "Taal",
   "cookie_consent_aria": "Cookietoestemming",
   "cookie_text": "We gebruiken analytische cookies om te begrijpen hoe deze boekingspagina wordt gebruikt; ze worden alleen geplaatst als je daarmee instemt.",

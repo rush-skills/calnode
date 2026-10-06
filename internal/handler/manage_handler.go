@@ -43,6 +43,9 @@ type managePageData struct {
 	// HostName/HostInitial/AvatarURL/SoleHostName when it is off, and the template drops
 	// the avatar + name block so the event name takes the title position.
 	ShowHostNames bool
+	// eventTypeID lets renderManage apply the host-names rule per event type (unexported:
+	// templates never see it).
+	eventTypeID string
 	// MinNoticeLabel is the translated minimum-notice duration ("4 hours") of the event
 	// type being rescheduled, or "" when it sets none. Reschedule goes through the same
 	// /slots endpoint as booking, so the same policy hides the same nearest times (#20).
@@ -166,6 +169,7 @@ func (h *Handler) ManagePage(w http.ResponseWriter, r *http.Request) {
 		OrganizerTZ:      orgTZ,
 		Status:           b.Status,
 	}
+	data.eventTypeID = b.EventTypeID
 	h.renderManage(w, r, data, loc)
 }
 
@@ -192,9 +196,11 @@ func (h *Handler) renderManage(w http.ResponseWriter, r *http.Request, data mana
 	// Enforced here, on the one path every manage render goes through, rather than in
 	// each caller that composes host fields: with "Show host names" off the page shows
 	// the event name only (the dataLayer host_name field reads as "" too).
-	data.ShowHostNames = brand.ShowHostNames
-	if !brand.ShowHostNames {
-		data.HostName, data.HostInitial, data.AvatarURL, data.SoleHostName = "", "", "", ""
+	// Several hosts with "Show host names" off: the team entry instead of the person.
+	data.ShowHostNames = true
+	if data.eventTypeID != "" && h.hideIndividualHosts(r.Context(), brand, data.eventTypeID) {
+		team := teamHost(brand, loc)
+		data.HostName, data.HostInitial, data.AvatarURL, data.SoleHostName = team.Name, team.Initial, "", ""
 	}
 	data.CSSVersion = bookingCSSVersion
 	data.BookingLogicJS = template.JS(bookingLogicJS) // #nosec G203 -- our own bundled JS source constant, not user input

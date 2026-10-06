@@ -359,8 +359,11 @@ func (h *Handler) PublicEventType(w http.ResponseWriter, r *http.Request) {
 	brand := h.loadBranding(r.Context())
 	// "Show host names" off: the widget gets an empty host list and never sees a name
 	// or avatar it would then have to hide (it renders the event name alone).
+	// "Show host names" off and several hosts: one team entry, no individual names.
 	var hosts []hostDisplay
-	if brand.ShowHostNames {
+	if h.hideIndividualHosts(r.Context(), brand, etID) {
+		hosts = []hostDisplay{teamHost(brand, h.resolveLocaleWithFallback(r, brand.FallbackLocale))}
+	} else {
 		hosts = h.displayHosts(r.Context(), etID, routingMode)
 		if len(hosts) == 0 {
 			hosts = []hostDisplay{{Name: hostName, AvatarURL: avatarURL}}
@@ -517,7 +520,11 @@ func (h *Handler) BookPage(w http.ResponseWriter, r *http.Request) {
 	// never receives a name either.
 	var hosts []hostDisplay
 	primary := hostDisplay{}
-	if brand.ShowHostNames {
+	if h.hideIndividualHosts(r.Context(), brand, etID) {
+		hosts = []hostDisplay{teamHost(brand, h.resolveLocaleWithFallback(r, brand.FallbackLocale))}
+		hosts[0].Z = 10
+		primary = hosts[0]
+	} else {
 		hosts = h.displayHosts(r.Context(), etID, routingMode)
 		if len(hosts) == 0 {
 			hosts = []hostDisplay{{Name: hostName, Initial: firstRune(hostName), AvatarURL: avatarURL}}
@@ -551,7 +558,7 @@ func (h *Handler) BookPage(w http.ResponseWriter, r *http.Request) {
 		Hosts:               hosts,
 		HostsLabel:          hostsLabel(hosts, loc),
 		SoleHostName:        soleHostName(hosts),
-		ShowHostNames:       brand.ShowHostNames,
+		ShowHostNames:       true, // the host block always renders: a person or the team entry
 		MinNoticeLabel:      noticeLabel(minNotice, loc),
 		LocationLabel:       locationLabel(locType, locValue, loc),
 		PriceLabel:          formatPrice(priceCents, currency),
@@ -598,4 +605,39 @@ func (h *Handler) BookPage(w http.ResponseWriter, r *http.Request) {
 	if err := bookTmpl.Execute(w, data); err != nil {
 		h.logger.ErrorContext(r.Context(), "book page: template", "error", err)
 	}
+}
+
+// eventHostCount is how many people host an event type: its required and rotation hosts
+// (optional attendees and the workspace default participants are not hosts). An event
+// type with none configured is hosted by its owner, so the floor is 1.
+func (h *Handler) eventHostCount(ctx context.Context, etID string) int {
+	var n int
+	if err := h.db.QueryRowContext(ctx, `
+		SELECT COUNT(DISTINCT eth.user_id) FROM event_type_hosts eth JOIN users u ON u.id = eth.user_id
+		WHERE eth.event_type_id = ? AND eth.role IN ('required', 'rotation') AND u.archived_at IS NULL`,
+		etID).Scan(&n); err != nil || n < 1 {
+		return 1
+	}
+	return n
+}
+
+// hideIndividualHosts is the "Show host names" rule for public surfaces: with the switch
+// off, an event type with more than one host is presented as one team entry and no
+// individual name leaves the server; a single-host event still shows its host.
+func (h *Handler) hideIndividualHosts(ctx context.Context, brand brandingSettings, etID string) bool {
+	return !brand.ShowHostNames && h.eventHostCount(ctx, etID) > 1
+}
+
+// teamHost is the single entry shown instead of individual hosts: "<Business> team".
+func teamHost(brand brandingSettings, loc *i18n.Locale) hostDisplay {
+	name := strings.TrimSpace(brand.BusinessName)
+	label := loc.T("hosts_team_generic")
+	if name != "" {
+		label = loc.Tf("hosts_team_label", name)
+	}
+	initial := firstRune(name)
+	if initial == "" {
+		initial = firstRune(label)
+	}
+	return hostDisplay{Name: label, Initial: initial}
 }

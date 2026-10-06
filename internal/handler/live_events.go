@@ -983,14 +983,8 @@ func (h *Handler) LiveStatus(w http.ResponseWriter, r *http.Request) {
 		args = append(args, kind)
 	}
 
-	// "Show host names" off applies to this public feed too (live page and widget).
-	showHosts := h.hostNamesShown(r.Context())
-	hostName := func(n string) string {
-		if !showHosts {
-			return ""
-		}
-		return n
-	}
+	// A session has a single host, and single-host events always show their host.
+	hostName := func(n string) string { return n }
 	live := []livePublicSession{}
 	rows, err := h.db.QueryContext(r.Context(), liveEventSelect+` WHERE e.status = 'live'`+kindFilter+` ORDER BY e.started_at DESC`, args...)
 	if err != nil {

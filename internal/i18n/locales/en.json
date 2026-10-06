@@ -40,6 +40,8 @@
   "others": "others",
   "list_separator": ", ",
   "list_conjunction": " & ",
+  "hosts_team_label": "%s team",
+  "hosts_team_generic": "Our team",
   "language_switcher_aria": "Language",
 
   "cookie_consent_aria": "Cookie consent",
