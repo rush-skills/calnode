@@ -35,6 +35,12 @@ exact tag (`ghcr.io/calnode/calnode:0.1.0`) if you need stability between upgrad
   archiving them, so admins cannot demote each other.
 
 ### Added
+- **The embed widget has a timezone switcher.** The "Times shown in" zone is now a button
+  that opens a search over every IANA zone the browser knows: by city, zone name, English
+  name, common abbreviation (IST, PST, CEST) or offset (+5:30). The booking page and the
+  manage page already had a `<select>`; the widget was fixed to the browser's zone. A host
+  page can also set the zone with `timezone="Area/City"`, and gets
+  `calnode:timezone-changed` when the visitor changes it.
 - **Team calendar.** A week and month view of every member's meetings in one place: Calnode
   bookings plus each member's events from their connected Google or Microsoft calendar (events
   marked private show as busy time only). Admins can create revocable share links that embed

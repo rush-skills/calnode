@@ -317,11 +317,19 @@ The widget calls the instance that served the script.
 | `compact` | off | Smaller layout for forms: no event header, host, description or chat link. Calendar stacked above the slots, tighter spacing, smaller type, bordered instead of shadowed. Works from about 300px wide. Opens on the first day that has free times. Without `compact`, picker mode keeps the event info pane and the responsive one-step-at-a-time layout on narrow screens. |
 | `required` | off | Blocks form submit until a time is picked (`valueMissing`, with a translated message). Can be toggled at runtime. |
 | `name` | `calnode_slot` | Form field name. Also prefixes the companion fields `<name>_end` and `<name>_timezone`. |
-| `show-timezone` | `true` | `"false"` hides the "Times shown in Europe/Berlin" line. Leave it on unless your form already says which timezone the times are in. |
+| `show-timezone` | `true` | `"false"` hides the "Times shown in Europe/Berlin" line and its switcher. Leave it on unless your form already says which timezone the times are in. |
+| `timezone` | browser's zone | IANA zone to show the times in, e.g. `Asia/Kolkata`. An unknown value is ignored. Can be changed at runtime: the month reloads in the new zone. |
 | `lang` | auto | Force a language (`es`, `fr`, ...). Otherwise it comes from the browser's `Accept-Language`. |
 
 Colours follow the instance's **booking accent** (Settings > Branding). The selected
 day and time use it.
+
+**Timezone.** The times start in the visitor's browser timezone. The zone in the "Times
+shown in" line is a button: it opens a search over every IANA zone the browser knows. A
+zone is found by its name or city (`kolkata`, `new york`), its English name
+(`india standard time`), a common abbreviation (`IST`, `PST`, `CEST`) or its offset
+(`+5:30`, `GMT+5:30`). A change reloads the month in that zone. A selected time stays
+selected: the instant does not change, only its labels and `meeting_timezone`.
 
 Attributes other than `required` are read once, when the element connects. To change
 `slug` or `mode`, replace the element.
@@ -390,6 +398,7 @@ All of these bubble and are `composed`, so you can listen on the element, the fo
 |---|---|
 | `calnode:slot-selected` | `{start, end, timezone, event_type, host_ids}`. Times are UTC RFC 3339. |
 | `calnode:slot-cleared` | `{event_type}` |
+| `calnode:timezone-changed` | `{timezone, event_type}`. After it, `calnode:slot-selected` fires again when a time is selected, with the new `timezone`. |
 | `calnode:booked` | The booking JSON. Fired by `book()`, and by the normal booking flow. |
 | `change` | Plain `Event`, fired on select and on clear (for framework bindings). |
 
