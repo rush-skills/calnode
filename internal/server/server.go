@@ -194,6 +194,8 @@ func BuildHandler(ctx context.Context, cfg *config.Config, db *sql.DB, logger *s
 		h.SetCalendar(calSvc)
 		h.StartCalendarReconciler(ctx)
 	}
+	// Live events: auto-start/auto-end sweep (independent of calendar configuration).
+	h.StartLiveEventSweeper(ctx)
 
 	// Optional LLM layer (PRD §8.11) — off unless configured + enabled in Settings.
 	if llmCfg, err := handler.LoadLLMSettingsFromDB(db, encKey); err != nil {
@@ -484,6 +486,23 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	mux.HandleFunc("GET /v1/recordings/{id}/consent", h.RequireAuth(h.ListRecordingConsent))
 	mux.HandleFunc("GET /v1/recordings/{id}/download", h.RequireAuth(h.DownloadRecording))
 	mux.HandleFunc("DELETE /v1/recordings/{id}", h.RequireAuth(h.DeleteRecording))
+
+	// Live events / office hours (docs/features/live-events.md). Management is a member or
+	// admin API key / session; the status feed, the frameable page and the widget are public.
+	mux.HandleFunc("POST /v1/live-events", h.RequireAuth(h.CreateLiveEvent))
+	mux.HandleFunc("GET /v1/live-events", h.RequireAuth(h.ListLiveEvents))
+	mux.HandleFunc("GET /v1/live-events/{id}", h.RequireAuth(h.GetLiveEvent))
+	mux.HandleFunc("PATCH /v1/live-events/{id}", h.RequireAuth(h.PatchLiveEvent))
+	mux.HandleFunc("DELETE /v1/live-events/{id}", h.RequireAuth(h.CancelLiveEvent))
+	mux.HandleFunc("POST /v1/live-events/{id}/start", h.RequireAuth(h.StartLiveEvent))
+	mux.HandleFunc("POST /v1/live-events/{id}/end", h.RequireAuth(h.EndLiveEvent))
+	// The status feed is read-only public data polled by every embedded widget and iframe,
+	// so it is CORS-open to any origin (set by the handler, independent of the booking
+	// widget's EMBED_ALLOWED_ORIGINS) and rate-limited like the slots feed.
+	liveStatusRL := RateLimit(60, time.Minute)
+	mux.HandleFunc("GET /v1/live/status", liveStatusRL(h.LiveStatus))
+	mux.HandleFunc("GET /live", h.LivePage)
+	mux.HandleFunc("GET /live-widget.js", h.LiveWidgetJS)
 
 	// Manage booking (reschedule / cancel via token link)
 	mux.HandleFunc("GET /manage/{token}", manageRL(h.ManagePage))

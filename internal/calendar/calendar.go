@@ -24,6 +24,10 @@ type CreateEventParams struct {
 	OrganizerName  string
 	OrganizerEmail string
 	AddMeet        bool
+	// ExtraAttendees are additional guest addresses to invite on the event (the workspace's
+	// default participants, e.g. a notetaker bot). Providers that email guests add them as
+	// attendees; CalDAV ignores them.
+	ExtraAttendees []string
 }
 
 // CalendarInfo is one calendar the provider exposes for a connected account.
