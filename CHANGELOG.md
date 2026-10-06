@@ -26,12 +26,29 @@ exact tag (`ghcr.io/calnode/calnode:0.1.0`) if you need stability between upgrad
   stay admin-only).
 
 ### Changed
+- **The "Powered by Calnode" line is gone from the public booking surfaces** (booking page,
+  manage page, embed widget, person and team pages). The legal footer (privacy, terms,
+  language) stays.
 - **Any admin can now make a member an admin.** Granting admin used to be owner-only, which
   made one person the bottleneck for a growing team. Taking admin away from another admin
   stays owner-only, the same rule that already governs resetting an admin's password or
   archiving them, so admins cannot demote each other.
 
 ### Added
+- **Org-wide event types.** Every event type is now visible to the whole workspace by
+  default (`visibility = org`; existing rows are converted), so any member can open and
+  share every booking link. The creator and any admin can edit an org event type; everyone
+  else sees it read-only. A "Only me" visibility keeps an event type private to its owner.
+  Slugs are normalised on create as well as update (spaces and symbols become hyphens, blank
+  slugs derive from the name) and a startup sweep repairs stored slugs that were never
+  normalised, so a booking link can no longer be broken by its own slug.
+- **Default participants.** Settings → Default participants lists addresses (a notetaker
+  bot, a shared mailbox) that are invited on the host's calendar event of every meeting
+  booked on the workspace. They receive the provider's calendar invite only: Calnode sends
+  them no email and bookers never see them.
+- **"Show host names on booking pages"** (Settings → Branding, on by default). Turned off,
+  the booking page, manage page, embed widget and team page show only the event name and
+  never a host's name or avatar; names are withheld server-side so no surface can leak them.
 - **Allowed sign-in domains.** Settings → Google OAuth lists email domains whose verified
   Google or Microsoft sign-ins create a member account on first login, so a team no longer
   invites every colleague by hand. Off by default (invite-only, as before). A member created

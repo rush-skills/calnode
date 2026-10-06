@@ -803,6 +803,26 @@ as the desired state:
 
 ---
 
+## 14a. Workspace features added on the iJewel fork
+
+Each has a fuller note under `docs/features/`.
+
+- **Org-wide event types** (`event_types.visibility`, migration 00073; `event_type_access.go`).
+  `org` (default, existing rows converted) is readable by every member; `private` only by its
+  owner. Writes go through `eventTypeIDForEditor`: owner always, admins on `org`. Slugs are
+  normalised on create and update via `slugify`, and `NormalizeEventTypeSlugs` sweeps stored
+  slugs at boot (rows with bookings are left alone and logged, since their links are live).
+- **Default participants** (`server_settings.default_attendee_emails`, migration 00072;
+  `default_attendees.go`). `calendar.CreateEventParams.ExtraAttendees` carries them onto every
+  host calendar event (create, reconcile, reassign) for Google, Microsoft and CalDAV. Calendar
+  invite only: never emailed by Calnode, never shown to the booker, never on the booker's .ics.
+- **Show host names** (`server_settings.show_host_names`, migration 00071). Off ⇒ host identity
+  is withheld in the page data and public JSON (`book.go`, `/slots`, manage, team page), not
+  merely hidden in templates. Admin, MCP and email paths keep names.
+- **Attribution footer removed** from the public surfaces (`legalFooter` partial, `embed.js`).
+
+---
+
 ## 15. Frontend toolchain & conventions
 
 Each account can set `booking_accent` in its profile. The default preserves the dark booking controls. Booking pages, management pages, and the embed widget use the event owner's color, with a contrasting text color chosen by luminance. The profile API accepts only six-digit hex colors.
