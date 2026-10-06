@@ -153,6 +153,29 @@ func (h *Handler) PersonPage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// teamMembers lists a team's unarchived members by name, for the roster on /team/{slug}.
+// The cursor is fully consumed and closed before returning (single-connection pool).
+func (h *Handler) teamMembers(ctx context.Context, teamID string) ([]directoryMember, error) {
+	rows, err := h.db.QueryContext(ctx, `
+		SELECT u.name, COALESCE(u.handle,'') FROM team_members tm
+		JOIN users u ON u.id = tm.user_id
+		WHERE tm.team_id = ? AND u.archived_at IS NULL
+		ORDER BY u.name`, teamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	members := []directoryMember{}
+	for rows.Next() {
+		var m directoryMember
+		if err := rows.Scan(&m.Name, &m.Handle); err != nil {
+			return nil, err
+		}
+		members = append(members, m)
+	}
+	return members, rows.Err()
+}
+
 // TeamPage handles GET /team/{slug} — a team's public booking page: its public, active
 // event types plus the member roster (each linking to /u/{handle} when set).
 func (h *Handler) TeamPage(w http.ResponseWriter, r *http.Request) {
@@ -170,35 +193,21 @@ func (h *Handler) TeamPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mRows, err := h.db.QueryContext(r.Context(), `
-		SELECT u.name, COALESCE(u.handle,'') FROM team_members tm
-		JOIN users u ON u.id = tm.user_id
-		WHERE tm.team_id = ? AND u.archived_at IS NULL
-		ORDER BY u.name`, teamID)
-	if err != nil {
-		h.logger.ErrorContext(r.Context(), "team page: load members", "error", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-	members := []directoryMember{}
-	for mRows.Next() {
-		var m directoryMember
-		if err := mRows.Scan(&m.Name, &m.Handle); err != nil {
-			mRows.Close() // #nosec G104 -- already returning the scan error; nothing more actionable
-			h.logger.ErrorContext(r.Context(), "team page: scan member", "error", err)
+	brand := h.loadBranding(r.Context())
+	// "Show host names" off: the roster IS a list of host names, so the whole section
+	// goes — not loaded, not rendered (an unnamed list of /u/ links would still identify
+	// people by handle). The person page is unaffected — it is about one named person by
+	// construction.
+	var members []directoryMember
+	if brand.ShowHostNames {
+		var err error
+		if members, err = h.teamMembers(r.Context(), teamID); err != nil {
+			h.logger.ErrorContext(r.Context(), "team page: load members", "error", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
-		members = append(members, m)
-	}
-	mRows.Close() // #nosec G104 -- rows already fully consumed above; nothing actionable on close error
-	if err := mRows.Err(); err != nil {
-		h.logger.ErrorContext(r.Context(), "team page: members rows", "error", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
 	}
 
-	brand := h.loadBranding(r.Context())
 	loc := h.resolveLocaleWithFallback(r, brand.FallbackLocale)
 	items, err := h.directoryItems(r.Context(), loc,
 		`et.team_id = ? AND et.is_public = 1 AND et.is_active = 1`, teamID)

@@ -44,8 +44,8 @@ body {
   gap: 1.25rem;
 }
 
-/* .powered-by footer (links + Cookie-settings button) is styled in booking.css so
-   the book and manage surfaces share one rule. */
+/* .legal-footer (links + Cookie-settings button + language switcher) is styled in
+   booking.css so the book, manage and directory surfaces share one rule. */
 
 /* #tz-sizer is page-specific (the timezone <select> auto-sizer). */
 #tz-sizer {
@@ -124,6 +124,11 @@ body {
 
   <!-- Info panel -->
   <aside class="info">
+    {{/* Host faces + name are dropped entirely (not emptied) when the workspace hides
+         host names: the page JS keys its host rendering off #host-faces existing, so
+         with the block absent nothing it later learns from /slots or the booking
+         response can resurface a face — and the server withholds those anyway. */}}
+    {{if .ShowHostNames}}
     <div id="host-faces" class="host-faces">
       {{range .Hosts}}
       <span class="face" style="z-index:{{.Z}}">
@@ -136,6 +141,7 @@ body {
       {{end}}
     </div>
     <p id="host-name" class="host-name">{{.HostsLabel}}</p>
+    {{end}}
     <h1 class="event-name">{{.Name}}</h1>
     {{template "eventMeta" .}}
     {{if .AssistantEnabled}}

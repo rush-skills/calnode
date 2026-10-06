@@ -970,8 +970,13 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bj := toBookingJSON(b)
-	for _, hd := range h.displayHostsForBooking(r.Context(), b.ID) {
-		bj.Hosts = append(bj.Hosts, hostBrief{ID: hd.ID, Name: hd.Name, AvatarURL: hd.AvatarURL})
+	// The assigned host(s) are for the public page's confirmation header. With "Show
+	// host names" off they are withheld here too (this is an unauthenticated endpoint),
+	// so the page never receives a name it would then have to hide.
+	if h.hostNamesShown(r.Context()) {
+		for _, hd := range h.displayHostsForBooking(r.Context(), b.ID) {
+			bj.Hosts = append(bj.Hosts, hostBrief{ID: hd.ID, Name: hd.Name, AvatarURL: hd.AvatarURL})
+		}
 	}
 	respBody, err := json.Marshal(bj)
 	if err != nil {

@@ -44,7 +44,7 @@ body {
   gap: 1.25rem;
 }
 
-/* .powered-by footer styles live in booking.css (shared with the booking page). */
+/* .legal-footer styles live in booking.css (shared with the booking page). */
 
 /* Page-specific id hooks + tweaks layered on the shared sheet. */
 #month-label { flex: 1; font-size: .9375rem; font-weight: 600; color: #111827; }
@@ -134,12 +134,16 @@ body {
 
   <!-- Info panel -->
   <aside class="info">
+    {{/* Avatar + host name are dropped when the workspace hides host names (see
+         renderManage), leaving the event name in the title position. */}}
+    {{if .ShowHostNames}}
     {{if .AvatarURL}}
     <img src="{{.AvatarURL}}" alt="{{.HostName}}" class="avatar-img">
     {{else}}
     <div class="avatar-initials">{{.HostInitial}}</div>
     {{end}}
     <p class="host-name">{{.HostName}}</p>
+    {{end}}
     <h1 class="event-name">{{.EventTypeName}}</h1>
     {{template "eventMeta" .}}
     {{if and (not .TokenInvalid) (ne .Status "cancelled")}}
