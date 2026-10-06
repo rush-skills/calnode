@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/calnode/calnode/internal/db"
 	"github.com/calnode/calnode/internal/richtext"
@@ -977,19 +979,63 @@ func (h *Handler) DeleteEventType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := h.db.ExecContext(r.Context(), `DELETE FROM event_types WHERE id = ?`, etID)
+	// Upcoming active bookings block deletion: someone is still expecting that meeting, so
+	// they must be cancelled or moved first. Past and cancelled bookings are history and
+	// go with the event type (their answers, hosts, tokens and messages cascade; webhook
+	// delivery logs are kept but detached from the booking).
+	ctx := r.Context()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	var upcoming int
+	if err := h.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM bookings
+		WHERE event_type_id = ? AND status != 'cancelled' AND end_at > ?`, etID, now).Scan(&upcoming); err != nil {
+		h.logger.ErrorContext(ctx, "delete event type: count upcoming", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if upcoming > 0 {
+		h.writeError(w, http.StatusConflict, fmt.Sprintf(
+			"this event type has %d upcoming booking(s) — cancel or reschedule them first, or deactivate it instead", upcoming))
+		return
+	}
+
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "delete event type: begin", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer tx.Rollback() //nolint:errcheck
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE webhook_deliveries SET booking_id = NULL
+		WHERE booking_id IN (SELECT id FROM bookings WHERE event_type_id = ?)`, etID); err != nil {
+		h.logger.ErrorContext(ctx, "delete event type: detach webhook deliveries", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM bookings WHERE event_type_id = ?`, etID); err != nil {
+		h.logger.ErrorContext(ctx, "delete event type: delete past bookings", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM event_types WHERE id = ?`, etID)
 	if err != nil {
 		if db.IsForeignKeyViolation(err) {
-			h.writeError(w, http.StatusConflict, "this event type has bookings in its history (including cancelled ones) and can't be deleted — deactivate it instead")
+			h.writeError(w, http.StatusConflict, "this event type is still referenced and can't be deleted — deactivate it instead")
 			return
 		}
-		h.logger.ErrorContext(r.Context(), "delete event type", "error", err)
+		h.logger.ErrorContext(ctx, "delete event type", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		h.writeError(w, http.StatusNotFound, "event type not found")
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		h.logger.ErrorContext(ctx, "delete event type: commit", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

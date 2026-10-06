@@ -888,25 +888,48 @@ func TestListBookings_includesAttendeeAndSlug(t *testing.T) {
 	}
 }
 
-// An event type with bookings (even cancelled ones) is refused with 409 and a "deactivate
-// instead" message. ON DELETE RESTRICT raises SQLITE_CONSTRAINT_TRIGGER (1811), not 787,
-// and that used to fall through to a 500.
-func TestDeleteEventType_withBookingsIs409(t *testing.T) {
+// Past and cancelled bookings are deleted with the event type; an upcoming active booking
+// blocks deletion with 409.
+func TestDeleteEventType_pastBookingsDeletedUpcomingBlocks(t *testing.T) {
 	h, database, key, _ := setupWorkspaceWithDB(t)
 	slug, _ := seedEventTypeHTTP(t, h, key)
 	var etID, ownerID string
 	if err := database.QueryRow(`SELECT id, user_id FROM event_types WHERE slug = ?`, slug).Scan(&etID, &ownerID); err != nil {
 		t.Fatalf("load event type: %v", err)
 	}
-	if _, err := database.Exec(`INSERT INTO bookings (id,event_type_id,host_id,start_at,end_at,status)
-		VALUES ('bk-del',?,?,'2026-01-01T10:00:00Z','2026-01-01T10:30:00Z','cancelled')`, etID, ownerID); err != nil {
-		t.Fatalf("seed booking: %v", err)
+	future := time.Now().UTC().Add(48 * time.Hour)
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := database.Exec(q, args...); err != nil {
+			t.Fatalf("exec: %v", err)
+		}
 	}
-	req := authReq(http.MethodDelete, "/v1/event-types/"+slug, "", key)
-	req.SetPathValue("slug", slug)
-	rec := httptest.NewRecorder()
-	h.RequireAuth(h.DeleteEventType)(rec, req)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("status = %d; want 409 — %s", rec.Code, rec.Body.String())
+	mustExec(`INSERT INTO bookings (id,event_type_id,host_id,start_at,end_at,status)
+		VALUES ('bk-past',?,?,'2026-01-01T10:00:00Z','2026-01-01T10:30:00Z','confirmed')`, etID, ownerID)
+	mustExec(`INSERT INTO bookings (id,event_type_id,host_id,start_at,end_at,status)
+		VALUES ('bk-cancelled-future',?,?,?,?,'cancelled')`, etID, ownerID,
+		future.Format(time.RFC3339), future.Add(30*time.Minute).Format(time.RFC3339))
+	mustExec(`INSERT INTO bookings (id,event_type_id,host_id,start_at,end_at,status)
+		VALUES ('bk-upcoming',?,?,?,?,'confirmed')`, etID, ownerID,
+		future.Format(time.RFC3339), future.Add(30*time.Minute).Format(time.RFC3339))
+
+	del := func() *httptest.ResponseRecorder {
+		req := authReq(http.MethodDelete, "/v1/event-types/"+slug, "", key)
+		req.SetPathValue("slug", slug)
+		rec := httptest.NewRecorder()
+		h.RequireAuth(h.DeleteEventType)(rec, req)
+		return rec
+	}
+	if rec := del(); rec.Code != http.StatusConflict {
+		t.Fatalf("with an upcoming booking: status = %d; want 409 — %s", rec.Code, rec.Body.String())
+	}
+	mustExec(`UPDATE bookings SET status = 'cancelled' WHERE id = 'bk-upcoming'`)
+	if rec := del(); rec.Code != http.StatusNoContent {
+		t.Fatalf("history only: status = %d; want 204 — %s", rec.Code, rec.Body.String())
+	}
+	var n int
+	database.QueryRow(`SELECT COUNT(*) FROM bookings WHERE event_type_id = ?`, etID).Scan(&n)
+	if n != 0 {
+		t.Errorf("bookings left = %d; want 0", n)
 	}
 }

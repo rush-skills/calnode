@@ -140,7 +140,7 @@
 <ConfirmDialog
 	bind:open={deleteOpen}
 	title="Delete event type?"
-	description="This will permanently remove the event type and its booking link. Existing bookings are not affected."
+	description="This permanently removes the event type, its booking link and its past and cancelled bookings. Event types with upcoming bookings can't be deleted until those are cancelled or rescheduled."
 	confirmText="Delete"
 	destructive
 	onConfirm={doDelete}
