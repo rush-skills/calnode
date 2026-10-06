@@ -35,6 +35,15 @@ exact tag (`ghcr.io/calnode/calnode:0.1.0`) if you need stability between upgrad
   archiving them, so admins cannot demote each other.
 
 ### Added
+- **Team calendar.** A week and month view of every member's meetings in one place: Calnode
+  bookings plus each member's events from their connected Google or Microsoft calendar (events
+  marked private show as busy time only). Admins can create revocable share links that embed
+  the calendar in another site through an iframe.
+- **Live events and office hours.** Start or schedule a session from the admin app or the API
+  (`/v1/live-events`, API-key auth). The host's calendar gets an event with a Google Meet link
+  and the workspace's default participants invited. A public status feed, a frameable `/live`
+  page and a `<calnode-live>` web component show "live now, join" while a session is running
+  and the next scheduled session otherwise. Sessions can start and end on their own schedule.
 - **Org-wide event types.** Every event type is now visible to the whole workspace by
   default (`visibility = org`; existing rows are converted), so any member can open and
   share every booking link. The creator and any admin can edit an org event type; everyone

@@ -820,6 +820,16 @@ Each has a fuller note under `docs/features/`.
   is withheld in the page data and public JSON (`book.go`, `/slots`, manage, team page), not
   merely hidden in templates. Admin, MCP and email paths keep names.
 - **Attribution footer removed** from the public surfaces (`legalFooter` partial, `embed.js`).
+- **Team calendar** (`team_calendar.go`, migration 00074). `GET /v1/team-calendar` merges
+  bookings (one item per `booking_hosts` seat) with `calendar.Provider.ListEvents` per connected
+  member, de-duplicated against platform-created event ids, fanned out with a bounded errgroup
+  after all rows are materialised. Share tokens (`tcs_…`, SHA-256 stored) authenticate the data
+  endpoint and the frameable `/embed/team-calendar` page (`frame-ancestors *`, no XFO).
+- **Live events** (`live_events.go`, `live_page.go`, migration 00075). scheduled → live → ended
+  | cancelled. The host's calendar event mints the Meet link and carries the default
+  participants. `/v1/live/status` is public, CORS `*`, and only exposes `join_url` while live.
+  `/live` and `/live-widget.js` are framework-free and frameable. A 60s sweep auto-starts and
+  auto-ends sessions.
 
 ---
 
