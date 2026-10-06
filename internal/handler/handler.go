@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"database/sql"
 	"encoding/hex"
 	"log/slog"
@@ -52,6 +53,9 @@ type Handler struct {
 	demoResetInterval time.Duration
 	demoMu            sync.RWMutex
 	demoNextResetAt   time.Time
+	// liveEventAttendeeSource overrides the default-participant lookup live events use for
+	// their calendar invites (see live_events.go). Nil in production (defaultAttendeeEmails).
+	liveEventAttendeeSource func(ctx context.Context) ([]string, error)
 }
 
 // SetLiveKit swaps the active LiveKit client (nil disables built-in video rooms).

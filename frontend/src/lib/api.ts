@@ -382,6 +382,42 @@ export type AvailabilityOverride = {
 	group_id?: string;
 };
 
+/** A live event / office-hours session (docs/features/live-events.md). */
+export type LiveEvent = {
+	id: string;
+	title: string;
+	description: string;
+	kind: 'office_hours' | 'event';
+	status: 'scheduled' | 'live' | 'ended' | 'cancelled';
+	host_user_id: string;
+	host_name: string;
+	scheduled_start_at: string | null;
+	scheduled_end_at: string | null;
+	started_at: string | null;
+	ended_at: string | null;
+	auto_start: boolean;
+	auto_end: boolean;
+	/** The session's join link (minted Meet/Teams link or a manual override). */
+	join_url: string;
+	has_calendar_event: boolean;
+	created_by: string;
+	created_at: string;
+	updated_at: string;
+};
+
+export type LiveEventInput = {
+	title?: string;
+	description?: string;
+	kind?: 'office_hours' | 'event';
+	scheduled_start_at?: string | null;
+	scheduled_end_at?: string | null;
+	start_now?: boolean;
+	host_user_id?: string;
+	join_url?: string;
+	auto_start?: boolean;
+	auto_end?: boolean;
+};
+
 async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise<T> {
 	const res = await fetch(path, {
 		credentials: 'same-origin',
