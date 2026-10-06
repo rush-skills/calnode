@@ -27,10 +27,19 @@ Code: `internal/handler/live_events.go` (API + sweep), `live_page.go` (page + wi
   and the notetaker's calendars show the session ahead of time. Start reuses that event;
   a schedule change moves it (`UpdateEvent`); a host change cancels it and mints a fresh one
   on the new host's calendar.
-- **No link, no "live".** `start` / `start_now` reply **409** when the session has no
-  `join_url` and the host has no calendar that can mint one. A scheduled session may exist
-  in that state (the link is required at start). A failed `start_now` deletes the row it
-  just inserted, so a retrying client never piles up scheduled rows it did not ask for.
+- **No link, no "live".** `goLive` refuses (**409**) whenever `join_url` is empty after
+  the calendar step - a stamped calendar event is not a join link (a personal Microsoft
+  account writes the event and mints nothing; a link can also be cleared by PATCH). A
+  scheduled session may exist in that state (the link is required at start). A failed
+  `start_now` cancels any calendar event it wrote and deletes the row it just inserted, so
+  a retrying client never piles up rows or orphaned events it did not ask for.
+- **Changing the link re-creates the calendar event.** A PATCH that replaces a minted
+  link with a manual one (or clears it) on a scheduled session cancels the event and mints
+  a fresh one carrying the new link as `Location` - otherwise the host and the notetaker
+  would open the old conference while the public feed publishes the new URL.
+- **A live session keeps its host.** `PATCH host_user_id` on a live row is **409**; end it
+  and start a new one. `host_user_id: ""` on any PATCH means "no change" (clients echo the
+  create payload), never "reassign to me".
 - **End trims the calendar event to the real end** (`UpdateEvent(start, now)`); cancel
   deletes it (`CancelEvent`). Provider errors on end/cancel are logged, never block the
   state change: the session's own row is the source of truth, the calendar mirrors it.
@@ -51,8 +60,10 @@ Code: `internal/handler/live_events.go` (API + sweep), `live_page.go` (page + wi
   so SQL string comparisons are time comparisons.
 - **The status feed is CORS-open (`*`) by design.** It is read-only public data polled by
   the widget from any site, so it is set in the handler and deliberately *not* subject to
-  the booking widget's `EMBED_ALLOWED_ORIGINS`. It is `no-store` and rate-limited
-  (60/min per IP) like the slots feed.
+  the booking widget's `EMBED_ALLOWED_ORIGINS`. It is `no-store` and rate-limited at
+  600/min per IP: a flood guard, not a quota - every viewer polls twice a minute and, behind
+  a proxy without `TRUSTED_PROXY_CIDRS`, every viewer shares one bucket, so the slots feed's
+  60/min would 429 a page with thirty readers.
 - **The `/live` page is frameable** (`Content-Security-Policy: frame-ancestors *`,
   `Cache-Control: no-store`, no `X-Frame-Options`). The booking pages deny framing; this
   page exists to be framed. Its CSP otherwise allows only same-origin fetches and inline
@@ -80,12 +91,12 @@ Code: `internal/handler/live_events.go` (API + sweep), `live_page.go` (page + wi
 - **Not translated.** `/live` and the widget are English-only, like the LiveKit room: the
   content is three short status strings and viewer-local dates come from `Intl`. Adding
   the strings to the nine locale files is straightforward if the page is ever marketed.
-- **No reschedule of a live session's host.** `PATCH host_user_id` is allowed while
-  scheduled or live, but on a live session the calendar event moves to the new host without
-  re-minting a link (the published `join_url` stays). Ending and starting a fresh session
-  is the clean way to hand over a live room.
 - **`end` on a scheduled session is 409** (it never went live); cancel is the way out.
   `end` and `start` are idempotent on rows already in the target state (200 with the row).
+  Cancelling a live session ends it and deletes the calendar event in one provider call
+  (the end-time trim is skipped, since the event is removed right after).
+- **`start_now` with a `scheduled_end_at` in the past is 400** (server and dialog): the
+  sweep would otherwise auto-end the brand-new session within a minute.
 
 ## API reference (for the external service)
 
@@ -136,8 +147,10 @@ then ended/cancelled most recent first. `limit` defaults to 50, max 200.
 ### `PATCH /v1/live-events/{id}` → 200
 
 Same fields as create (no `start_now`). Validated on change only. Moving the schedule
-updates the calendar event; changing the host re-creates it on the new host's calendar.
-409 on an ended or cancelled session. A live session cannot have its `join_url` cleared.
+updates the calendar event; changing the host or the `join_url` of a scheduled session
+re-creates it (new host's calendar / new link as location). 409 on an ended or cancelled
+session, and on a host change while live. `host_user_id: ""` is "no change". A live
+session cannot have its `join_url` cleared.
 
 ### `POST /v1/live-events/{id}/start` → 200
 
@@ -166,9 +179,11 @@ Idempotent.
 ```
 
 `join_url` appears **only** on `live` rows. `next` is the earliest scheduled session whose
-window has not fully passed (a session past its start but not yet live still counts);
-`upcoming` is the sessions after it (it does not repeat `next`). `kind` filters all three.
-Headers: `Access-Control-Allow-Origin: *`, `Cache-Control: no-store`. 60 requests/min/IP.
+window has not fully passed: until its `scheduled_end_at`, or for four hours after its
+start when it has none (so a session past its start but not yet live - auto_start off,
+host running late - is still "next"). `upcoming` is the sessions after it (it does not
+repeat `next`). `kind` filters all three.
+Headers: `Access-Control-Allow-Origin: *`, `Cache-Control: no-store`. 600 requests/min/IP.
 
 ### `GET /live?kind=&theme=light|dark` - public page
 

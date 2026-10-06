@@ -152,7 +152,11 @@
 		} else if (form.end_time) {
 			const today = new Date().toISOString().slice(0, 10);
 			const end = toISO(form.end_date || today, form.end_time);
-			if (end) body.scheduled_end_at = end;
+			if (!end || new Date(end) <= new Date()) {
+				createError = 'The end time must be later than now.';
+				return;
+			}
+			body.scheduled_end_at = end;
 		}
 		if (form.join_url.trim()) body.join_url = form.join_url.trim();
 		if (form.host_user_id) body.host_user_id = form.host_user_id;

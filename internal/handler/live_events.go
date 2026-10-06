@@ -342,6 +342,12 @@ func (h *Handler) goLive(ctx context.Context, ev *liveEvent, now time.Time) erro
 	if err := h.ensureLiveEventCalendar(ctx, ev, now); err != nil {
 		return err
 	}
+	if ev.JoinURL == "" {
+		// A stamped calendar event is not a join link (the provider may have written the
+		// event and minted nothing, or the link was cleared since). Nobody can join, so it
+		// does not go live.
+		return errLiveNoCalendar
+	}
 	ts := liveTime(now)
 	if _, err := h.db.ExecContext(ctx, `
 		UPDATE live_events SET status = 'live', started_at = ?, host_user_id = ?, updated_at = ? WHERE id = ?`,
@@ -354,7 +360,7 @@ func (h *Handler) goLive(ctx context.Context, ev *liveEvent, now time.Time) erro
 
 // endLive flips a live session to ended at now and trims its calendar event to the real
 // end, so the host's (and the notetaker's) calendar reflects what happened.
-func (h *Handler) endLive(ctx context.Context, ev *liveEvent, now time.Time) error {
+func (h *Handler) endLive(ctx context.Context, ev *liveEvent, now time.Time, syncCalendar bool) error {
 	if ev.Status != liveStatusLive {
 		return nil
 	}
@@ -365,7 +371,9 @@ func (h *Handler) endLive(ctx context.Context, ev *liveEvent, now time.Time) err
 	}
 	start, _ := liveEventWindow(ev, now)
 	ev.Status, ev.EndedAt, ev.UpdatedAt = liveStatusEnded, &ts, ts
-	h.syncLiveEventCalendarTime(ctx, ev, start, now)
+	if syncCalendar {
+		h.syncLiveEventCalendarTime(ctx, ev, start, now)
+	}
 	return nil
 }
 
@@ -509,6 +517,10 @@ func (h *Handler) CreateLiveEvent(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now()
 	ts := liveTime(now)
+	if in.StartNow && end != nil && *end <= ts {
+		h.writeError(w, http.StatusBadRequest, "scheduled_end_at must be in the future when starting now")
+		return
+	}
 	ev := &liveEvent{
 		ID: uid.New(), Title: title, Description: desc, Kind: kind, Status: liveStatusScheduled,
 		HostUserID: hostID, ScheduledStartAt: start, ScheduledEndAt: end,
@@ -531,6 +543,7 @@ func (h *Handler) CreateLiveEvent(w http.ResponseWriter, r *http.Request) {
 			// A failed start_now leaves nothing behind: the 409 is actionable (set a
 			// join_url, connect a calendar) and an external service retrying the same
 			// request must not pile up scheduled rows it never asked for.
+			h.cancelLiveEventCalendar(r.Context(), ev)
 			if _, derr := h.db.ExecContext(r.Context(), `DELETE FROM live_events WHERE id = ?`, ev.ID); derr != nil {
 				h.logger.ErrorContext(r.Context(), "live events: roll back failed start_now", "error", derr, "live_event_id", ev.ID)
 			}
@@ -543,6 +556,13 @@ func (h *Handler) CreateLiveEvent(w http.ResponseWriter, r *http.Request) {
 		h.logger.ErrorContext(r.Context(), "live events: calendar event at create", "error", err, "live_event_id", ev.ID)
 	}
 	h.respondLiveEvent(w, r, http.StatusCreated, ev.ID)
+}
+
+func ptrString(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 func boolInt(b bool) int {
@@ -714,6 +734,7 @@ func (h *Handler) PatchLiveEvent(w http.ResponseWriter, r *http.Request) {
 		}
 		ev.Kind = k
 	}
+	linkChanged := false
 	if in.JoinURL != nil {
 		j := strings.TrimSpace(*in.JoinURL)
 		if j != "" && !validJoinURL(j) {
@@ -724,6 +745,7 @@ func (h *Handler) PatchLiveEvent(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, http.StatusBadRequest, "a live session needs a join_url; end it first")
 			return
 		}
+		linkChanged = j != ev.JoinURL
 		ev.JoinURL = j
 	}
 	scheduleChanged := false
@@ -743,15 +765,19 @@ func (h *Handler) PatchLiveEvent(w http.ResponseWriter, r *http.Request) {
 		scheduleChanged = true
 	}
 	hostChanged := false
-	if in.HostUserID != nil && strings.TrimSpace(*in.HostUserID) != ev.HostUserID {
-		hostID, ok := h.resolveLiveHost(w, r, user, *in.HostUserID)
+	if requested := strings.TrimSpace(ptrString(in.HostUserID)); requested != "" && requested != ev.HostUserID {
+		// "" means "no change": clients that echo the create payload send it, and reading
+		// it as "default to the caller" would silently reassign someone else's session.
+		if ev.Status == liveStatusLive {
+			h.writeError(w, http.StatusConflict, "the host of a live session cannot be changed; end it and start a new one")
+			return
+		}
+		hostID, ok := h.resolveLiveHost(w, r, user, requested)
 		if !ok {
 			return
 		}
-		if hostID != ev.HostUserID {
-			ev.HostUserID = hostID
-			hostChanged = true
-		}
+		ev.HostUserID = hostID
+		hostChanged = true
 	}
 	if in.AutoStart != nil {
 		ev.AutoStart = *in.AutoStart
@@ -775,11 +801,15 @@ func (h *Handler) PatchLiveEvent(w http.ResponseWriter, r *http.Request) {
 	// The calendar event lives on the host's calendar: a new host means the old event is
 	// cancelled and a fresh one minted (when the new host can). A schedule change on the
 	// same host just moves the existing event.
-	if hostChanged {
+	// A changed join link on a scheduled session re-creates the event too: the conference
+	// on the old event would otherwise send the host and the notetaker into a different
+	// room than the one the public feed publishes. (Only scheduled: a live session cannot
+	// change host, and its link may only be replaced by another manual one.)
+	if hostChanged || (linkChanged && ev.Status == liveStatusScheduled && ev.externalEventID != "") {
 		h.cancelLiveEventCalendar(r.Context(), ev)
 		if ev.Status == liveStatusScheduled {
 			if err := h.ensureLiveEventCalendar(r.Context(), ev, now); err != nil && !errors.Is(err, errLiveNoCalendar) {
-				h.logger.ErrorContext(r.Context(), "live events: calendar event after host change", "error", err, "live_event_id", ev.ID)
+				h.logger.ErrorContext(r.Context(), "live events: calendar event after host/link change", "error", err, "live_event_id", ev.ID)
 			}
 		}
 	} else if scheduleChanged && ev.Status == liveStatusScheduled {
@@ -845,7 +875,7 @@ func (h *Handler) EndLiveEvent(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusConflict, "only a live session can be ended")
 		return
 	}
-	if err := h.endLive(r.Context(), ev, time.Now()); err != nil {
+	if err := h.endLive(r.Context(), ev, time.Now(), true); err != nil {
 		h.logger.ErrorContext(r.Context(), "live events: end", "error", err, "live_event_id", ev.ID)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -866,7 +896,9 @@ func (h *Handler) CancelLiveEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now()
 	if ev.Status == liveStatusLive {
-		if err := h.endLive(r.Context(), ev, now); err != nil {
+		// No calendar sync here: cancelLiveEventCalendar deletes the event right after,
+		// so trimming its end first would be a wasted provider round-trip.
+		if err := h.endLive(r.Context(), ev, now, false); err != nil {
 			h.logger.ErrorContext(r.Context(), "live events: end before cancel", "error", err, "live_event_id", ev.ID)
 			h.writeError(w, http.StatusInternalServerError, "internal error")
 			return
@@ -935,12 +967,15 @@ func (h *Handler) LiveStatus(w http.ResponseWriter, r *http.Request) {
 	rows.Close() // #nosec G104 -- rows fully consumed; the next query needs the single connection
 
 	// Scheduled sessions whose window has not fully passed: a session that is past its
-	// start but not yet live (auto_start off, host running late) is still "next".
+	// start but not yet live (auto_start off, host running late) is still "next" until its
+	// scheduled end, or for liveEventMaxRunning after its start when it has none.
+	openEndedCutoff := liveTime(time.Now().Add(-liveEventMaxRunning))
 	upcoming := []livePublicSession{}
 	rows, err = h.db.QueryContext(r.Context(), liveEventSelect+`
 		WHERE e.status = 'scheduled' AND e.scheduled_start_at IS NOT NULL
-		  AND COALESCE(e.scheduled_end_at, e.scheduled_start_at) >= ?`+kindFilter+`
-		ORDER BY e.scheduled_start_at ASC LIMIT ?`, append(append([]any{now}, args...), liveStatusUpcomingMax+1)...)
+		  AND ((e.scheduled_end_at IS NOT NULL AND e.scheduled_end_at >= ?)
+		    OR (e.scheduled_end_at IS NULL AND e.scheduled_start_at >= ?))`+kindFilter+`
+		ORDER BY e.scheduled_start_at ASC LIMIT ?`, append(append([]any{now, openEndedCutoff}, args...), liveStatusUpcomingMax+1)...)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "live status: upcoming rows", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
@@ -1044,7 +1079,7 @@ func (h *Handler) SweepLiveEvents(ctx context.Context, now time.Time) {
 		if err != nil {
 			continue
 		}
-		if err := h.endLive(ctx, ev, now); err != nil {
+		if err := h.endLive(ctx, ev, now, true); err != nil {
 			h.logger.Error("live events sweep: auto-end", "error", err, "live_event_id", id)
 		}
 	}

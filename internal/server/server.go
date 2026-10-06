@@ -498,8 +498,10 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	mux.HandleFunc("POST /v1/live-events/{id}/end", h.RequireAuth(h.EndLiveEvent))
 	// The status feed is read-only public data polled by every embedded widget and iframe,
 	// so it is CORS-open to any origin (set by the handler, independent of the booking
-	// widget's EMBED_ALLOWED_ORIGINS) and rate-limited like the slots feed.
-	liveStatusRL := RateLimit(60, time.Minute)
+	// widget's EMBED_ALLOWED_ORIGINS). The limit is a flood guard, not a quota: each viewer
+	// polls every 30s, and behind a proxy with no TRUSTED_PROXY_CIDRS every viewer shares
+	// one bucket, so the slots feed's 60/min would 429 a page with 30 readers.
+	liveStatusRL := RateLimit(600, time.Minute)
 	mux.HandleFunc("GET /v1/live/status", liveStatusRL(h.LiveStatus))
 	mux.HandleFunc("GET /live", h.LivePage)
 	mux.HandleFunc("GET /live-widget.js", h.LiveWidgetJS)

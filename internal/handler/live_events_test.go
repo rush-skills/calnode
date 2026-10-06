@@ -20,6 +20,7 @@ import (
 // update/cancel, and mints a Meet-style link when AddMeet is set.
 type liveCalendar struct {
 	calendar.Provider
+	noLink  bool // write the event but mint no link (a personal Microsoft account)
 	mu      sync.Mutex
 	creates []calendar.CreateEventParams
 	updates [][2]time.Time
@@ -37,10 +38,10 @@ func (p *liveCalendar) CreateEvent(_ context.Context, _ string, in calendar.Crea
 	defer p.mu.Unlock()
 	p.creates = append(p.creates, in)
 	link := ""
-	if in.AddMeet {
+	if in.AddMeet && !p.noLink {
 		link = "https://meet.google.com/abc-defg-hij"
 	}
-	return "evt-1", link, "primary", nil
+	return "evt-" + in.Summary, link, "primary", nil
 }
 func (p *liveCalendar) UpdateEvent(_ context.Context, _, _, _ string, start, end time.Time) error {
 	p.mu.Lock()
@@ -297,7 +298,7 @@ func TestLiveEvents_scheduledCreateMintsMeetAheadOfTime(t *testing.T) {
 	mustStatus(t, rec, http.StatusCreated, "create second")
 	id2 := liveBody(t, rec)["id"].(string)
 	mustStatus(t, liveReq(h, key, http.MethodDelete, "/v1/live-events/"+id2, id2, ""), http.StatusOK, "cancel second")
-	if _, _, cancels = p.snapshot(); len(cancels) != 1 || cancels[0] != "evt-1" {
+	if _, _, cancels = p.snapshot(); len(cancels) != 1 || cancels[0] != "evt-Later" {
 		t.Errorf("cancels = %v; want the stamped event id", cancels)
 	}
 }
@@ -559,5 +560,118 @@ func TestLiveWidgetJS_servedAsScript(t *testing.T) {
 	h.LiveWidgetJS(rec2, req)
 	if rec2.Code != http.StatusNotModified {
 		t.Errorf("conditional GET = %d; want 304", rec2.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Review follow-ups
+// ---------------------------------------------------------------------------
+
+// A provider can write the event yet mint no link (a personal Microsoft account). The
+// session must not go live on the strength of the stamped event, and a failed start_now
+// must take that event back off the host's calendar along with the row.
+func TestLiveEvents_stampedEventWithoutLinkNeverGoesLive(t *testing.T) {
+	h, db, key, userID := setupWorkspaceWithDB(t)
+	p := connectLiveCalendar(t, h, db, userID)
+	p.noLink = true
+
+	rec := liveReq(h, key, http.MethodPost, "/v1/live-events", "", `{"title":"Now","start_now":true}`)
+	mustStatus(t, rec, http.StatusConflict, "start_now without a mintable link")
+	creates, _, cancels := p.snapshot()
+	if len(creates) != 1 || len(cancels) != 1 {
+		t.Fatalf("creates=%d cancels=%d; the orphaned calendar event must be cancelled", len(creates), len(cancels))
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM live_events`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("rows left = %d", n)
+	}
+
+	rec = liveReq(h, key, http.MethodPost, "/v1/live-events", "", `{"title":"Later","scheduled_start_at":"2030-01-01T10:00:00Z"}`)
+	mustStatus(t, rec, http.StatusCreated, "scheduled")
+	ev := liveBody(t, rec)
+	if ev["has_calendar_event"] != true || ev["join_url"] != "" {
+		t.Fatalf("scheduled row = %v; want a stamped event and no link", ev)
+	}
+	id := ev["id"].(string)
+	// Two starts in a row: the second sees the stamp and must still refuse.
+	mustStatus(t, liveReq(h, key, http.MethodPost, "/v1/live-events/"+id+"/start", id, ""), http.StatusConflict, "start 1")
+	mustStatus(t, liveReq(h, key, http.MethodPost, "/v1/live-events/"+id+"/start", id, ""), http.StatusConflict, "start 2")
+	if _, _, cancels = p.snapshot(); len(cancels) != 1 {
+		t.Errorf("a scheduled session keeps its calendar event across a refused start (cancels=%d)", len(cancels))
+	}
+}
+
+// Clearing the link of a scheduled session is allowed, but it then cannot start.
+func TestLiveEvents_clearedLinkBlocksStart(t *testing.T) {
+	h, _, key, _ := setupWorkspaceWithDB(t)
+	rec := liveReq(h, key, http.MethodPost, "/v1/live-events", "", `{"title":"t","join_url":"https://x.example/1"}`)
+	mustStatus(t, rec, http.StatusCreated, "create")
+	id := liveBody(t, rec)["id"].(string)
+	mustStatus(t, liveReq(h, key, http.MethodPatch, "/v1/live-events/"+id, id, `{"join_url":""}`), http.StatusOK, "clear link")
+	mustStatus(t, liveReq(h, key, http.MethodPost, "/v1/live-events/"+id+"/start", id, ""), http.StatusConflict, "start without link")
+}
+
+func TestLiveEvents_startNowRejectsPastEnd(t *testing.T) {
+	h, _, key, _ := setupWorkspaceWithDB(t)
+	rec := liveReq(h, key, http.MethodPost, "/v1/live-events", "", `{"title":"t","join_url":"https://x.example/1","start_now":true,"scheduled_end_at":"2020-01-01T10:00:00Z"}`)
+	mustStatus(t, rec, http.StatusBadRequest, "past end with start_now")
+}
+
+// PATCH host_user_id: "" is "no change"; a live session keeps its host.
+func TestLiveEvents_patchHostSemantics(t *testing.T) {
+	h, db, ownerKey, _ := setupWorkspaceWithDB(t)
+	seedLiveMember(t, db, "bob", "bob@example.com", false)
+	rec := liveReq(h, ownerKey, http.MethodPost, "/v1/live-events", "", `{"title":"t","host_user_id":"bob","join_url":"https://x.example/1"}`)
+	mustStatus(t, rec, http.StatusCreated, "create")
+	id := liveBody(t, rec)["id"].(string)
+
+	rec = liveReq(h, ownerKey, http.MethodPatch, "/v1/live-events/"+id, id, `{"host_user_id":"","title":"renamed"}`)
+	mustStatus(t, rec, http.StatusOK, "patch with empty host")
+	if ev := liveBody(t, rec); ev["host_user_id"] != "bob" || ev["title"] != "renamed" {
+		t.Fatalf("empty host_user_id must not reassign: %v", ev)
+	}
+	mustStatus(t, liveReq(h, ownerKey, http.MethodPost, "/v1/live-events/"+id+"/start", id, ""), http.StatusOK, "start")
+	mustStatus(t, liveReq(h, ownerKey, http.MethodPatch, "/v1/live-events/"+id, id, `{"host_user_id":"host"}`), http.StatusConflict, "host change while live")
+}
+
+// Replacing a minted link with a manual one re-creates the calendar event with the manual
+// link as its location, so the host and the notetaker land in the published room.
+func TestLiveEvents_manualLinkOnMintedSessionRemintsCalendarEvent(t *testing.T) {
+	h, db, key, userID := setupWorkspaceWithDB(t)
+	p := connectLiveCalendar(t, h, db, userID)
+	rec := liveReq(h, key, http.MethodPost, "/v1/live-events", "", `{"title":"OH","scheduled_start_at":"2030-01-01T10:00:00Z"}`)
+	mustStatus(t, rec, http.StatusCreated, "create")
+	id := liveBody(t, rec)["id"].(string)
+	rec = liveReq(h, key, http.MethodPatch, "/v1/live-events/"+id, id, `{"join_url":"https://zoom.example/j/9"}`)
+	mustStatus(t, rec, http.StatusOK, "set manual link")
+	if ev := liveBody(t, rec); ev["join_url"] != "https://zoom.example/j/9" || ev["has_calendar_event"] != true {
+		t.Fatalf("row = %v", ev)
+	}
+	creates, _, cancels := p.snapshot()
+	if len(cancels) != 1 || len(creates) != 2 || creates[1].AddMeet || creates[1].Location != "https://zoom.example/j/9" {
+		t.Fatalf("creates=%+v cancels=%v; want the old event cancelled and a new one carrying the manual link", creates, cancels)
+	}
+}
+
+// An open-ended scheduled session stays "next" for the running grace window after its
+// start (auto_start off, host running late); one with a past scheduled end does not.
+func TestLiveStatus_openEndedSessionStaysNextAfterStart(t *testing.T) {
+	h, _, key, _ := setupWorkspaceWithDB(t)
+	recent := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	old := time.Now().Add(-5 * time.Hour).UTC().Format(time.RFC3339)
+	for _, body := range []string{
+		`{"title":"late open","join_url":"https://x.example/1","scheduled_start_at":"` + recent + `","auto_start":false}`,
+		`{"title":"stale open","join_url":"https://x.example/2","scheduled_start_at":"` + old + `","auto_start":false}`,
+		`{"title":"ended window","join_url":"https://x.example/3","scheduled_start_at":"` + old + `","scheduled_end_at":"` + recent + `","auto_start":false}`,
+	} {
+		mustStatus(t, liveReq(h, key, http.MethodPost, "/v1/live-events", "", body), http.StatusCreated, "create")
+	}
+	body := liveStatusBody(t, h, "")
+	next, _ := body["next"].(map[string]any)
+	if next == nil || next["title"] != "late open" {
+		t.Fatalf("next = %v; want the open-ended session that started an hour ago", body["next"])
+	}
+	if up := body["upcoming"].([]any); len(up) != 0 {
+		t.Errorf("upcoming = %v; the stale and ended ones are over", up)
 	}
 }
