@@ -675,3 +675,41 @@ func TestLiveStatus_openEndedSessionStaysNextAfterStart(t *testing.T) {
 		t.Errorf("upcoming = %v; the stale and ended ones are over", up)
 	}
 }
+
+// History lists ended and cancelled sessions only, filterable by kind and paged by offset;
+// active lists scheduled and live.
+func TestLiveEvents_listHistoryAndKindFilter(t *testing.T) {
+	h, _, key, _ := setupWorkspaceWithDB(t)
+	mk := func(title, kind string) string {
+		rec := liveReq(h, key, http.MethodPost, "/v1/live-events", "",
+			`{"title":"`+title+`","kind":"`+kind+`","start_now":true,"join_url":"https://meet.example.com/`+title+`"}`)
+		mustStatus(t, rec, http.StatusCreated, "create "+title)
+		return liveBody(t, rec)["id"].(string)
+	}
+	a, b := mk("a", "office_hours"), mk("b", "demo")
+	mk("c", "demo") // stays live
+	mustStatus(t, liveReq(h, key, http.MethodPost, "/v1/live-events/"+a+"/end", a, ""), http.StatusOK, "end a")
+	mustStatus(t, liveReq(h, key, http.MethodDelete, "/v1/live-events/"+b, b, ""), http.StatusOK, "cancel b")
+
+	count := func(q string) int {
+		t.Helper()
+		rec := liveReq(h, key, http.MethodGet, "/v1/live-events"+q, "", "")
+		mustStatus(t, rec, http.StatusOK, q)
+		return len(liveBody(t, rec)["live_events"].([]any))
+	}
+	cases := map[string]int{
+		"?status=history":                   2,
+		"?status=history&kind=demo":         1,
+		"?status=history&kind=office_hours": 1,
+		"?status=active":                    1,
+		"?status=active&kind=office_hours":  0,
+		"?status=history&limit=1&offset=1":  1,
+		"?status=history&limit=1&offset=2":  0,
+	}
+	for q, want := range cases {
+		if got := count(q); got != want {
+			t.Errorf("%s: %d rows; want %d", q, got, want)
+		}
+	}
+	mustStatus(t, liveReq(h, key, http.MethodGet, "/v1/live-events?kind=Bad%20Kind", "", ""), http.StatusBadRequest, "bad kind")
+}

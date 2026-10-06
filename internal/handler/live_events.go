@@ -621,25 +621,52 @@ func (h *Handler) ListLiveEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = n
 	}
-	where := ""
+	// status: one of the four states, or "history" for ended + cancelled. kind filters to
+	// one session type. offset pages through history.
+	conds := []string{}
 	args := []any{}
 	if st := q.Get("status"); st != "" {
 		switch st {
 		case liveStatusScheduled, liveStatusLive, liveStatusEnded, liveStatusCancelled:
+			conds = append(conds, `e.status = ?`)
+			args = append(args, st)
+		case "history":
+			conds = append(conds, `e.status IN ('ended','cancelled')`)
+		case "active":
+			conds = append(conds, `e.status IN ('scheduled','live')`)
 		default:
-			h.writeError(w, http.StatusBadRequest, "status must be scheduled, live, ended or cancelled")
+			h.writeError(w, http.StatusBadRequest, "status must be scheduled, live, ended, cancelled, active or history")
 			return
 		}
-		where = ` WHERE e.status = ?`
-		args = append(args, st)
 	}
-	args = append(args, limit)
+	if k := strings.TrimSpace(q.Get("kind")); k != "" {
+		if !validLiveKind(k) {
+			h.writeError(w, http.StatusBadRequest, "invalid kind")
+			return
+		}
+		conds = append(conds, `e.kind = ?`)
+		args = append(args, k)
+	}
+	offset := 0
+	if s := q.Get("offset"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil || n < 0 {
+			h.writeError(w, http.StatusBadRequest, "offset must be a non-negative integer")
+			return
+		}
+		offset = n
+	}
+	where := ""
+	if len(conds) > 0 {
+		where = ` WHERE ` + strings.Join(conds, ` AND `)
+	}
+	args = append(args, limit, offset)
 	rows, err := h.db.QueryContext(r.Context(), liveEventSelect+where+`
 		ORDER BY CASE e.status WHEN 'live' THEN 0 WHEN 'scheduled' THEN 1 WHEN 'ended' THEN 2 ELSE 3 END,
 		         CASE WHEN e.status = 'live' THEN e.started_at END DESC,
 		         CASE WHEN e.status = 'scheduled' THEN COALESCE(e.scheduled_start_at, '9999') END ASC,
 		         COALESCE(e.ended_at, e.updated_at) DESC
-		LIMIT ?`, args...)
+		LIMIT ? OFFSET ?`, args...) // #nosec G202 -- conds are fixed literals; values are bound
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "live events: list", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")

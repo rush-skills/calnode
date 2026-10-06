@@ -28,9 +28,18 @@
 
 	let items = $state<LiveEvent[]>([]);
 	// Kinds already used, offered as suggestions in the form.
-	const knownKinds = $derived(Array.from(new Set(['office_hours', ...items.map((e) => e.kind)])).sort());
 	let loading = $state(true);
-	let showEnded = $state(false);
+	// History: ended and cancelled sessions, paged from the server and filterable by kind.
+	const HISTORY_PAGE = 25;
+	let history = $state<LiveEvent[]>([]);
+	let historyKind = $state('');
+	let historyMore = $state(false);
+	let historyLoading = $state(false);
+	// Embed card: which kind the snippets are for ('' = every kind).
+	let embedKind = $state('');
+	const knownKinds = $derived(
+		Array.from(new Set(['office_hours', ...items.map((e) => e.kind), ...history.map((e) => e.kind)])).sort()
+	);
 	let members = $state<TeamMember[]>([]);
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -62,21 +71,20 @@
 	let confirmDestructive = $state(false);
 	let pendingAction: (() => void) | null = null;
 
-	const visible = $derived(
-		showEnded ? items : items.filter((e) => e.status === 'scheduled' || e.status === 'live')
-	);
+	const visible = $derived(items);
 	const liveCount = $derived(items.filter((e) => e.status === 'live').length);
 	const origin = $derived(typeof window !== 'undefined' ? window.location.origin : '');
+	const livePageURL = $derived(`${origin}/live${embedKind ? `?kind=${encodeURIComponent(embedKind)}` : ''}`);
 	const iframeSnippet = $derived(
-		`<iframe src="${origin}/live" title="Live now" width="100%" height="320" style="border:0;border-radius:12px" loading="lazy"></iframe>`
+		`<iframe src="${livePageURL}" title="${embedKind ? kindLabel(embedKind) : 'Live now'}" width="100%" height="320" style="border:0;border-radius:12px" loading="lazy"></iframe>`
 	);
 	const widgetSnippet = $derived(
-		`<script src="${origin}/live-widget.js" async><\/script>\n<calnode-live data-kind="office_hours" data-poll="30"></calnode-live>`
+		`<script src="${origin}/live-widget.js" async><\/script>\n<calnode-live${embedKind ? ` data-kind="${embedKind}"` : ''} data-poll="30"></calnode-live>`
 	);
 
 	async function load(quiet = false) {
 		try {
-			const res = await api.get<{ live_events: LiveEvent[] }>('/v1/live-events?limit=100');
+			const res = await api.get<{ live_events: LiveEvent[] }>('/v1/live-events?status=active&limit=200');
 			items = res.live_events ?? [];
 		} catch (e: any) {
 			if (!quiet) toast.error(e.message || 'Could not load live events');
@@ -85,8 +93,32 @@
 		}
 	}
 
+	async function loadHistory(reset = false) {
+		historyLoading = true;
+		try {
+			const offset = reset ? 0 : history.length;
+			const kindQ = historyKind ? `&kind=${encodeURIComponent(historyKind)}` : '';
+			const res = await api.get<{ live_events: LiveEvent[] }>(
+				`/v1/live-events?status=history&limit=${HISTORY_PAGE}&offset=${offset}${kindQ}`
+			);
+			const page = res.live_events ?? [];
+			history = reset ? page : [...history, ...page];
+			historyMore = page.length === HISTORY_PAGE;
+		} catch (e: any) {
+			toast.error(e.message || 'Could not load session history');
+		} finally {
+			historyLoading = false;
+		}
+	}
+	function duration(e: LiveEvent): string {
+		if (!e.started_at || !e.ended_at) return '—';
+		const mins = Math.max(0, Math.round((Date.parse(e.ended_at) - Date.parse(e.started_at)) / 60000));
+		return mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
+	}
+
 	onMount(async () => {
 		await load();
+		loadHistory(true);
 		pollTimer = setInterval(() => load(true), POLL_MS);
 		if ($currentUser?.is_admin) {
 			try {
@@ -184,6 +216,12 @@
 	}
 
 	function replace(ev: LiveEvent) {
+		if (ev.status === 'ended' || ev.status === 'cancelled') {
+			// Finished: out of the active list, into history.
+			items = items.filter((e) => e.id !== ev.id);
+			loadHistory(true);
+			return;
+		}
 		items = items.map((e) => (e.id === ev.id ? ev : e));
 	}
 
@@ -386,15 +424,11 @@
 			{/if}
 			{visible.length} shown
 		</p>
-		<label class="flex items-center gap-2 text-sm text-muted-foreground">
-			<Switch bind:checked={showEnded} />
-			Show ended and cancelled
-		</label>
 	</div>
 
 	{#if visible.length === 0}
 		<div class="rounded-lg border border-dashed p-10 text-center">
-			<p class="text-sm text-muted-foreground">No live events yet. Schedule office hours or go live right away.</p>
+			<p class="text-sm text-muted-foreground">Nothing scheduled or live. Schedule office hours or go live right away.</p>
 		</div>
 	{:else}
 		<div class="overflow-x-auto rounded-lg border bg-card">
@@ -430,7 +464,7 @@
 								<p class="text-xs text-muted-foreground">{kindLabel(e.kind)}{e.auto_start && e.status === 'scheduled' && e.scheduled_start_at ? ' · auto-start' : ''}</p>
 							</td>
 							<td class="px-4 py-3">{e.host_name || '—'}</td>
-							<td class="px-4 py-3 whitespace-nowrap">{schedule(e)}</td>
+							<td class="px-4 py-3">{schedule(e)}</td>
 							<td class="px-4 py-3">
 								{#if e.join_url}
 									<Tooltip.Provider>
@@ -489,6 +523,62 @@
 		</div>
 	{/if}
 
+	<div class="mt-8 rounded-lg border bg-card">
+		<div class="flex flex-wrap items-center justify-between gap-3 border-b p-4">
+			<div>
+				<h2 class="text-sm font-semibold">Session history</h2>
+				<p class="mt-0.5 text-xs text-muted-foreground">Ended and cancelled sessions, newest first.</p>
+			</div>
+			<Select.Root type="single" value={historyKind} onValueChange={(v) => { historyKind = v ?? ''; loadHistory(true); }}>
+				<Select.Trigger class="w-48" aria-label="Filter history by kind">{historyKind ? kindLabel(historyKind) : 'All kinds'}</Select.Trigger>
+				<Select.Content>
+					<Select.Item value="" label="All kinds">All kinds</Select.Item>
+					{#each knownKinds as k}<Select.Item value={k} label={kindLabel(k)}>{kindLabel(k)}</Select.Item>{/each}
+				</Select.Content>
+			</Select.Root>
+		</div>
+		{#if history.length === 0}
+			<p class="p-6 text-center text-sm text-muted-foreground">{historyLoading ? 'Loading…' : 'No past sessions yet.'}</p>
+		{:else}
+			<div class="overflow-x-auto">
+				<table class="w-full text-sm">
+					<thead class="border-b bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
+						<tr>
+							<th class="px-4 py-3">Session</th>
+							<th class="px-4 py-3">Host</th>
+							<th class="px-4 py-3">Started</th>
+							<th class="px-4 py-3">Duration</th>
+							<th class="px-4 py-3">Outcome</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each history as e (e.id)}
+							<tr class="border-b last:border-0">
+								<td class="px-4 py-3">
+									<p class="font-medium">{e.title}</p>
+									<p class="text-xs text-muted-foreground">{kindLabel(e.kind)}</p>
+								</td>
+								<td class="px-4 py-3">{e.host_name || '—'}</td>
+								<td class="px-4 py-3">{e.started_at ? fmtWhen(e.started_at) : e.scheduled_start_at ? `${fmtWhen(e.scheduled_start_at)} (scheduled)` : '—'}</td>
+								<td class="px-4 py-3">{duration(e)}</td>
+								<td class="px-4 py-3">
+									<Badge variant={badgeVariant(e.status)}>{e.status === 'ended' ? 'Ended' : 'Cancelled'}</Badge>
+								</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+			{#if historyMore}
+				<div class="border-t p-3 text-center">
+					<Button variant="ghost" size="sm" disabled={historyLoading} onclick={() => loadHistory(false)}>
+						{historyLoading ? 'Loading…' : 'Load more'}
+					</Button>
+				</div>
+			{/if}
+		{/if}
+	</div>
+
 	<div class="mt-8 rounded-lg border bg-card p-6">
 		<div class="mb-4 flex items-start justify-between gap-4">
 			<div>
@@ -497,18 +587,29 @@
 					Show "Live now — join" or "Offline, next session at …" on your own site. Both poll every 30 seconds.
 				</p>
 			</div>
-			<a href="{origin}/live" target="_blank" rel="noopener noreferrer" class={buttonVariants({ variant: 'outline', size: 'sm' })}>
+			<a href={livePageURL} target="_blank" rel="noopener noreferrer" class={buttonVariants({ variant: 'outline', size: 'sm' })}>
 				Open live page
 			</a>
 		</div>
 		<div class="space-y-4">
+			<div class="space-y-1.5">
+				<Label for="embed-kind">Show sessions of</Label>
+				<Select.Root type="single" value={embedKind} onValueChange={(v) => (embedKind = v ?? '')}>
+					<Select.Trigger id="embed-kind" class="w-full sm:w-64">{embedKind ? kindLabel(embedKind) : 'Every kind'}</Select.Trigger>
+					<Select.Content>
+						<Select.Item value="" label="Every kind">Every kind</Select.Item>
+						{#each knownKinds as k}<Select.Item value={k} label={kindLabel(k)}>{kindLabel(k)}</Select.Item>{/each}
+					</Select.Content>
+				</Select.Root>
+				<p class="text-xs text-muted-foreground">Pick a kind to get snippets that show only that kind, so each can be placed somewhere different.</p>
+			</div>
 			<div class="space-y-1.5">
 				<div class="flex items-center justify-between">
 					<Label>Iframe</Label>
 					<Button variant="ghost" size="sm" onclick={() => copy(iframeSnippet, 'Iframe snippet')}>Copy</Button>
 				</div>
 				<pre class="overflow-x-auto rounded-md bg-muted p-3 text-xs"><code>{iframeSnippet}</code></pre>
-				<p class="text-xs text-muted-foreground">Add <code>?kind=office_hours</code> (or any kind) or <code>?theme=dark</code> to the URL to filter or match a dark site.</p>
+				<p class="text-xs text-muted-foreground">Add <code>&amp;theme=dark</code> (or <code>?theme=dark</code>) to match a dark site.</p>
 			</div>
 			<div class="space-y-1.5">
 				<div class="flex items-center justify-between">
@@ -517,7 +618,7 @@
 				</div>
 				<pre class="overflow-x-auto rounded-md bg-muted p-3 text-xs"><code>{widgetSnippet}</code></pre>
 				<p class="text-xs text-muted-foreground">
-					Inline web component. Drop <code>data-kind</code> to show every kind; <code>data-base</code> defaults to this server.
+					Inline web component. <code>data-kind</code> limits it to one kind; <code>data-base</code> defaults to this server.
 				</p>
 			</div>
 			<p class="text-xs text-muted-foreground">
