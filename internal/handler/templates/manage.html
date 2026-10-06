@@ -48,8 +48,6 @@ body {
 
 /* Page-specific id hooks + tweaks layered on the shared sheet. */
 #month-label { flex: 1; font-size: .9375rem; font-weight: 600; color: #111827; }
-#tz-sizer { position: absolute; visibility: hidden; white-space: nowrap; font-size: .6875rem; font-family: inherit; }
-.tz-wrapper select { max-width: 190px; }
 
 /* ── Manage-specific views ──────────────────────── */
 .section-title { font-size: .9375rem; font-weight: 600; color: #111827; margin-bottom: 1rem; }
@@ -147,13 +145,10 @@ body {
     <h1 class="event-name">{{.EventTypeName}}</h1>
     {{template "eventMeta" .}}
     {{if and (not .TokenInvalid) (ne .Status "cancelled")}}
-    <p class="tz-label">
-      <span class="tz-wrapper">
-        <select id="tz-select" aria-label="{{call .T "timezone_aria"}}"></select>
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-      </span>
-      <span id="tz-sizer" aria-hidden="true"></span>
-    </p>
+    <div class="tz-label">
+      <input type="hidden" id="tz-select">
+      <div class="tzp" id="tz-picker"></div>
+    </div>
     {{end}}
   </aside>
 
@@ -647,51 +642,36 @@ body {
     }
   });
 
-  // ── Timezone selector ───────────────────────────────────────────────────────
-  function resizeTzSelect() {
-    const sel = $('tz-select'); if (!sel) return;
-    const sizer = $('tz-sizer');
-    sizer.textContent = sel.options[sel.selectedIndex]?.text || '';
-    sel.style.width = sizer.offsetWidth + 'px';
-  }
-  function populateTzSelect() {
-    const sel = $('tz-select'); if (!sel) return;
-    const zones = Intl.supportedValuesOf ? Intl.supportedValuesOf('timeZone') : [TZ];
-    const groups = {};
-    zones.forEach(tz => { const region = tz.includes('/') ? tz.split('/')[0] : 'Other'; (groups[region] = groups[region] || []).push(tz); });
-    Object.keys(groups).sort().forEach(region => {
-      const og = document.createElement('optgroup'); og.label = region;
-      groups[region].forEach(tz => {
-        const opt = document.createElement('option');
-        opt.value = tz; opt.textContent = tz.replace(/_/g, ' ');
-        if (tz === TZ) opt.selected = true;
-        og.appendChild(opt);
-      });
-      sel.appendChild(og);
+
+  // ── Timezone picker (searchable; tz-picker.js) ────────────────────────────
+  // #tz-select stays as a hidden field holding the zone, so every reader of it (the
+  // assistant, older code paths) keeps working.
+  function mountTz(onChange) {
+    const field = $('tz-select'); const host = $('tz-picker');
+    if (!field || !host) return;
+    TZ = BookingLogic.canonicalTz(TZ);
+    field.value = TZ;
+    mountTzPicker(host, {
+      value: TZ,
+      labels: { change: t('change_timezone'), search: t('search_timezone'), empty: t('no_timezone_match'), aria: t('timezone_aria') },
+      onChange: z => { field.value = z; TZ = z; onChange(); }
     });
-    resizeTzSelect();
   }
-  const tzSel = $('tz-select');
-  if (tzSel) {
-    tzSel.addEventListener('change', async e => {
-      TZ = e.target.value;
-      resizeTzSelect();
-      $('current-time').textContent = fmtDatetime(CURRENT_ISO);
-      if (pickedSlot) {
-        $('prev-time').textContent = fmtDatetime(CURRENT_ISO);
-        $('new-time').textContent = fmtDate(pickedDate) + ' · ' + fmtTime(pickedSlot.start);
+  mountTz(async () => {
+    $('current-time').textContent = fmtDatetime(CURRENT_ISO);
+    if (pickedSlot) {
+      $('prev-time').textContent = fmtDatetime(CURRENT_ISO);
+      $('new-time').textContent = fmtDate(pickedDate) + ' · ' + fmtTime(pickedSlot.start);
+    }
+    // If the picker is open, rebuild the day cache for the new tz, then re-render.
+    if (!$('reschedule-view').classList.contains('hidden')) {
+      await loadMonthAvailability(navYear, navMonth);
+      if (pickedDate) {
+        const ds = toDateStr(pickedDate.getFullYear(), pickedDate.getMonth(), pickedDate.getDate());
+        pickDate(ds, pickedDate.getFullYear(), pickedDate.getMonth(), pickedDate.getDate());
       }
-      // If the picker is open, rebuild the day cache for the new tz, then re-render.
-      if (!$('reschedule-view').classList.contains('hidden')) {
-        await loadMonthAvailability(navYear, navMonth);
-        if (pickedDate) {
-          const ds = toDateStr(pickedDate.getFullYear(), pickedDate.getMonth(), pickedDate.getDate());
-          pickDate(ds, pickedDate.getFullYear(), pickedDate.getMonth(), pickedDate.getDate());
-        }
-      }
-    });
-    populateTzSelect();
-  }
+    }
+  });
 
 }());
 </script>

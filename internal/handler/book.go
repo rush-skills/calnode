@@ -25,7 +25,15 @@ var bookTmplSrc string
 // book + manage pages and prepended to embed.js so all three booking surfaces share one tested copy.
 //
 //go:embed assets/booking-logic.js
-var bookingLogicJS string
+var bookingLogicSrc string
+
+// tzPickerSrc is the searchable timezone picker (DOM) for book.html and manage.html. It is
+// appended to the shared module so both pages get it through the existing inlining.
+//
+//go:embed assets/tz-picker.js
+var tzPickerSrc string
+
+var bookingLogicJS = bookingLogicSrc + "\n" + tzPickerSrc
 
 // Shared chrome partials (consent/tracking/footer) are parsed first so book.html can
 // reference them via {{template "trackingHead" .}} etc. supportedLocales is registered

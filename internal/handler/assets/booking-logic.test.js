@@ -106,3 +106,21 @@ test('fmt leaves a string with no verbs untouched', () => {
   assert.equal(B.fmt('No available times.', ['unused']), 'No available times.');
   assert.equal(B.fmt('Inga lediga tider.'), 'Inga lediga tider.');
 });
+
+test('tzMatches finds zones by old name, city, offset and abbreviation', () => {
+  const raw = ['Asia/Calcutta', 'America/New_York', 'America/Los_Angeles', 'Europe/Berlin', 'Asia/Dubai', 'Europe/Istanbul'];
+  const list = B.tzList(raw, 'Asia/Kolkata', new Date('2026-10-06T12:00:00Z'));
+  const first = q => (B.tzMatches(list, q)[0] || {}).id;
+  assert.equal(first('calcutta'), 'Asia/Kolkata');
+  assert.equal(first('kolkata'), 'Asia/Kolkata');
+  assert.equal(first('new york'), 'America/New_York');
+  assert.equal(first('+5:30'), 'Asia/Kolkata');
+  assert.equal(first('GMT+5:30'), 'Asia/Kolkata');
+  assert.equal(first('ist'), 'Asia/Kolkata');
+  assert.equal(first('pst'), 'America/Los_Angeles');
+  assert.equal(first('cest'), 'Europe/Berlin');
+  assert.equal(B.tzMatches(list, 'nowhere-zone').length, 0);
+  // Old and current names collapse to one entry, plus UTC is always present.
+  assert.equal(list.filter(z => z.id === 'Asia/Kolkata').length, 1);
+  assert.ok(list.some(z => z.id === 'UTC'));
+});

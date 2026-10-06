@@ -47,14 +47,7 @@ body {
 /* .legal-footer (links + Cookie-settings button + language switcher) is styled in
    booking.css so the book, manage and directory surfaces share one rule. */
 
-/* #tz-sizer is page-specific (the timezone <select> auto-sizer). */
-#tz-sizer {
-  position: absolute;
-  visibility: hidden;
-  white-space: nowrap;
-  font-size: .6875rem;
-  font-family: inherit;
-}
+
 
 /* Mobile back-to-calendar button (step-flow); hidden on desktop. */
 .cal-back { display: none; }
@@ -158,13 +151,10 @@ body {
   <!-- Calendar column -->
   <section class="cal-col" aria-label="{{call .T "date_picker_aria"}}">
     {{template "calendarGrid" .}}
-    <p class="tz-label">
-      <span class="tz-wrapper">
-        <select id="tz-select" aria-label="{{call .T "timezone_aria"}}"></select>
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-      </span>
-      <span id="tz-sizer" aria-hidden="true"></span>
-    </p>
+    <div class="tz-label">
+      <input type="hidden" id="tz-select">
+      <div class="tzp" id="tz-picker"></div>
+    </div>
   </section>
 
   <!-- Right column -->
@@ -801,49 +791,31 @@ body {
     }
   });
 
-  // ── Timezone selector ─────────────────────────────────────────────────────
-  function resizeTzSelect() {
-    const sel = $('tz-select');
-    const sizer = $('tz-sizer');
-    sizer.textContent = sel.options[sel.selectedIndex]?.text || '';
-    sel.style.width = sizer.offsetWidth + 'px';
-  }
 
-  function populateTzSelect() {
-    const sel = $('tz-select');
-    const zones = Intl.supportedValuesOf ? Intl.supportedValuesOf('timeZone') : [TZ];
-    const groups = {};
-    zones.forEach(tz => {
-      const region = tz.includes('/') ? tz.split('/')[0] : 'Other';
-      (groups[region] = groups[region] || []).push(tz);
+  // ── Timezone picker (searchable; tz-picker.js) ────────────────────────────
+  // #tz-select stays as a hidden field holding the zone, so every reader of it (the
+  // assistant, older code paths) keeps working.
+  function mountTz(onChange) {
+    const field = $('tz-select'); const host = $('tz-picker');
+    if (!field || !host) return;
+    TZ = BookingLogic.canonicalTz(TZ);
+    field.value = TZ;
+    mountTzPicker(host, {
+      value: TZ,
+      labels: { change: t('change_timezone'), search: t('search_timezone'), empty: t('no_timezone_match'), aria: t('timezone_aria') },
+      onChange: z => { field.value = z; TZ = z; onChange(); }
     });
-    Object.keys(groups).sort().forEach(region => {
-      const og = document.createElement('optgroup');
-      og.label = region;
-      groups[region].forEach(tz => {
-        const opt = document.createElement('option');
-        opt.value = tz;
-        opt.textContent = tz.replace(/_/g, ' ');
-        if (tz === TZ) opt.selected = true;
-        og.appendChild(opt);
-      });
-      sel.appendChild(og);
-    });
-    resizeTzSelect();
   }
-
-  $('tz-select').addEventListener('change', async e => {
-    TZ = e.target.value;
-    resizeTzSelect();
+  async function onTzChange() {
     await loadMonthAvailability(navYear, navMonth); // rebuild the day cache for the new tz
     if (pickedDate) {
       const ds = toDateStr(pickedDate.getFullYear(), pickedDate.getMonth(), pickedDate.getDate());
       await pickDate(ds, pickedDate.getFullYear(), pickedDate.getMonth(), pickedDate.getDate());
     }
-  });
+  }
 
   // ── Init ──────────────────────────────────────────────────────────────────
-  populateTzSelect();
+  mountTz(onTzChange);
   loadMonthAvailability(navYear, navMonth);
 
 }());

@@ -129,6 +129,104 @@
     });
   }
 
+
+  // ── Timezone search (book.html / manage.html picker) ───────────────────────────────────
+  // The same search the embed widget uses (embed.js carries its own copy — keep them in step):
+  // zone name or city, an older name (Calcutta → Kolkata), the English name ("india standard
+  // time"), the offset (+5:30, GMT+5:30, UTC+5:30) or a common abbreviation (IST, PST, CEST).
+  var TZ_RENAMED = {
+    'Asia/Calcutta': 'Asia/Kolkata', 'Asia/Saigon': 'Asia/Ho_Chi_Minh', 'Asia/Katmandu': 'Asia/Kathmandu',
+    'Asia/Rangoon': 'Asia/Yangon', 'Asia/Ulan_Bator': 'Asia/Ulaanbaatar', 'Asia/Dacca': 'Asia/Dhaka',
+    'Asia/Thimbu': 'Asia/Thimphu', 'Asia/Ujung_Pandang': 'Asia/Makassar', 'Asia/Macao': 'Asia/Macau',
+    'Europe/Kiev': 'Europe/Kyiv', 'Europe/Uzhgorod': 'Europe/Kyiv', 'Europe/Zaporozhye': 'Europe/Kyiv',
+    'America/Godthab': 'America/Nuuk', 'Atlantic/Faeroe': 'Atlantic/Faroe',
+    'Pacific/Truk': 'Pacific/Chuuk', 'Pacific/Ponape': 'Pacific/Pohnpei', 'Pacific/Enderbury': 'Pacific/Kanton',
+    'America/Buenos_Aires': 'America/Argentina/Buenos_Aires', 'America/Catamarca': 'America/Argentina/Catamarca',
+    'America/Cordoba': 'America/Argentina/Cordoba', 'America/Jujuy': 'America/Argentina/Jujuy',
+    'America/Mendoza': 'America/Argentina/Mendoza', 'America/Indianapolis': 'America/Indiana/Indianapolis',
+    'America/Louisville': 'America/Kentucky/Louisville', 'America/Coral_Harbour': 'America/Atikokan'
+  };
+  var TZ_ABBR = {
+    ist: ['Asia/Kolkata'], pst: ['America/Los_Angeles'], pdt: ['America/Los_Angeles'], pt: ['America/Los_Angeles'],
+    mst: ['America/Denver', 'America/Phoenix'], mdt: ['America/Denver'], mt: ['America/Denver'],
+    cst: ['America/Chicago'], cdt: ['America/Chicago'], ct: ['America/Chicago'],
+    est: ['America/New_York'], edt: ['America/New_York'], et: ['America/New_York'],
+    akst: ['America/Anchorage'], hst: ['Pacific/Honolulu'], brt: ['America/Sao_Paulo'], art: ['America/Argentina/Buenos_Aires'],
+    gmt: ['Europe/London', 'UTC'], bst: ['Europe/London'], wet: ['Europe/Lisbon'],
+    cet: ['Europe/Berlin', 'Europe/Paris'], cest: ['Europe/Berlin', 'Europe/Paris'],
+    eet: ['Europe/Athens', 'Africa/Cairo'], eest: ['Europe/Athens'], msk: ['Europe/Moscow'],
+    gst: ['Asia/Dubai'], pkt: ['Asia/Karachi'], npt: ['Asia/Kathmandu'], ict: ['Asia/Bangkok'], wib: ['Asia/Jakarta'],
+    sgt: ['Asia/Singapore'], hkt: ['Asia/Hong_Kong'], pht: ['Asia/Manila'], kst: ['Asia/Seoul'], jst: ['Asia/Tokyo'],
+    awst: ['Australia/Perth'], acst: ['Australia/Adelaide'], aest: ['Australia/Sydney'], aedt: ['Australia/Sydney'],
+    nzst: ['Pacific/Auckland'], nzdt: ['Pacific/Auckland'],
+    wat: ['Africa/Lagos'], cat: ['Africa/Maputo'], eat: ['Africa/Nairobi'], sast: ['Africa/Johannesburg']
+  };
+  function validTz(zone) {
+    if (!zone) return false;
+    try { new Intl.DateTimeFormat('en-US', { timeZone: zone }); return true; } catch (e) { return false; }
+  }
+  // canonicalTz: the current name for a renamed zone, when this runtime accepts it.
+  function canonicalTz(zone) {
+    var renamed = TZ_RENAMED[zone];
+    return renamed && validTz(renamed) ? renamed : zone;
+  }
+  function tzPart(zone, style, at) {
+    try {
+      var parts = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: style }).formatToParts(at);
+      for (var i = 0; i < parts.length; i++) if (parts[i].type === 'timeZoneName') return parts[i].value;
+    } catch (e) { /* style unsupported */ }
+    return '';
+  }
+  function offsetMinutes(gmt) {
+    var m = /([+-])(\d{1,2})(?::?(\d{2}))?/.exec(gmt || '');
+    return m ? (m[1] === '-' ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3] || 0)) : 0;
+  }
+  function initials(name) {
+    return /\s/.test(name || '') ? name.split(/\s+/).map(function (w) { return w.charAt(0); }).join('') : '';
+  }
+  // tzList: every zone in `raw` (plus UTC and `extra`), canonicalised, de-duplicated, with
+  // its current GMT offset and search keys, sorted by offset then name.
+  function tzList(raw, extra, now) {
+    now = now || new Date();
+    var all = (raw || []).concat(['UTC'], extra ? [extra] : []), seen = {}, out = [];
+    all.forEach(function (listed) {
+      var id = canonicalTz(listed);
+      if (seen[id] || !validTz(id)) return;
+      seen[id] = true;
+      var gmt = tzPart(id, 'shortOffset', now) || 'GMT';
+      var mins = offsetMinutes(gmt);
+      var abs = Math.abs(mins), hh = Math.floor(abs / 60), mm = abs % 60, sign = mins < 0 ? '-' : '+';
+      var long = tzPart(id, 'long', now), generic = tzPart(id, 'longGeneric', now), short = tzPart(id, 'short', now);
+      var keys = [
+        id, id.replace(/[\/_]/g, ' '), listed, listed.replace(/[\/_]/g, ' '),
+        long, generic, short, initials(long), initials(generic),
+        gmt, gmt.replace('GMT', 'UTC'), sign + pad2(hh) + ':' + pad2(mm), sign + hh + ':' + pad2(mm)
+      ].join(' | ').toLowerCase();
+      out.push({ id: id, city: id.split('/').pop().replace(/_/g, ' ').toLowerCase(), gmt: gmt, mins: mins, keys: keys });
+    });
+    out.sort(function (a, b) { return a.mins - b.mins || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0); });
+    return out;
+  }
+  // tzMatches: zones holding every word of the query, best first (pinned abbreviation, city
+  // prefix, exact name/abbreviation, ID prefix, word prefix, substring), offset order within.
+  function tzMatches(list, query) {
+    var q = String(query || '').trim().toLowerCase();
+    if (!q) return list;
+    var words = q.split(/\s+/), pinned = TZ_ABBR[q] || [], hits = [];
+    list.forEach(function (z) {
+      var pin = pinned.indexOf(z.id);
+      if (pin === -1) for (var i = 0; i < words.length; i++) if (z.keys.indexOf(words[i]) === -1) return;
+      var rank = pin !== -1 ? pin - 100
+        : z.city.indexOf(q) === 0 ? 0
+        : (' | ' + z.keys + ' | ').indexOf(' | ' + q + ' | ') !== -1 ? 1
+        : z.id.toLowerCase().indexOf(q) === 0 ? 2
+        : /\W/.test(q) ? 4 : (' ' + z.keys.replace(/[^a-z0-9+:-]+/g, ' ')).indexOf(' ' + words[0]) !== -1 ? 3 : 4;
+      hits.push({ rank: rank, z: z });
+    });
+    hits.sort(function (a, b) { return a.rank - b.rank || a.z.mins - b.z.mins || (a.z.id < b.z.id ? -1 : 1); });
+    return hits.map(function (h) { return h.z; });
+  }
+
   // NOTE: there is deliberately no host-label helper here. Each surface builds its own
   // (hostsLabel in book.go for the server-rendered page, in book.html's script for the
   // post-slot-pick rewrite, and in embed.js), because the label needs the resolved locale's
@@ -151,6 +249,9 @@
     startOfMonth: startOfMonth,
     endOfMonth: endOfMonth,
     addMonths: addMonths,
-    daysInMonth: daysInMonth
+    daysInMonth: daysInMonth,
+    canonicalTz: canonicalTz,
+    tzList: tzList,
+    tzMatches: tzMatches
   };
 });

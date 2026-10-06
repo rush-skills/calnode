@@ -41,6 +41,11 @@ exact tag (`ghcr.io/calnode/calnode:0.1.0`) if you need stability between upgrad
   archiving them, so admins cannot demote each other.
 
 ### Added
+- **The booking and manage pages have a searchable timezone picker.** The native dropdown of
+  ~420 zones is replaced by a button that opens a search box and a list with each zone's GMT
+  offset, opened on the current zone. Search matches a city, an old name (Calcutta finds
+  Kolkata), the offset (+5:30) or a common abbreviation (IST, PST), shared with the widget's
+  search in booking-logic.js and covered by its node tests.
 - **The embed widget has a timezone switcher.** The "Times shown in" zone is now a button
   that opens a search over every IANA zone the browser knows: by city, zone name, English
   name, common abbreviation (IST, PST, CEST) or offset (+5:30). The booking page and the
