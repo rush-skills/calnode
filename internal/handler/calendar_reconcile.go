@@ -215,6 +215,13 @@ func (h *Handler) reconcileCreations(ctx context.Context, gc *calendar.Service) 
 		}
 	}
 	rows.Close() // #nosec G104 -- rows already fully consumed above; nothing actionable on close error
+	if len(items) == 0 {
+		return
+	}
+
+	// A healed event carries the same default participants the inline create would have.
+	// Loaded once per sweep; a failed load logs and heals without them.
+	defaults := h.loadDefaultAttendees(ctx, "reconcile")
 
 	for _, m := range items {
 		has, err := gc.HasDestination(ctx, m.userID)
@@ -240,6 +247,11 @@ func (h *Handler) reconcileCreations(ctx context.Context, gc *calendar.Service) 
 				autoGenMeet = providerMintsPlatform(m.locationType, provider)
 			}
 		}
+		// Same exclusions as the inline create: the booker and every host of the booking.
+		var extra []string
+		if len(defaults) > 0 {
+			extra = extraAttendeesFor(defaults, append([]string{m.orgEmail}, h.bookingHostEmails(ctx, m.bookingID)...)...)
+		}
 		loc := i18n.Get(m.orgLocale) // nil (→ English) if empty/unrecognized; i18n.Locale.T handles nil safely
 		answers, aerr := h.loadAnswerLines(ctx, m.bookingID)
 		if aerr != nil {
@@ -256,6 +268,7 @@ func (h *Handler) reconcileCreations(ctx context.Context, gc *calendar.Service) 
 			OrganizerName:   m.orgName,
 			OrganizerEmail:  m.orgEmail,
 			AddMeet:         autoGenMeet,
+			ExtraAttendees:  extra,
 		})
 		if err != nil {
 			h.logger.Error("reconcile: create missing event", "error", err, "booking_id", m.bookingID, "host", m.userID)

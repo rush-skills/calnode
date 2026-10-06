@@ -28,6 +28,14 @@ type CreateEventParams struct {
 	OrganizerName   string
 	OrganizerEmail  string
 	AddMeet         bool
+	// ExtraAttendees are additional email addresses to invite on the host's calendar event,
+	// beyond the organizer (the booker). They come from the workspace's default participants
+	// setting (PATCH /v1/settings/participants) and exist so a notetaker bot or a shared
+	// mailbox receives the provider's native invite. Every provider adds them as required
+	// attendees of the event it writes; none of them is ever emailed by Calnode itself, and
+	// the booker's .ics never lists them. The caller is responsible for dedupe against the
+	// organizer and host addresses - providers append what they are given.
+	ExtraAttendees []string
 }
 
 // CalendarInfo is one calendar the provider exposes for a connected account.

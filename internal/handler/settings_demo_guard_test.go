@@ -30,6 +30,7 @@ func TestSettingsPatch_demoMode_returns503(t *testing.T) {
 		{"PatchStorageSettings", "/v1/settings/storage", func(h *handler.Handler) http.HandlerFunc { return h.PatchStorageSettings }},
 		{"PatchStripeSettings", "/v1/settings/stripe", func(h *handler.Handler) http.HandlerFunc { return h.PatchStripeSettings }},
 		{"PatchTrackingSettings", "/v1/settings/tracking", func(h *handler.Handler) http.HandlerFunc { return h.PatchTrackingSettings }},
+		{"PatchParticipantSettings", "/v1/settings/participants", func(h *handler.Handler) http.HandlerFunc { return h.PatchParticipantSettings }},
 	}
 
 	for _, c := range cases {

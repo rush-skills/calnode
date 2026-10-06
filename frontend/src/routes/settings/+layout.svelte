@@ -18,6 +18,7 @@
 		{ section: 'Workspace', href: `${base}/settings/payments`, label: 'Payments', adminOnly: true },
 		{ section: 'Workspace', href: `${base}/settings/ai`, label: 'AI', adminOnly: true },
 		{ section: 'Workspace', href: `${base}/settings/tracking`, label: 'Tracking', adminOnly: true },
+		{ section: 'Workspace', href: `${base}/settings/participants`, label: 'Default participants', adminOnly: true },
 	];
 
 	const visibleNavItems = $derived(navItems.filter((item) => !item.adminOnly || $currentUser?.is_admin));
