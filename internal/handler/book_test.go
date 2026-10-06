@@ -170,6 +170,9 @@ func TestBookPage_locationLabels(t *testing.T) {
 			if createRec.Code != http.StatusCreated {
 				t.Fatalf("create (%s): %d — %s", tc.locType, createRec.Code, createRec.Body.String())
 			}
+			// The server normalises the slug ("custom_video" → "custom-video"), so the
+			// page is fetched by the slug it stored, not the one that was sent.
+			slug = mustString(t, mustCreated(t, createRec, "create"), "slug", "create")
 
 			pageReq := httptest.NewRequest(http.MethodGet, "/book/"+slug, nil)
 			pageReq.SetPathValue("slug", slug)

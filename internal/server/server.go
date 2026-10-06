@@ -37,6 +37,13 @@ import (
 // MCP server over stdio. The returned drain func blocks until the background worker
 // has finished its current poll cycle.
 func BuildHandler(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logger) (*handler.Handler, func()) {
+	// Migrations have run by the time we are called (cmd/calnode/main.go). Data sweeps
+	// that migrations cannot express go here, before any request is served: a slug
+	// stored before the create path normalised it has a /book/ link that never resolved.
+	if err := handler.NormalizeEventTypeSlugs(ctx, db, logger); err != nil {
+		logger.Error("event type slug sweep failed", "error", err)
+	}
+
 	h := handler.New(db, logger)
 	h.SetBaseURL(cfg.BaseURL)
 	h.SetPublicBaseURL(cfg.PublicBaseURL)

@@ -58,14 +58,15 @@ func TestEventTypes_assignedHostSeesReadOnly(t *testing.T) {
 		}
 	}
 
-	// u2 cannot edit it — owner-only mutations stay closed (404).
+	// u2 cannot edit it — a non-admin member gets 403 on writes (it exists and they
+	// can see it, so 404 would be a lie).
 	{
 		req := authReq(http.MethodPatch, "/v1/event-types/"+slug, `{"name":"Hijacked"}`, memberKey)
 		req.SetPathValue("slug", slug)
 		rec := httptest.NewRecorder()
 		h.RequireAuth(h.PatchEventType)(rec, req)
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("u2 patch: %d; want 404 (read-only host cannot edit)", rec.Code)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("u2 patch: %d; want 403 (read-only host cannot edit)", rec.Code)
 		}
 	}
 }
