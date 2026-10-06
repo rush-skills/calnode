@@ -73,6 +73,7 @@ h1 { font-size: 1.25rem; font-weight: 700; line-height: 1.3; }
 <main class="card" id="card" aria-live="polite">
   <p class="empty" id="loading">Checking who’s live…</p>
   <p class="err hidden" id="error">Couldn’t reach the server. Retrying…</p>
+  <p class="host hidden" id="stale">Live status may be out of date — we couldn’t reach the server. Retrying…</p>
   <div id="live" class="hidden"></div>
   <div id="offline" class="hidden">
     <span class="badge off">Offline</span>
@@ -111,9 +112,15 @@ h1 { font-size: 1.25rem; font-weight: 700; line-height: 1.3; }
   };
   var show = function (id, on) { $(id).classList.toggle('hidden', !on); };
 
-  function render(data) {
+  // After STALE_AFTER consecutive failed polls the last good status stays on screen, but
+  // the Join button is dropped (the session may have ended) and a notice says the status
+  // may be out of date. The next successful poll renders normally again.
+  var STALE_AFTER = 3, failures = 0, last = null;
+
+  function render(data, stale) {
     show('loading', false);
     show('error', false);
+    show('stale', !!stale);
     var live = data.live || [];
     var liveBox = $('live');
     liveBox.textContent = '';
@@ -124,7 +131,7 @@ h1 { font-size: 1.25rem; font-weight: 700; line-height: 1.3; }
         var h = el('h1', null, s.title); h.style.marginTop = '.75rem'; box.appendChild(h);
         if (s.host_name) box.appendChild(el('p', 'host', 'Hosted by ' + s.host_name + ' · ' + kindLabel(s.kind)));
         if (s.description) box.appendChild(el('p', 'desc', s.description));
-        if (s.join_url) {
+        if (s.join_url && !stale) {
           var a = el('a', 'join', 'Join now');
           a.href = s.join_url; a.target = '_blank'; a.rel = 'noopener noreferrer';
           a.style.marginTop = '.5rem';
@@ -159,8 +166,12 @@ h1 { font-size: 1.25rem; font-weight: 700; line-height: 1.3; }
     var url = '/v1/live/status' + (KIND ? '?kind=' + encodeURIComponent(KIND) : '');
     fetch(url, { cache: 'no-store' })
       .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(render)
-      .catch(function () { show('loading', false); show('error', true); });
+      .then(function (data) { failures = 0; last = data; render(data); })
+      .catch(function () {
+        if (!last) { show('loading', false); show('error', true); return; }
+        failures++;
+        if (failures === STALE_AFTER) render(last, true);
+      });
   }
   poll();
   setInterval(poll, POLL_MS);

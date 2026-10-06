@@ -41,6 +41,9 @@
     '.session + .session { border-top: 1px solid #e5e7eb; padding-top: 8px; }'
   ].join('\n');
 
+  // Consecutive failed polls before the widget stops offering Join and says so.
+  var STALE_AFTER = 3;
+
   function el(tag, cls, text) {
     var e = document.createElement(tag);
     if (cls) e.className = cls;
@@ -99,16 +102,22 @@
       var url = this._base + '/v1/live/status' + (this._kind ? '?kind=' + encodeURIComponent(this._kind) : '');
       fetch(url, { cache: 'no-store', mode: 'cors' })
         .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-        .then(function (data) { that.render(data); })
+        .then(function (data) { that._failures = 0; that._last = data; that.render(data); })
         .catch(function () {
           if (!that._rendered) {
             that._box.textContent = '';
             that._box.appendChild(el('span', 'muted', 'Live status unavailable.'));
+            return;
           }
+          // After STALE_AFTER consecutive failed polls the last good status is still shown,
+          // but without the Join button (the session may have ended) and with a notice.
+          // The next successful poll renders normally again.
+          that._failures = (that._failures || 0) + 1;
+          if (that._failures === STALE_AFTER && that._last) that.render(that._last, true);
         });
     }
 
-    render(data) {
+    render(data, stale) {
       var box = this._box;
       box.textContent = '';
       var live = data.live || [];
@@ -118,7 +127,7 @@
           wrap.appendChild(el('span', 'badge live', 'Live now'));
           wrap.appendChild(el('div', 'title', s.title));
           if (s.host_name) wrap.appendChild(el('div', 'muted', 'Hosted by ' + s.host_name));
-          if (s.join_url) {
+          if (s.join_url && !stale) {
             var a = el('a', 'join', 'Join now');
             a.href = s.join_url; a.target = '_blank'; a.rel = 'noopener noreferrer';
             wrap.appendChild(a);
@@ -135,6 +144,7 @@
           box.appendChild(el('div', 'muted', 'No session scheduled yet.'));
         }
       }
+      if (stale) box.appendChild(el('div', 'muted', 'Live status may be out of date — we could not reach the server.'));
       this._rendered = true;
       this.dispatchEvent(new CustomEvent('calnode-live:update', { detail: data }));
     }

@@ -9,11 +9,13 @@
 		value = $bindable(''),
 		placeholder = 'Pick a date',
 		minToday = false,
+		disabled = false,
 		class: className = '',
 	}: {
 		value?: string;
 		placeholder?: string;
 		minToday?: boolean;
+		disabled?: boolean;
 		class?: string;
 	} = $props();
 
@@ -44,6 +46,7 @@
 
 <Popover.Root bind:open>
 	<Popover.Trigger
+		{disabled}
 		class={cn(
 			buttonVariants({ variant: 'outline' }),
 			'w-[200px] justify-start text-left font-normal',

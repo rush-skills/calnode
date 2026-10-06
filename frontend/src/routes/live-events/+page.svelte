@@ -138,6 +138,28 @@
 		const d = new Date(`${date}T${time || '00:00'}:00`);
 		return isNaN(d.getTime()) ? null : d.toISOString();
 	}
+	// The viewer's LOCAL calendar day as YYYY-MM-DD. toISOString() would give the UTC day,
+	// which after ~19:00 in UTC-5 (or before 05:30 in Kolkata) is a different date.
+	function localYMD(d = new Date()): string {
+		const p = (n: number) => String(n).padStart(2, '0');
+		return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+	}
+	// RFC3339 → the local date and HH:MM the form inputs want (the inverse of toISO).
+	function fromISO(iso: string | null): { date: string; time: string } {
+		if (!iso) return { date: '', time: '' };
+		const d = new Date(iso);
+		if (isNaN(d.getTime())) return { date: '', time: '' };
+		const p = (n: number) => String(n).padStart(2, '0');
+		return { date: localYMD(d), time: `${p(d.getHours())}:${p(d.getMinutes())}` };
+	}
+	// A typed time with no date to attach it to would otherwise be dropped on the floor:
+	// this turns it into an inline error instead. Returns the message, or '' when fine.
+	function scheduleProblem(f: { start_date: string; start_time: string; end_date: string; end_time: string }): string {
+		if (f.start_time && !f.start_date) return 'Pick a start date to go with the start time.';
+		if (f.end_time && !f.end_date && !f.start_date) return 'Pick a date to go with the end time.';
+		if (f.end_date && !f.end_time) return 'Enter an end time to go with the end date.';
+		return '';
+	}
 
 	function fmtWhen(iso: string | null): string {
 		if (!iso) return '';
@@ -182,6 +204,8 @@
 			auto_end: form.auto_end
 		};
 		if (!form.start_now) {
+			createError = scheduleProblem(form);
+			if (createError) return;
 			const start = toISO(form.start_date, form.start_time);
 			const end = toISO(form.end_date || form.start_date, form.end_time);
 			if (form.start_date && !start) {
@@ -191,8 +215,7 @@
 			if (start) body.scheduled_start_at = start;
 			if (form.end_time && end) body.scheduled_end_at = end;
 		} else if (form.end_time) {
-			const today = new Date().toISOString().slice(0, 10);
-			const end = toISO(form.end_date || today, form.end_time);
+			const end = toISO(form.end_date || localYMD(), form.end_time);
 			if (!end || new Date(end) <= new Date()) {
 				createError = 'The end time must be later than now.';
 				return;
@@ -212,6 +235,94 @@
 			createError = e.message || 'Could not create the live event';
 		} finally {
 			creating = false;
+		}
+	}
+
+	// ---- Edit dialog (scheduled and live rows; schedule and host are fixed once live) ----
+	let editOpen = $state(false);
+	let saving = $state(false);
+	let editError = $state('');
+	let editTarget = $state<LiveEvent | null>(null);
+	let editForm = $state({
+		title: '',
+		description: '',
+		kind: '',
+		join_url: '',
+		start_date: '',
+		start_time: '',
+		end_date: '',
+		end_time: '',
+		host_user_id: '',
+		auto_start: true,
+		auto_end: true
+	});
+	const editIsLive = $derived(editTarget?.status === 'live');
+
+	function openEdit(e: LiveEvent) {
+		const s = fromISO(e.scheduled_start_at), en = fromISO(e.scheduled_end_at);
+		editTarget = e;
+		editForm = {
+			title: e.title,
+			description: e.description,
+			kind: e.kind,
+			join_url: e.join_url,
+			start_date: s.date,
+			start_time: s.time,
+			end_date: en.date,
+			end_time: en.time,
+			host_user_id: e.host_user_id,
+			auto_start: e.auto_start,
+			auto_end: e.auto_end
+		};
+		editError = '';
+		editOpen = true;
+	}
+
+	async function saveEdit() {
+		if (!editTarget) return;
+		editError = '';
+		if (!editForm.title.trim()) {
+			editError = 'Title is required.';
+			return;
+		}
+		const body: LiveEventInput = {
+			title: editForm.title.trim(),
+			description: editForm.description.trim(),
+			kind: normKind(editForm.kind) || 'office_hours',
+			join_url: editForm.join_url.trim(),
+			auto_start: editForm.auto_start,
+			auto_end: editForm.auto_end
+		};
+		if (editIsLive && !body.join_url) {
+			editError = 'A live session needs a join link; end it first to remove the link.';
+			return;
+		}
+		if (!editIsLive) {
+			editError = scheduleProblem(editForm);
+			if (editError) return;
+			const start = toISO(editForm.start_date, editForm.start_time);
+			const end = toISO(editForm.end_date || editForm.start_date, editForm.end_time);
+			if (editForm.start_date && !start) {
+				editError = 'Start time is not valid.';
+				return;
+			}
+			// "" clears a stored time; the server treats an omitted field as "keep".
+			body.scheduled_start_at = start ?? '';
+			body.scheduled_end_at = editForm.end_time && end ? end : '';
+			// "" would mean "no change" server-side, so only a real reassignment is sent.
+			if (editForm.host_user_id && editForm.host_user_id !== editTarget.host_user_id) {
+				body.host_user_id = editForm.host_user_id;
+			}
+		}
+		saving = true;
+		try {
+			replace(await api.patch<LiveEvent>(`/v1/live-events/${editTarget.id}`, body));
+			editOpen = false;
+			toast.success('Live event updated.');
+		} catch (e: any) {
+			editError = e.message || 'Could not save the live event';
+		} finally {
+			saving = false;
 		}
 	}
 
@@ -328,6 +439,9 @@
 					<datalist id="le-kind-options">
 						{#each knownKinds as k}<option value={k}>{kindLabel(k)}</option>{/each}
 					</datalist>
+					{#if form.kind.trim() && normKind(form.kind) !== form.kind.trim()}
+						<p class="text-xs text-muted-foreground">Will be saved as <code class="font-mono">{normKind(form.kind) || 'office_hours'}</code>.</p>
+					{/if}
 					<p class="text-xs text-muted-foreground">Type a new name to create a separate kind (e.g. demo). Each kind can be shown on its own page or widget.</p>
 				</div>
 				{#if $currentUser?.is_admin && members.length > 0}
@@ -400,6 +514,108 @@
 			<Button onclick={create} disabled={creating}>
 				{creating ? 'Saving…' : form.start_now ? 'Go live' : 'Schedule'}
 			</Button>
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>
+
+<Dialog.Root bind:open={editOpen}>
+	<Dialog.Content class="max-w-lg">
+		<Dialog.Header>
+			<Dialog.Title>Edit live event</Dialog.Title>
+			<Dialog.Description>
+				{#if editIsLive}
+					The session is live: its schedule and host are fixed until it ends. Everything else can change.
+				{:else}
+					Changing the schedule or host moves the calendar event; a new host gets a fresh join link.
+				{/if}
+			</Dialog.Description>
+		</Dialog.Header>
+
+		{#if editError}
+			<p class="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{editError}</p>
+		{/if}
+
+		<div class="space-y-4">
+			<div class="space-y-1.5">
+				<Label for="le-edit-title">Title</Label>
+				<Input id="le-edit-title" bind:value={editForm.title} maxlength={200} />
+			</div>
+			<div class="space-y-1.5">
+				<Label for="le-edit-desc">Description <span class="font-normal text-muted-foreground">(optional)</span></Label>
+				<Textarea id="le-edit-desc" rows={3} bind:value={editForm.description} />
+			</div>
+			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+				<div class="space-y-1.5">
+					<Label for="le-edit-kind">Kind</Label>
+					<Input id="le-edit-kind" list="le-edit-kind-options" bind:value={editForm.kind} placeholder="office_hours" />
+					<datalist id="le-edit-kind-options">
+						{#each knownKinds as k}<option value={k}>{kindLabel(k)}</option>{/each}
+					</datalist>
+					{#if editForm.kind.trim() && normKind(editForm.kind) !== editForm.kind.trim()}
+						<p class="text-xs text-muted-foreground">Will be saved as <code class="font-mono">{normKind(editForm.kind) || 'office_hours'}</code>.</p>
+					{/if}
+				</div>
+				{#if $currentUser?.is_admin && members.length > 0}
+					<div class="space-y-1.5">
+						<Label for="le-edit-host">Host</Label>
+						<Select.Root type="single" value={editForm.host_user_id} disabled={editIsLive} onValueChange={(v) => (editForm.host_user_id = v ?? '')}>
+							<Select.Trigger id="le-edit-host" class="w-full">
+								{members.find((m) => m.id === editForm.host_user_id)?.name ?? editTarget?.host_name ?? '—'}
+							</Select.Trigger>
+							<Select.Content>
+								{#each members as m (m.id)}
+									<Select.Item value={m.id} label={m.name}>{m.name} · {m.email}</Select.Item>
+								{/each}
+							</Select.Content>
+						</Select.Root>
+						{#if editIsLive}<p class="text-xs text-muted-foreground">Fixed while live.</p>{/if}
+					</div>
+				{/if}
+			</div>
+
+			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+				<div class="space-y-1.5">
+					<Label for="le-edit-start-time">Starts</Label>
+					<div class="flex flex-wrap gap-2">
+						<DatePicker bind:value={editForm.start_date} placeholder="Date" minToday disabled={editIsLive} class="w-[150px]" />
+						<Input id="le-edit-start-time" type="time" bind:value={editForm.start_time} disabled={editIsLive} class="w-[120px]" />
+					</div>
+				</div>
+				<div class="space-y-1.5">
+					<Label for="le-edit-end-time">Ends <span class="font-normal text-muted-foreground">(optional)</span></Label>
+					<div class="flex flex-wrap gap-2">
+						<DatePicker bind:value={editForm.end_date} placeholder="Same day" minToday disabled={editIsLive} class="w-[150px]" />
+						<Input id="le-edit-end-time" type="time" bind:value={editForm.end_time} disabled={editIsLive} class="w-[120px]" />
+					</div>
+				</div>
+			</div>
+			<p class="text-xs text-muted-foreground">
+				{editIsLive ? 'The schedule is fixed while the session is live.' : 'Times are in your local timezone. Clear both to start it by hand.'}
+			</p>
+
+			<div class="space-y-1.5">
+				<Label for="le-edit-join">Join link {#if !editIsLive}<span class="font-normal text-muted-foreground">(optional override)</span>{/if}</Label>
+				<Input id="le-edit-join" type="url" bind:value={editForm.join_url} placeholder="https://…" />
+				{#if !editIsLive && !editForm.join_url.trim()}
+					<p class="text-xs text-muted-foreground">Left blank, a Meet/Teams link is minted from the host's calendar when the session starts.</p>
+				{/if}
+			</div>
+
+			<div class="flex flex-wrap gap-6">
+				<label class="flex items-center gap-2 text-sm">
+					<Switch bind:checked={editForm.auto_start} />
+					Go live automatically at the start time
+				</label>
+				<label class="flex items-center gap-2 text-sm">
+					<Switch bind:checked={editForm.auto_end} />
+					End automatically at the end time
+				</label>
+			</div>
+		</div>
+
+		<Dialog.Footer class="mt-2">
+			<Button variant="outline" onclick={() => (editOpen = false)} disabled={saving}>Cancel</Button>
+			<Button onclick={saveEdit} disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</Button>
 		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>
@@ -481,8 +697,11 @@
 											<span class="max-w-[180px] truncate text-xs text-muted-foreground">{e.join_url}</span>
 										</div>
 									</Tooltip.Provider>
-								{:else if e.status === 'scheduled'}
+								{:else if e.status === 'scheduled' && e.has_calendar_event}
 									<span class="text-xs text-muted-foreground">Minted at start</span>
+								{:else if e.status === 'scheduled'}
+									<!-- No calendar event means nothing will mint a link: say so instead of promising one. -->
+									<span class="text-xs text-muted-foreground">No link yet — edit to add one</span>
 								{:else}
 									<span class="text-xs text-muted-foreground">—</span>
 								{/if}
@@ -491,6 +710,12 @@
 								{#if canManage(e) && (e.status === 'scheduled' || e.status === 'live')}
 									<Tooltip.Provider>
 										<div class="flex items-center justify-end gap-1">
+											<Tooltip.Root>
+												<Tooltip.Trigger class={buttonVariants({ variant: 'ghost', size: 'icon' })} onclick={() => openEdit(e)}>
+													<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+												</Tooltip.Trigger>
+												<Tooltip.Content>Edit</Tooltip.Content>
+											</Tooltip.Root>
 											{#if e.status === 'scheduled'}
 												<Tooltip.Root>
 													<Tooltip.Trigger class={buttonVariants({ variant: 'ghost', size: 'icon' })} onclick={() => start(e)}>
