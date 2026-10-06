@@ -167,5 +167,7 @@
   "directory_empty": "Nada para reservar no momento.",
   "directory_members": "Membros da equipa",
   "directory_person_subtitle": "Marque tempo com %s",
-  "directory_team_subtitle": "Marque tempo com a equipa %s"
+  "directory_team_subtitle": "Marque tempo com a equipa %s",
+  "clear_selection": "Limpar seleção",
+  "choose_time_required": "Escolha um horário."
 }

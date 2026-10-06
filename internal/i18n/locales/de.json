@@ -167,5 +167,7 @@
   "directory_empty": "Derzeit ist nichts buchbar.",
   "directory_members": "Teammitglieder",
   "directory_person_subtitle": "Zeit mit %s buchen",
-  "directory_team_subtitle": "Zeit mit dem Team %s buchen"
+  "directory_team_subtitle": "Zeit mit dem Team %s buchen",
+  "clear_selection": "Auswahl löschen",
+  "choose_time_required": "Bitte wählen Sie eine Uhrzeit."
 }

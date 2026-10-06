@@ -13,6 +13,16 @@
  *   <script src="https://booking.example.com/embed.js" async></script>
  *   <calnode-booking slug="intro-call"></calnode-booking>        <!-- inline -->
  *   <button data-calnode-popup="intro-call">Book a call</button>  <!-- popup  -->
+ *
+ * Picker mode (inside the host site's own form; see docs/embed-in-form.md):
+ *   <form>
+ *     <input name="email">
+ *     <calnode-booking slug="intro-call" mode="picker" compact required name="meeting"></calnode-booking>
+ *   </form>
+ * Only the calendar + time slots render; picking a time selects it (does not book). The
+ * element is form-associated: it submits <name> (slot start, RFC3339 UTC), <name>_end and
+ * <name>_timezone, blocks submit when `required` and empty, and exposes .value,
+ * .selectedSlot, .reset(), .refresh() and .book({name, email, ...}).
  */
 (function () {
   'use strict';
@@ -74,6 +84,7 @@
   var SVG_BACK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>';
   var SVG_CHECK = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
   var SVG_X = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>';
+  var SVG_CLEAR = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>';
   var SVG_SPARK = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.8L18.7 9.7l-4.8 1.9L12 16.4l-1.9-4.8L5.3 9.7l4.8-1.9L12 3z"/></svg>';
   var SVG_CHEV2 = '<svg class="asst-link-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg>';
 
@@ -94,6 +105,9 @@
   // ([]) — see the matching fix/comment in book.html / internal-docs/i18n-plan.md.
   function timeLabel(iso, locale) { return new Intl.DateTimeFormat(locale || [], { timeZone: TZ, hour: 'numeric', minute: '2-digit' }).format(new Date(iso)); }
   function shortDay(iso, locale) { return new Intl.DateTimeFormat(locale || [], { timeZone: TZ, weekday: 'short', month: 'short', day: 'numeric' }).format(new Date(iso)); }
+  // utcISO: a slot's start/end (which /slots renders with the booker's offset) as
+  // RFC3339 UTC without fractional seconds, e.g. 2026-10-07T14:00:00Z: the form value.
+  function utcISO(iso) { return new Date(iso).toISOString().replace(/\.\d{3}Z$/, 'Z'); }
   function ymd(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
   function startOfMonth(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
   function endOfMonth(d) { return new Date(d.getFullYear(), d.getMonth() + 1, 0); }
@@ -164,7 +178,38 @@
     '.card.step-right .info{display:none;}' +
     '.loading{padding:48px 24px;color:#6b7280;font-size:.875rem;text-align:center;}' +
     '.infotext{display:block;}' +
-    '@media (max-width:560px){:host([data-modal]) .card{min-height:100dvh;border-radius:0;}}';
+    '@media (max-width:560px){:host([data-modal]) .card{min-height:100dvh;border-radius:0;}}' +
+    // Picker mode: the selected-time summary row (with its clear button).
+    '.picked{display:flex;align-items:center;gap:8px;margin-top:12px;padding:8px 10px;border-radius:8px;background:#f3f4f6;font-size:.8125rem;font-weight:500;color:#111827;}' +
+    '.picked svg{flex-shrink:0;}' +
+    '.picked-clear{margin-left:auto;display:flex;align-items:center;justify-content:center;width:26px;height:26px;border:none;border-radius:6px;background:none;color:#6b7280;cursor:pointer;}' +
+    '.picked-clear:hover{background:#e5e7eb;color:#111827;}' +
+    '.picked-clear:focus-visible{outline:2px solid #111827;outline-offset:1px;}' +
+    '.pick-error{margin-top:8px;color:#b91c1c;}' +
+    // compact: a small, stacked picker for lead forms (no info pane, calendar above the
+    // slots, tighter type). Scoped to :host([compact]) so the default widget, book.html
+    // and manage.html (which share booking.css) are untouched. Specificity beats the
+    // @container rules above, which target the full layout.
+    ':host([compact]){font-size:14px;}' +
+    ':host([compact]) .card{flex-direction:column;flex-wrap:nowrap;max-width:none;border:1px solid #e5e7eb;border-radius:10px;box-shadow:none;}' +
+    ':host([compact]) .cal-col{padding:12px 12px 10px;border-right:none;border-bottom:1px solid #e5e7eb;}' +
+    ':host([compact]) .cal-nav{margin-bottom:6px;}' +
+    ':host([compact]) .cal-nav button{width:26px;height:26px;}' +
+    ':host([compact]) .month-label{font-size:.875rem;}' +
+    ':host([compact]) .cal-grid{grid-template-columns:repeat(7,1fr);width:100%;}' +
+    ':host([compact]) .ch{width:100%;height:22px;}' +
+    ':host([compact]) .cd{width:100%;height:32px;font-size:.8125rem;border-radius:6px;}' +
+    ':host([compact]) .cd.today::after{bottom:3px;}' +
+    ':host([compact]) .tz-label{margin-top:6px;}' +
+    ':host([compact]) .right-col{padding:10px 12px 12px;}' +
+    ':host([compact]) .slots-header{font-size:.8125rem;margin-bottom:.5rem;}' +
+    ':host([compact]) .slots-list{gap:.375rem;}' +
+    ':host([compact]) .time-periods button{padding:6px 4px;font-size:11.5px;}' +
+    ':host([compact]) .time-grid{grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:6px;}' +
+    ':host([compact]) .time-grid .slot-btn{padding:7px 2px;font-size:.8125rem;border-radius:6px;}' +
+    ':host([compact]) .hint{font-size:.75rem;}' +
+    ':host([compact]) .picked{margin-top:10px;padding:6px 8px;}' +
+    ':host([compact]) .loading{padding:24px 12px;}';
 
   function api(path) {
     return fetch(BASE + path, { headers: { 'Accept': 'application/json' } }).then(function (r) {
@@ -173,11 +218,35 @@
     });
   }
 
+  var DEFAULT_FIELD = 'calnode_slot';
+
   class CalnodeBooking extends HTMLElement {
+    // Form-associated so mode="picker" can sit inside a host <form> as a real field
+    // (value, required validation, reset). Harmless in the default and popup modes,
+    // which never set a value.
+    static get formAssociated() { return true; }
+    static get observedAttributes() { return ['required']; }
+
+    constructor() {
+      super();
+      this._internals = null;
+      try { if (this.attachInternals) this._internals = this.attachInternals(); } catch (e) { this._internals = null; }
+      this._sel = null;
+    }
+
+    attributeChangedCallback() { if (this._mounted && this.picker) this._syncForm(); }
+
     connectedCallback() {
       if (this._mounted) return;
       this._mounted = true;
       this.slug = this.getAttribute('slug');
+      this.picker = this.getAttribute('mode') === 'picker';
+      this.compact = this.hasAttribute('compact');
+      this.showTz = this.getAttribute('show-timezone') !== 'false';
+      if (this.picker && !this._internals) this._installFallback();
+      // Validity is set before the first fetch so a `required` picker blocks a submit
+      // that races the load.
+      if (this.picker) this._syncForm();
       this.root = this.attachShadow({ mode: 'open' });
       var cssLink = el('link', { rel: 'stylesheet', href: BASE + '/booking.css' });
       // .clamp styling arrives with the stylesheet, so re-measure the description
@@ -227,6 +296,7 @@
         this.questions = (r[1] && r[1].items) || [];
         this.ensureAsstDrawer();
         await this.loadMonth();
+        this._autoDay();
         this.render();
       } catch (e) {
         this.wrap.innerHTML = '';
@@ -318,7 +388,7 @@
         this.info.price_cents > 0 ? el('li', { html: SVG_CARD + ' ' + money(this.info.price_cents, this.info.currency) }) : null,
       ]);
       var kids = [head, meta];
-      if (this.info.assistant_enabled) {
+      if (this.info.assistant_enabled && !this.picker) {
         var self = this;
         var asstLink = el('button', { class: 'asst-link', type: 'button', html: SVG_SPARK + ' ' + t(this.i18n, 'book_by_chat') + ' ' + SVG_CHEV2 });
         asstLink.addEventListener('click', function () { self.toggleAsst(); });
@@ -336,7 +406,9 @@
     // floating button, to avoid colliding with the host site's own widgets. Uses the same
     // assistant endpoint + shared .asst-* styles as the hosted booking page.
     ensureAsstDrawer() {
-      if (this.asstPanel || !this.info || !this.info.assistant_enabled) return;
+      // Not in picker mode: the assistant books on its own, which would bypass the host
+      // form the picker is embedded in.
+      if (this.picker || this.asstPanel || !this.info || !this.info.assistant_enabled) return;
       var self = this;
       var log = el('div', { class: 'asst-log' }, [
         el('div', { class: 'asst-msg bot', text: this.info.assistant_greeting || t(this.i18n, 'assistant_greeting') }),
@@ -468,7 +540,7 @@
         el('span', { class: 'month-label', text: first.toLocaleDateString(this.locale, { month: 'long', year: 'numeric' }) }),
         prev, next,
       ]);
-      return el('section', { class: 'cal-col' }, [nav, grid, el('p', { class: 'tz-label', text: t(this.i18n, 'times_shown_in') + TZ })]);
+      return el('section', { class: 'cal-col' }, [nav, grid, this.showTz ? el('p', { class: 'tz-label', text: t(this.i18n, 'times_shown_in') + TZ }) : null]);
     }
 
     // noticeHint — the minimum-notice explanation, or '' when the event type sets none.
@@ -537,8 +609,17 @@
             grid.appendChild(d);
             return;
           }
-          var b = el('button', { class: 'slot-btn', text: timeLabel(s.start, self.locale) });
-          b.addEventListener('click', function () { self.state.slot = s; self.state.view = 'form'; self.render(); });
+          var b = el('button', { class: 'slot-btn', type: 'button', text: timeLabel(s.start, self.locale) });
+          if (self.picker) {
+            // Picker mode: a click selects (or, on the selected one, keeps) the time.
+            // Nothing is booked until the host page calls .book() or its backend posts.
+            var on = !!(self._sel && self._sel.start === utcISO(s.start));
+            if (on) b.className += ' sel';
+            b.setAttribute('aria-pressed', String(on));
+            b.addEventListener('click', function () { self._select(s); });
+          } else {
+            b.addEventListener('click', function () { self.state.slot = s; self.state.view = 'form'; self.render(); });
+          }
           grid.appendChild(b);
         });
         if (!list.length) {
@@ -571,7 +652,23 @@
         }
         inner = el('div', {}, kids);
       }
-      return el('section', { class: 'right-col' }, [inner]);
+      var kids = [inner];
+      if (this.picker && st.pickError) kids.push(el('p', { class: 'hint pick-error', role: 'alert', text: st.pickError }));
+      if (this.picker && this._sel) kids.push(this.pickedRow());
+      return el('section', { class: 'right-col' }, kids);
+    }
+
+    // pickedRow: the chosen time, kept visible even after the visitor navigates to
+    // another day or month, with a button to clear it.
+    pickedRow() {
+      var self = this, s = this._sel;
+      var clear = el('button', { class: 'picked-clear', type: 'button', 'aria-label': t(this.i18n, 'clear_selection'), title: t(this.i18n, 'clear_selection'), html: SVG_CLEAR });
+      clear.addEventListener('click', function () { self._clear(true); self.render(); });
+      return el('div', { class: 'picked', role: 'status' }, [
+        el('span', { html: SVG_CLOCK }),
+        el('span', { text: shortDay(s.start, this.locale) + ' · ' + timeLabel(s.start, this.locale) }),
+        clear,
+      ]);
     }
 
     // dayHeader — the selected day's short label when no slot is available to derive it
@@ -678,14 +775,15 @@
       this.state.month = addMonths(this.state.month, delta);
       this.state.day = null; this.state.view = 'pick';
       var self = this;
-      this.loadMonth().then(function () { self.render(); });
+      this.loadMonth().then(function () { self._autoDay(); self.render(); });
     }
 
     // applyStep toggles which panes show when narrow (step-flow). Wide = all visible.
     applyStep() {
       if (!this.card) return;
       this.card.classList.remove('step', 'step-cal', 'step-right');
-      if (!this.narrow) return;
+      // compact always stacks calendar above slots; no one-view-at-a-time step-flow.
+      if (!this.narrow || this.compact) return;
       this.card.classList.add('step');
       // calendar step = day not yet chosen and not in form/confirm; else right pane.
       var onRight = this.state.view === 'form' || this.state.view === 'confirm' || (this.state.view === 'pick' && this.state.day);
@@ -695,9 +793,9 @@
     render() {
       var self = this;
       this.wrap.innerHTML = '';
-      this.card = el('div', { class: 'card' }, [this.infoPane(), this.calPane(), this.rightPane()]);
+      this.card = el('div', { class: 'card' }, [this.compact ? null : this.infoPane(), this.calPane(), this.rightPane()]);
       // In step-flow, a slots/form view needs a back-to-calendar affordance.
-      if (this.narrow && (this.state.view === 'pick' && this.state.day)) {
+      if (this.narrow && !this.compact && (this.state.view === 'pick' && this.state.day)) {
         var rc = this.card.querySelector('.right-col');
         var back = el('button', { class: 'back-btn', html: SVG_BACK + ' ' + t(this.i18n, 'back') });
         back.addEventListener('click', function () { self.state.day = null; self.render(); });
@@ -709,6 +807,188 @@
       this.applyStep();
       this.cw = this.wrap.getBoundingClientRect().width || this.cw;
       requestAnimationFrame(function () { self.syncDesc(); });
+      if (this.picker) this._syncForm();
+    }
+
+    // ── picker mode: selection, form association, JS API ─────────────────────────
+
+    // _autoDay: compact pickers open on the first day that has a bookable time, so the
+    // visitor sees times straight away instead of an extra "select a day" step.
+    _autoDay() {
+      if (!this.picker || !this.compact || this.state.day) return;
+      var by = this.state.slotsByDay, todayKey = ymd(new Date());
+      var days = Object.keys(by).sort().filter(function (k) {
+        return k >= todayKey && by[k].some(function (s) { return !s.taken; });
+      });
+      if (days.length) this.state.day = days[0];
+    }
+
+    _detail(s) {
+      return { start: utcISO(s.start), end: utcISO(s.end), timezone: TZ, event_type: this.slug, host_ids: s.host_ids || [] };
+    }
+
+    _select(s) {
+      this.state.pickError = '';
+      var d = this._detail(s);
+      var same = this._sel && this._sel.start === d.start;
+      this._sel = d;
+      this.render();
+      if (!same) {
+        this.dispatchEvent(new CustomEvent('calnode:slot-selected', { bubbles: true, composed: true, detail: d }));
+        this.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }
+
+    // _clear drops the selection; notify=false is for callers that emit their own event.
+    _clear(notify) {
+      if (!this._sel) return;
+      this._sel = null;
+      this._syncForm();
+      if (notify) {
+        this.dispatchEvent(new CustomEvent('calnode:slot-cleared', { bubbles: true, composed: true, detail: { event_type: this.slug } }));
+        this.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }
+
+    get fieldName() { return this.getAttribute('name') || DEFAULT_FIELD; }
+
+    // _formEntries: what a native form submit carries for the current selection.
+    _formEntries() {
+      if (!this._sel) return [];
+      var n = this.fieldName;
+      return [[n, this._sel.start], [n + '_end', this._sel.end], [n + '_timezone', this._sel.timezone]];
+    }
+
+    // _syncForm pushes the selection into the owning form (ElementInternals, or the
+    // light-DOM hidden inputs when attachInternals is unavailable) and sets validity.
+    _syncForm() {
+      var entries = this._formEntries();
+      if (this._internals) {
+        if (entries.length) {
+          var fd = new FormData();
+          entries.forEach(function (e) { fd.append(e[0], e[1]); });
+          this._internals.setFormValue(fd, this._sel.start);
+        } else {
+          this._internals.setFormValue(null);
+        }
+        if (this.hasAttribute('required') && !this._sel) {
+          var anchor = (this.root && (this.root.querySelector('.slot-btn:not(:disabled)') || this.root.querySelector('.cd.available') || this.root.querySelector('.cal-nav button:not(:disabled)'))) || undefined;
+          // Before /public resolves there is no string table (same bootstrapping limit
+          // as 'Loading…'), so the browser shows this English fallback until it does.
+          var msg = this.i18n ? t(this.i18n, 'choose_time_required') : 'Please choose a time.';
+          this._internals.setValidity({ valueMissing: true }, msg, anchor);
+        } else {
+          this._internals.setValidity({});
+        }
+      } else if (this._fallback) {
+        var box = this._fallback;
+        box.innerHTML = '';
+        entries.forEach(function (e) { box.appendChild(el('input', { type: 'hidden', name: e[0], value: e[1] })); });
+      }
+    }
+
+    // Fallback for browsers without ElementInternals: hidden inputs in the light DOM
+    // (a custom element's children belong to the enclosing form even though the shadow
+    // root does not render them), plus a submit guard standing in for `required`.
+    _installFallback() {
+      var self = this;
+      this._fallback = el('span', { hidden: 'hidden', 'data-calnode-fallback': '' });
+      this.appendChild(this._fallback);
+      var form = this.closest('form');
+      if (form) form.addEventListener('submit', function (e) {
+        if (self.hasAttribute('required') && !self._sel) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          self.dispatchEvent(new Event('invalid', { cancelable: true }));
+          self.scrollIntoView({ block: 'nearest' });
+        }
+      }, true);
+    }
+
+    formResetCallback() { this._clear(true); if (this.card) this.render(); }
+
+    get form() { return this._internals ? this._internals.form : this.closest('form'); }
+    get validity() { return this._internals ? this._internals.validity : undefined; }
+    get validationMessage() { return this._internals ? this._internals.validationMessage : ''; }
+    checkValidity() { return this._internals ? this._internals.checkValidity() : !(this.hasAttribute('required') && !this._sel); }
+    reportValidity() { return this._internals ? this._internals.reportValidity() : this.checkValidity(); }
+
+    // value: the selected slot's start (RFC3339 UTC), or ''. Assigning '' clears.
+    get value() { return this._sel ? this._sel.start : ''; }
+    set value(v) { if (!v) this.reset(); }
+
+    get selectedSlot() { return this._sel ? Object.assign({}, this._sel, { host_ids: this._sel.host_ids.slice() }) : null; }
+
+    reset() {
+      this.state && (this.state.pickError = '');
+      this._clear(true);
+      if (this.card) this.render();
+    }
+
+    // refresh reloads the visible month's slots, dropping the selection if its time is
+    // no longer bookable.
+    refresh() {
+      var self = this;
+      if (!this.state || !this.info) return Promise.resolve();
+      return this.loadMonth().then(function () {
+        if (self._sel) {
+          var start = self._sel.start;
+          var still = Object.keys(self.state.slotsByDay).some(function (k) {
+            return self.state.slotsByDay[k].some(function (s) { return !s.taken && utcISO(s.start) === start; });
+          });
+          if (!still) self._clear(true);
+        }
+        self._autoDay();
+        self.render();
+      });
+    }
+
+    // book() creates the booking for the selected slot via POST /v1/bookings, with the
+    // same request shape as the widget's own form. Resolves with the booking JSON (or,
+    // for a paid event type, {payment_required, booking_id, checkout_url}). Rejects with
+    // an Error carrying .code: no_slot | invalid | slot_taken | rate_limited | failed |
+    // network, and .status (HTTP status, when there was a response).
+    book(details) {
+      var self = this, d = details || {};
+      function fail(code, message, status) {
+        var e = new Error(message); e.code = code; if (status) e.status = status; return Promise.reject(e);
+      }
+      if (!this._sel) return fail('no_slot', t(this.i18n, 'choose_time_required'));
+      if (this._booking) return this._booking;
+      var sel = this._sel;
+      var answers = Array.isArray(d.answers) ? d.answers.filter(function (a) { return a && a.question_id; })
+        : d.answers && typeof d.answers === 'object' ? Object.keys(d.answers).map(function (k) { return { question_id: k, value: String(d.answers[k]) }; })
+        : [];
+      var body = {
+        event_type_slug: this.slug, start_at: sel.start,
+        name: String(d.name || '').trim(), email: String(d.email || '').trim().toLowerCase(),
+        phone: String(d.phone || '').trim(), timezone: d.timezone || TZ,
+        language: d.language || this.locale || '', hp_extra: '', answers: answers,
+      };
+      var headers = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
+      if (d.idempotencyKey) headers['Idempotency-Key'] = String(d.idempotencyKey);
+      this._booking = fetch(BASE + '/v1/bookings', { method: 'POST', headers: headers, body: JSON.stringify(body) })
+        .then(function (r) {
+          return r.json().catch(function () { return {}; }).then(function (data) { return { ok: r.ok, status: r.status, data: data }; });
+        }, function () {
+          return fail('network', t(self.i18n, 'booking_failed_error'));
+        })
+        .then(function (res) {
+          if (res.status === 409) {
+            var msg = t(self.i18n, 'slot_taken_error');
+            self._clear(true);
+            self.state.pickError = msg;
+            return self.refresh().then(function () { self.state.pickError = msg; self.render(); return fail('slot_taken', msg, 409); });
+          }
+          if (res.status === 429) return fail('rate_limited', (res.data && res.data.error) || t(self.i18n, 'booking_failed_error'), 429);
+          if (res.status === 400 || res.status === 422) return fail('invalid', (res.data && res.data.error) || t(self.i18n, 'booking_failed_error'), res.status);
+          if (!res.ok) return fail('failed', (res.data && res.data.error) || t(self.i18n, 'booking_failed_error'), res.status);
+          self.dispatchEvent(new CustomEvent('calnode:booked', { bubbles: true, composed: true, detail: res.data }));
+          return res.data;
+        });
+      var done = function () { self._booking = null; };
+      this._booking.then(done, done);
+      return this._booking;
     }
   }
 

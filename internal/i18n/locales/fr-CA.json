@@ -167,5 +167,7 @@
   "directory_empty": "Rien à réserver pour le moment.",
   "directory_members": "Membres de l'équipe",
   "directory_person_subtitle": "Réservez du temps avec %s",
-  "directory_team_subtitle": "Réservez du temps avec l'équipe %s"
+  "directory_team_subtitle": "Réservez du temps avec l'équipe %s",
+  "clear_selection": "Effacer la sélection",
+  "choose_time_required": "Veuillez choisir un créneau."
 }

@@ -167,5 +167,7 @@
   "directory_empty": "Er is momenteel niets te boeken.",
   "directory_members": "Teamleden",
   "directory_person_subtitle": "Boek tijd met %s",
-  "directory_team_subtitle": "Boek tijd met het %s-team"
+  "directory_team_subtitle": "Boek tijd met het %s-team",
+  "clear_selection": "Selectie wissen",
+  "choose_time_required": "Kies een tijd."
 }

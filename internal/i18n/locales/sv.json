@@ -167,5 +167,7 @@
   "directory_empty": "Inget att boka just nu.",
   "directory_members": "Teammedlemmar",
   "directory_person_subtitle": "Boka tid med %s",
-  "directory_team_subtitle": "Boka tid med %s-teamet"
+  "directory_team_subtitle": "Boka tid med %s-teamet",
+  "clear_selection": "Rensa valet",
+  "choose_time_required": "Välj en tid."
 }

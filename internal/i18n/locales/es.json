@@ -174,5 +174,7 @@
   "directory_empty": "No hay nada reservable por ahora.",
   "directory_members": "Miembros del equipo",
   "directory_person_subtitle": "Reserva tiempo con %s",
-  "directory_team_subtitle": "Reserva tiempo con el equipo %s"
+  "directory_team_subtitle": "Reserva tiempo con el equipo %s",
+  "clear_selection": "Borrar selección",
+  "choose_time_required": "Elige una hora."
 }

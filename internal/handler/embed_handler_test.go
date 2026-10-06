@@ -1,10 +1,14 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/calnode/calnode/internal/i18n"
 )
 
 // The embed widget script and the stylesheet it pulls are linked WITHOUT a version
@@ -85,5 +89,54 @@ func TestBookingCSS_cacheModes(t *testing.T) {
 	h.BookingCSS(rec2, httptest.NewRequest(http.MethodGet, "/booking.css?v="+bookingCSSVersion, nil))
 	if cc := rec2.Result().Header.Get("Cache-Control"); !strings.Contains(cc, "immutable") {
 		t.Errorf("versioned Cache-Control = %q, want immutable", cc)
+	}
+}
+
+// Every string key the widget looks up must exist in the shipped table: t() falls back to
+// the key itself, so a missing key renders as "choose_time_required" on a customer's
+// site with nothing here noticing. The picker-mode keys (clear_selection,
+// choose_time_required) were added with the in-form picker; this keeps the rest honest too.
+func TestEmbedJS_i18nKeysExist(t *testing.T) {
+	var table map[string]string
+	raw, err := i18n.Default().JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &table); err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`\bt\((?:this|self|widget)\.i18n, '([a-z_]+)'\)`)
+	matches := re.FindAllStringSubmatch(string(embedJS), -1)
+	if len(matches) < 20 {
+		t.Fatalf("found only %d t() lookups in embed.js; has the lookup syntax changed?", len(matches))
+	}
+	for _, m := range matches {
+		if _, ok := table[m[1]]; !ok {
+			t.Errorf("embed.js looks up %q, which en.json does not define", m[1])
+		}
+	}
+}
+
+// The in-form picker relies on the element being form-associated and on these exact
+// event names and API members, which docs/embed-in-form.md promises to host sites.
+func TestEmbedJS_pickerContract(t *testing.T) {
+	src := string(embedJS)
+	for _, want := range []string{
+		"static get formAssociated() { return true; }",
+		"attachInternals",
+		"formResetCallback",
+		"'calnode:slot-selected'",
+		"'calnode:slot-cleared'",
+		"'calnode:booked'",
+		"get value()",
+		"get selectedSlot()",
+		"refresh()",
+		"book(details)",
+		"'slot_taken'",
+		"DEFAULT_FIELD = 'calnode_slot'",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("embed.js no longer contains %q (picker-mode contract, see docs/embed-in-form.md)", want)
+		}
 	}
 }
