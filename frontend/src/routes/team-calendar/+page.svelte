@@ -245,7 +245,9 @@
 				<dd><Badge variant="outline">{selected.status}</Badge></dd>
 			</dl>
 			<Dialog.Footer class="mt-4">
-				{#if selected.kind === 'booking'}
+				<!-- Bookings only lists the viewer's own meetings (admins see everyone's), so the
+				     link is offered only when it would actually show this item. -->
+				{#if selected.kind === 'booking' && (isAdmin || selected.member_id === $currentUser?.id)}
 					<a href="{base}/bookings" class={buttonVariants({ variant: 'default' })}>Open in Bookings</a>
 				{/if}
 				<Button variant="outline" onclick={() => (detailOpen = false)}>Close</Button>
@@ -298,7 +300,8 @@
 	{/if}
 	{#if view === 'week'}
 		<div class="max-h-[70vh] overflow-auto" bind:this={gridEl}>
-			<div class="grid min-w-[700px]" style="grid-template-columns: 56px repeat(7, minmax(0, 1fr))">
+			<!-- Inline min-width: app.css has an unlayered `* { min-width: 0 }` that beats Tailwind min-w utilities. -->
+			<div class="grid" style="min-width: 700px; grid-template-columns: 56px repeat(7, minmax(0, 1fr))">
 				<div class="sticky top-0 z-10 border-b bg-card"></div>
 				{#each days as d (d.getTime())}
 					<div class="sticky top-0 z-10 border-b border-l bg-card px-1 py-1.5 text-center text-xs {sameDay(d, today) ? 'text-primary' : 'text-muted-foreground'}">
@@ -339,7 +342,7 @@
 		</div>
 	{:else}
 		<div class="overflow-auto">
-			<div class="grid min-w-[640px] grid-cols-7">
+			<div class="grid grid-cols-7" style="min-width: 640px">
 				{#each days.slice(0, 7) as d (d.getTime())}
 					<div class="border-b px-1 py-1.5 text-center text-xs text-muted-foreground">{d.toLocaleDateString(undefined, { weekday: 'short' })}</div>
 				{/each}

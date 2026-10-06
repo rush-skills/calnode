@@ -27,12 +27,17 @@
 		id = undefined,
 		class: className = '',
 		minHeight = 'min-h-24',
+		editable = true,
 	}: {
 		value?: string;
 		placeholder?: string;
 		id?: string;
 		class?: string;
 		minHeight?: string;
+		/** False renders the content read-only: TipTap's setEditable drops contenteditable
+		 *  on the ProseMirror element and the toolbar is disabled. A wrapping
+		 *  `<fieldset disabled>` does NOT reach a contenteditable div, hence this prop. */
+		editable?: boolean;
 	} = $props();
 
 	let host = $state<HTMLDivElement | null>(null);
@@ -70,6 +75,7 @@
 				}),
 			],
 			content: value,
+			editable,
 			editorProps: {
 				attributes: {
 					class: cn('rte-content outline-none', minHeight, 'px-3 py-2 text-sm'),
@@ -101,6 +107,15 @@
 		if (!ready || !editor || v === lastHtml) return;
 		lastHtml = v;
 		editor.commands.setContent(v || '', { emitUpdate: false });
+	});
+
+	// `editable` can change after mount (a page learns the viewer cannot edit once its
+	// data loads). setEditable toggles contenteditable on the ProseMirror element itself.
+	$effect(() => {
+		const e = editable;
+		if (!ready || !editor) return;
+		editor.setEditable(e);
+		if (!e) linkOpen = false;
 	});
 
 	const isActive = (name: string, attrs?: Record<string, unknown>) => {
@@ -143,6 +158,7 @@
 					class="size-7"
 					aria-label={label}
 					aria-pressed={active}
+					disabled={!editable}
 					{onclick}
 				>
 					<Icon class="size-4" />
@@ -178,6 +194,7 @@
 							class="size-7"
 							aria-label="Link"
 							aria-pressed={isActive('link')}
+							disabled={!editable}
 							onclick={openLink}
 						>
 							<LinkIcon class="size-4" />

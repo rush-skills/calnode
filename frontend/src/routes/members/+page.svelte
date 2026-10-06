@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { get } from 'svelte/store';
 	import { api, type TeamMember, type Invite, type UpcomingBooking } from '$lib/api';
 	import { currentUser } from '$lib/stores';
 	import { Button } from '$lib/components/ui/button';
@@ -85,9 +86,11 @@
 
 	async function load() {
 		try {
+			// /v1/invites is admin-only (403 otherwise); a member sees no invites section, so
+			// asking would only surface a raw "admin access required" error on their page.
 			const [membersRes, invitesRes] = await Promise.all([
 				api.get<TeamMember[]>(showArchived ? '/v1/users?include_archived=true' : '/v1/users'),
-				api.get<Invite[]>('/v1/invites')
+				get(currentUser)?.is_admin ? api.get<Invite[]>('/v1/invites') : Promise.resolve([] as Invite[])
 			]);
 			members = membersRes;
 			invites = invitesRes;

@@ -17,6 +17,10 @@
 	let emailsText = $state('');
 	let calendarMessage = $state('');
 
+	// The page only renders its form for admins; the editor still gets told explicitly,
+	// because a disabled fieldset does not reach a contenteditable element.
+	const canEdit = $derived(!!$currentUser?.is_admin);
+
 	function parseEmails(text: string): string[] {
 		return text
 			.split(/[\n,]/)
@@ -88,7 +92,7 @@
 			</p>
 			<div class="mt-4 space-y-1.5">
 				<Label for="default-calendar-message">Message</Label>
-				<RichTextEditor id="default-calendar-message" bind:value={calendarMessage} placeholder="This call may be recorded for quality and training purposes." />
+				<RichTextEditor id="default-calendar-message" bind:value={calendarMessage} editable={canEdit} placeholder="This call may be recorded for quality and training purposes." />
 			</div>
 		</div>
 

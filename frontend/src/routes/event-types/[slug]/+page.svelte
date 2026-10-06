@@ -1023,7 +1023,7 @@
 				Shown in the calendar event every attendee and host receives, above the booking reference.
 				Separate from the description on the booking page. Leave empty to send just the booking reference.
 			</p>
-			<RichTextEditor id="et-calendar-message" bind:value={calendar_message} placeholder="Agenda, prep notes, what to bring…" />
+			<RichTextEditor id="et-calendar-message" bind:value={calendar_message} editable={canEdit} placeholder="Agenda, prep notes, what to bring…" />
 		</div>
 
 		<div class="border-t"></div>
@@ -1123,13 +1123,13 @@
 									{/if}
 								</div>
 								{#if item.key === 'confirmation'}
-									<RichTextEditor id="et-msg-confirmation" bind:value={msg_confirmation} placeholder="Add a custom note for attendees…" minHeight="min-h-20" />
+									<RichTextEditor id="et-msg-confirmation" bind:value={msg_confirmation} editable={canEdit} placeholder="Add a custom note for attendees…" minHeight="min-h-20" />
 								{:else if item.key === 'cancellation'}
-									<RichTextEditor id="et-msg-cancellation" bind:value={msg_cancellation} placeholder="Add a custom note for attendees…" minHeight="min-h-20" />
+									<RichTextEditor id="et-msg-cancellation" bind:value={msg_cancellation} editable={canEdit} placeholder="Add a custom note for attendees…" minHeight="min-h-20" />
 								{:else if item.key === 'reschedule'}
-									<RichTextEditor id="et-msg-reschedule" bind:value={msg_reschedule} placeholder="Add a custom note for attendees…" minHeight="min-h-20" />
+									<RichTextEditor id="et-msg-reschedule" bind:value={msg_reschedule} editable={canEdit} placeholder="Add a custom note for attendees…" minHeight="min-h-20" />
 								{:else if item.key === 'reminder'}
-									<RichTextEditor id="et-msg-reminder" bind:value={msg_reminder} placeholder="Add a custom note for attendees…" minHeight="min-h-20" />
+									<RichTextEditor id="et-msg-reminder" bind:value={msg_reminder} editable={canEdit} placeholder="Add a custom note for attendees…" minHeight="min-h-20" />
 								{/if}
 
 								<!-- Preview toggle -->
