@@ -308,19 +308,22 @@ func TestCallbackGoogle_domainLoadFailureStillRefusesUnknown(t *testing.T) {
 	}
 }
 
-func TestCallbackMicrosoft_allowedDomainProvisionsMemberWithDisplayName(t *testing.T) {
+// Microsoft sign-in never auto-provisions: Graph's mail attribute is admin-settable in
+// any tenant and not domain-verified (MSRC "nOAuth"), so an allowed domain is not proof.
+func TestCallbackMicrosoft_allowedDomainDoesNotProvision(t *testing.T) {
 	h, database, adminKey, _ := setupWorkspaceWithDB(t)
 	h.SetMicrosoftAuth("id", "secret", "common", "http://localhost/v1/auth/microsoft/callback", false)
 	setDomains(t, h, adminKey, "acme.com")
 
 	rec := callbackWith(t, h.CallbackMicrosoft, "/v1/auth/microsoft/callback",
 		providerStub{userinfo: `{"mail":"Sam@Acme.com","userPrincipalName":"sam@acme.com","displayName":"Sam Rivera"}`})
-	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/admin" {
-		t.Fatalf("status=%d location=%q; want 302 to /admin", rec.Code, rec.Header().Get("Location"))
+	if rec.Header().Get("Location") != "/admin/login?error=no_account" {
+		t.Fatalf("status=%d location=%q; want no_account", rec.Code, rec.Header().Get("Location"))
 	}
-	var name string
-	if err := database.QueryRow(`SELECT name FROM users WHERE email = 'sam@acme.com'`).Scan(&name); err != nil || name != "Sam Rivera" {
-		t.Errorf("name = %q (err %v); want Sam Rivera", name, err)
+	var n int
+	database.QueryRow(`SELECT COUNT(*) FROM users WHERE email = 'sam@acme.com'`).Scan(&n)
+	if n != 0 {
+		t.Errorf("user rows = %d; want 0", n)
 	}
 
 	// Not on the list: refused, nothing created.

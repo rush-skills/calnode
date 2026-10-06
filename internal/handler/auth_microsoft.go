@@ -84,7 +84,10 @@ func (h *Handler) CallbackMicrosoft(w http.ResponseWriter, r *http.Request) {
 	}
 	// Entra ID verifies domain ownership at the tenant level (see fetchMicrosoftEmail),
 	// so a standard member's address counts as verified for allowed-domain sign-in.
-	h.finishOAuthLogin(w, r, email, name, true, h.browserTimezone(w, r))
+	// Graph's mail attribute is admin-settable in any tenant and not domain-verified, so it
+	// must never satisfy the allowed-sign-in-domain check (MSRC "nOAuth"). Existing accounts
+	// still sign in by email; only auto-provisioning is refused.
+	h.finishOAuthLogin(w, r, email, name, false, h.browserTimezone(w, r))
 }
 
 type microsoftUserInfo struct {

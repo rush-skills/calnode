@@ -173,6 +173,19 @@ func (h *Handler) teamCalendarData(w http.ResponseWriter, r *http.Request) {
 		return items[i].ID < items[j].ID
 	})
 	w.Header().Set("Cache-Control", "no-store")
+	// Never publish a booker's phone number or a signed LiveKit join URL, and give share-token
+	// viewers (an iframe outside the app) neither locations nor booking ids, which double as
+	// bearer ids for GET /v1/bookings/{id}.
+	viaToken := q.Get("token") != ""
+	for i := range items {
+		loc := items[i].Location
+		if viaToken || strings.HasPrefix(loc, "tel:") || strings.Contains(loc, "/room/") {
+			items[i].Location = ""
+		}
+		if viaToken {
+			items[i].BookingID = ""
+		}
+	}
 	h.writeJSON(w, http.StatusOK, map[string]any{"members": members, "items": items})
 }
 

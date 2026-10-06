@@ -949,6 +949,14 @@ func (h *Handler) LiveStatus(w http.ResponseWriter, r *http.Request) {
 		args = append(args, kind)
 	}
 
+	// "Show host names" off applies to this public feed too (live page and widget).
+	showHosts := h.hostNamesShown(r.Context())
+	hostName := func(n string) string {
+		if !showHosts {
+			return ""
+		}
+		return n
+	}
 	live := []livePublicSession{}
 	rows, err := h.db.QueryContext(r.Context(), liveEventSelect+` WHERE e.status = 'live'`+kindFilter+` ORDER BY e.started_at DESC`, args...)
 	if err != nil {
@@ -959,7 +967,7 @@ func (h *Handler) LiveStatus(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		if ev, err := scanLiveEvent(rows); err == nil {
 			live = append(live, livePublicSession{
-				ID: ev.ID, Title: ev.Title, Description: ev.Description, Kind: ev.Kind, HostName: ev.HostName,
+				ID: ev.ID, Title: ev.Title, Description: ev.Description, Kind: ev.Kind, HostName: hostName(ev.HostName),
 				JoinURL: ev.JoinURL, StartedAt: ev.StartedAt,
 			})
 		}
@@ -985,7 +993,7 @@ func (h *Handler) LiveStatus(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		if ev, err := scanLiveEvent(rows); err == nil {
 			upcoming = append(upcoming, livePublicSession{
-				ID: ev.ID, Title: ev.Title, Description: ev.Description, Kind: ev.Kind, HostName: ev.HostName,
+				ID: ev.ID, Title: ev.Title, Description: ev.Description, Kind: ev.Kind, HostName: hostName(ev.HostName),
 				ScheduledStartAt: ev.ScheduledStartAt, ScheduledEndAt: ev.ScheduledEndAt,
 			})
 		}
