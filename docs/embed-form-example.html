@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<!--
+  Demo: a Calnode slot picker inside a site's own lead form (recipe A in
+  docs/embed-in-form.md). One form, one submit button: the meeting is booked from the
+  browser with picker.book(), then the lead is "submitted" (here: shown on the page).
+
+  Run it against a local Calnode:
+    1. Start Calnode (e.g. PORT=3000 BASE_URL=http://localhost:3000 go run ./cmd/calnode)
+       and create a public event type with the slug "intro-call".
+    2. Serve this folder from ANOTHER origin, e.g. python3 -m http.server 8099 --directory docs
+    3. Open http://localhost:8099/embed-form-example.html?base=http://localhost:3000
+       (?base= overrides data-base below; ?slug= overrides the event type.)
+-->
+<html lang="en" data-base="http://localhost:3000" data-slug="intro-call">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lead form with meeting picker</title>
+<style>
+  :root { --ink: #0f172a; --muted: #64748b; --line: #e2e8f0; --bg: #f8fafc; --brand: #2563eb; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 440px; margin: 0 auto; padding: 32px 16px 48px; }
+  h1 { font-size: 1.375rem; margin: 0 0 4px; }
+  .lede { color: var(--muted); margin: 0 0 20px; }
+  form { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 20px; display: grid; gap: 14px; }
+  label { display: grid; gap: 4px; font-size: .875rem; font-weight: 600; }
+  input[type=text], input[type=email] { font: inherit; padding: 9px 11px; border: 1px solid #cbd5e1; border-radius: 8px; }
+  input:focus { outline: 2px solid var(--brand); outline-offset: 1px; border-color: transparent; }
+  .field-label { font-size: .875rem; font-weight: 600; margin-bottom: 4px; }
+  .field-help { font-size: .8125rem; color: var(--muted); margin: 0 0 6px; }
+  button[type=submit] { font: inherit; font-weight: 600; padding: 11px 14px; border: 0; border-radius: 8px; background: var(--brand); color: #fff; cursor: pointer; }
+  button[type=submit]:disabled { opacity: .6; cursor: progress; }
+  .error { color: #b91c1c; font-size: .875rem; margin: 0; min-height: 1.25em; }
+  .done { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+  .done pre { background: var(--bg); border-radius: 8px; padding: 10px; font-size: .75rem; overflow: auto; }
+  calnode-booking:invalid { outline: 0; }
+  .picker-invalid calnode-booking { box-shadow: 0 0 0 2px #fca5a5; border-radius: 10px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Talk to sales</h1>
+  <p class="lede">Tell us about you and pick a time for a 30-minute intro call.</p>
+
+  <form id="lead" novalidate>
+    <label>Name <input type="text" name="name" autocomplete="name" required></label>
+    <label>Work email <input type="email" name="email" autocomplete="email" required></label>
+    <label>Company <input type="text" name="company" autocomplete="organization"></label>
+    <div id="picker-field">
+      <div class="field-label" id="picker-label">Meeting time</div>
+      <p class="field-help">Times are shown in your timezone.</p>
+      <calnode-booking id="picker" mode="picker" compact required name="meeting" aria-labelledby="picker-label"></calnode-booking>
+    </div>
+    <p class="error" id="error" role="alert"></p>
+    <button type="submit" id="submit">Request my call</button>
+  </form>
+
+  <div class="done" id="done" hidden>
+    <h2 style="margin-top:0">Thanks, you are booked.</h2>
+    <p id="done-when"></p>
+    <p class="field-help">Lead payload your backend would have received:</p>
+    <pre id="done-payload"></pre>
+  </div>
+</main>
+
+<script>
+  // Where Calnode lives: ?base= wins, else data-base on <html>. Same for the slug.
+  var params = new URLSearchParams(location.search);
+  var BASE = (params.get('base') || document.documentElement.dataset.base).replace(/\/$/, '');
+  var picker = document.getElementById('picker');
+  picker.setAttribute('slug', params.get('slug') || document.documentElement.dataset.slug);
+  var s = document.createElement('script');
+  s.src = BASE + '/embed.js';
+  document.head.appendChild(s);
+
+  var form = document.getElementById('lead');
+  var errorEl = document.getElementById('error');
+  var submit = document.getElementById('submit');
+
+  picker.addEventListener('calnode:slot-selected', function () {
+    document.getElementById('picker-field').classList.remove('picker-invalid');
+    errorEl.textContent = '';
+  });
+
+  form.addEventListener('submit', async function (e) {
+    e.preventDefault();
+    errorEl.textContent = '';
+    // One validity pass covers the site's own fields AND the required picker.
+    if (!form.reportValidity()) {
+      if (!picker.value) document.getElementById('picker-field').classList.add('picker-invalid');
+      return;
+    }
+    var data = new FormData(form); // includes meeting, meeting_end, meeting_timezone
+    submit.disabled = true;
+    submit.textContent = 'Booking...';
+    try {
+      var booking = await picker.book({
+        name: data.get('name'),
+        email: data.get('email'),
+      });
+      // The meeting exists. Now hand the lead to your own backend, with the booking id
+      // so the two can be joined later. (Simulated here.)
+      var lead = Object.fromEntries(data.entries());
+      lead.booking_id = booking.id || booking.booking_id;
+      // await fetch('/api/leads', { method: 'POST', body: JSON.stringify(lead), headers: { 'Content-Type': 'application/json' } });
+      form.hidden = true;
+      document.getElementById('done').hidden = false;
+      document.getElementById('done-when').textContent = new Date(booking.start_at).toLocaleString([], { dateStyle: 'full', timeStyle: 'short' });
+      document.getElementById('done-payload').textContent = JSON.stringify(lead, null, 2);
+    } catch (err) {
+      // slot_taken: the picker already cleared the choice and reloaded the times.
+      errorEl.textContent = err.code === 'slot_taken'
+        ? 'That time was just taken. Please pick another one above.'
+        : (err.message || 'Something went wrong. Please try again.');
+      if (err.code === 'slot_taken') document.getElementById('picker-field').classList.add('picker-invalid');
+    } finally {
+      submit.disabled = false;
+      submit.textContent = 'Request my call';
+    }
+  });
+</script>
+</body>
+</html>
