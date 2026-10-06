@@ -72,13 +72,14 @@ exact tag (`ghcr.io/calnode/calnode:0.1.0`) if you need stability between upgrad
   invite message (e.g. a recording notice) appended after each event type's own message on
   every new booking and on live events. Like default participants, it is read at booking
   time, so every event type, old or new, complies from the next booking on.
-- **Default participants.** Settings → Default participants lists addresses (a notetaker
+- **Default participants.** Settings → Meeting defaults lists addresses (a notetaker
   bot, a shared mailbox) that are invited on the host's calendar event of every meeting
   booked on the workspace. They receive the provider's calendar invite only: Calnode sends
   them no email and bookers never see them.
 - **"Show host names on booking pages"** (Settings → Branding, on by default). Turned off,
-  the booking page, manage page, embed widget and team page show only the event name and
-  never a host's name or avatar; names are withheld server-side so no surface can leak them.
+  an event type with several hosts shows one "<Business> team" entry on the booking page,
+  manage page, embed widget and team page, and no individual name leaves the server; a
+  single-host event type still shows its host.
 - **Allowed sign-in domains.** Settings → Google OAuth lists email domains whose verified
   Google or Microsoft sign-ins create a member account on first login, so a team no longer
   invites every colleague by hand. Off by default (invite-only, as before). A member created

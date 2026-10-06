@@ -77,7 +77,6 @@ Code: `internal/handler/live_events.go` (API + sweep), `live_page.go` (page + wi
 
 - **Branch base.** This branch was cut from `main` (95d4f17), which predates the
   default-participants merge (7f11fe7). Two consequences, both resolved by that merge:
-  - `internal/handler/live_events_attendees_stub.go` defines a stub
     `defaultAttendeeEmails` so the package compiles here. **Delete the file when merging**;
     the build fails with "defaultAttendeeEmails redeclared" until you do, which is the
     intended signal. The host-dedupe is done inline in `liveEventExtraAttendees` (the

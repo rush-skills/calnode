@@ -37,6 +37,7 @@ This guide covers a generic Docker deploy and a step-by-step **Railway** deploy
 | `LITESTREAM_REPLICA_URL` | recommended | — | Enables continuous SQLite backup (see §6). |
 | `COOKIE_SECURE` | no | https→true | Override cookie Secure flag; defaults from `BASE_URL` scheme. |
 | `TRUSTED_PROXY_CIDRS` | no | — | Comma-separated CIDRs (a bare address = one host) whose `X-Forwarded-For` is believed when keying per-IP rate limits, e.g. `10.0.0.0/8`. Include a fronting CDN's own ranges so the walk steps over its edge and lands on the visitor. Unset ⇒ the header is ignored and the limit keys on the TCP peer, so behind a CDN every visitor shares one bucket. **Only list networks you control**: anything in the list can name any client IP it likes. Single-value vendor headers (`CF-Connecting-IP`, `X-Real-IP`) are never read, from any peer. |
+| `EMBED_ALLOWED_ORIGINS` | no | — | Comma-separated origins allowed to call `/slots` and `POST /v1/bookings` from the browser: the sites hosting the embed widget or the lead-form picker (`docs/embed-in-form.md`). |
 | `FRAME_ANCESTORS` | no | — | **Space**-separated origins allowed to embed the **admin UI** in a frame, e.g. `https://console.example.com 'self'`. Each entry must be `https://host[:port]` or `'self'` — anything else and **the app refuses to start**, because browsers drop a policy they cannot parse. Does not affect the public booking pages, which always deny framing. ⛔ **Same-site only in practice**: `calnode_session` is `SameSite=Lax`, so a cross-site parent can frame `/admin/` and still never be sent the cookie — it gets the login screen inside the frame. Use `'self'` or a host sharing `BASE_URL`'s registrable domain. |
 | `LOG_LEVEL` | no | `info` | `debug`/`info`/`warn`/`error`. |
 
@@ -64,6 +65,19 @@ must forward the original `Host` header** — Calnode's CSRF check compares
 `Origin`/`Referer` against `Host`, so a rewritten Host causes 403s on admin writes.
 
 ---
+
+## 3a. Fly.io (scripted)
+
+`deploy/fly/calnode-fly.sh` runs every Fly operation from a `.env` file: create the app and
+volume, generate and push secrets, deploy a checkout, add a custom domain, enable and verify
+Litestream backups, download or restore the database, scale, apply workspace settings
+through the admin API, and tear the app down. See [deploy/fly/README.md](deploy/fly/README.md).
+
+```bash
+cp deploy/fly/.env.example deploy/fly/.env && $EDITOR deploy/fly/.env
+deploy/fly/calnode-fly.sh init      # first time
+deploy/fly/calnode-fly.sh deploy    # every release
+```
 
 ## 3a. Fly.io (scripted)
 
@@ -357,8 +371,9 @@ video rooms (§7) need no per-host account at all.
 
 Open `https://<your-domain>/` → it redirects to `/admin/`. On a fresh database
 you'll be guided through **first-run setup** (create the owner account). Then:
-Settings → Email, → Google OAuth, → Branding (logo, business name), and create your
-first event type + availability.
+Settings → Email, → Google OAuth (plus "Who can sign in" domains), → Branding (logo,
+business name, the host-names switch), → Meeting defaults (default participants and the
+invite message), and create your first event type + availability.
 
 ---
 

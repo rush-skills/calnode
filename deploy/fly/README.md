@@ -16,7 +16,7 @@ fly auth login                 # or put a token in FLY_API_TOKEN
 cp deploy/fly/.env.example deploy/fly/.env
 $EDITOR deploy/fly/.env        # app name, org, region, BASE_URL at least
 
-# 3. first deploy — creates the app and volume, generates the encryption keys into .env,
+# 3. first deploy: creates the app and volume, generates the encryption keys into .env,
 #    sets the secrets, builds this checkout and deploys it
 deploy/fly/calnode-fly.sh init
 ```
@@ -24,6 +24,10 @@ deploy/fly/calnode-fly.sh init
 Open `BASE_URL` and create the owner account. Then create an API key (Admin → API Keys),
 put it in `CALNODE_API_KEY`, fill the `SETTINGS_*` lines and run
 `deploy/fly/calnode-fly.sh settings apply` to configure the workspace without the UI.
+
+Set `EMBED_ALLOWED_ORIGINS` to the sites that embed the booking widget or the lead-form
+picker, and leave `TRUSTED_PROXY_CIDRS=172.16.0.0/12` so rate limits key on the visitor
+rather than on Fly's proxy.
 
 ## Everyday commands
 
@@ -42,7 +46,7 @@ put it in `CALNODE_API_KEY`, fill the `SETTINGS_*` lines and run
 deploy/fly/calnode-fly.sh domain add bookings.example.com   # requests the certificate, prints DNS records
 # add the CNAME at Cloudflare as "DNS only" (grey cloud)
 deploy/fly/calnode-fly.sh domain check bookings.example.com # until it says Issued
-deploy/fly/calnode-fly.sh domain set bookings.example.com   # BASE_URL → https://… , secrets pushed, app restarted
+deploy/fly/calnode-fly.sh domain set bookings.example.com   # BASE_URL → https://…, secrets pushed, app restarted
 ```
 
 Google OAuth redirect URIs follow `BASE_URL`: `/v1/auth/callback` and `/v1/calendar/callback`.
@@ -75,12 +79,3 @@ Everything reads environment variables, so a pipeline can export `FLY_API_TOKEN`
 `BASE_URL`, `CALNODE_ENCRYPTION_KEY`, `CALNODE_RECOVERY_SECRET` (and the rest) as CI secrets and
 run `deploy/fly/calnode-fly.sh deploy`. `CALNODE_ENV_FILE=/path/to/other.env` points the script
 at a different file, for example one per environment.
-
-## Fork additions (iJewel3D)
-
-This fork adds org-wide event types, default participants and a default invite message,
-a team calendar with embeddable share links, live events / office hours with a public
-status widget, a booking picker that sits inside your own lead form, searchable timezone
-pickers, sign-in by Workspace domain, member removal with transfer, and a scripted Fly.io
-deployment. Notes: `docs/features/`, `docs/embed-in-form.md`, `deploy/fly/README.md`,
-and the "Unreleased" section of `CHANGELOG.md`.

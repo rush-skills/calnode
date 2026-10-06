@@ -120,27 +120,9 @@ as `EmailSettings`/`LLMSettings`).
 - `TestTeamPage_showHostNamesOff`: roster gone, event types still listed, person page
   still named.
 
-### Not done / deliberate
+### Later changes
 
-- **Transient after upgrade:** `embed.js` is served with `max-age=300, must-revalidate`.
-  A customer page holding the previous script for up to five minutes will fetch the new
-  public payload (whose `i18n` table no longer has `powered_by`) and its `t()` falls
-  back to the key, so the footer reads "powered_by Calnode" for that window, then
-  disappears on the next revalidation. Keeping a dead key in nine locale files for one
-  release was judged worse than a five-minute glitch on a footer being removed; a CDN
-  that ignores `must-revalidate` lengthens the window, which DEPLOY.md already warns
-  about for `/public`.
-- The migration number (00071) was assigned by the integrator while 00068–00070 are
-  on sibling branches. `goose.Up` runs without `WithAllowMissing`, so a *development*
-  database migrated on this branch alone will refuse to start once the lower-numbered
-  files merge ("missing migrations before current version"); a fresh database, or one
-  migrated after the merge, applies them in order and is fine.
-- The enforcement is per public call site (six `ShowHostNames` checks) rather than a
-  single `publicHosts` wrapper around `displayHosts`/`displayHostsForBooking`, because
-  the admin/MCP callers of those helpers must keep receiving names and each public
-  site also needs the flag for its template. A new public caller must check the flag.
-- No "mobile" browser verification was possible in this environment; the layout change
-  is structural (the host block is removed, not restyled) and the existing responsive
-  rules apply unchanged. Worth a quick look on a phone for each of the three surfaces.
-- `gofmt -l` flagged a pre-existing one-line alignment issue in
-  `internal/calendar/microsoft/microsoft_test.go`; it is included (whitespace only).
+- Commit 19092d5 refined the OFF behaviour: only event types with more than one host hide
+  individual names, showing a single "<Business> team" entry (`teamHost` in `book.go`);
+  single-host event types always show their host. Default participants are not hosts.
+- The migration-numbering note that used to live here is moot: 00068–00076 are contiguous.

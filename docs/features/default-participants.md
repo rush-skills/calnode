@@ -13,7 +13,7 @@ auto-joins a meeting when a shared mailbox (e.g. `notes@example.com`) is on the 
   not part of the booking record. A host with no connected calendar therefore invites no
   one - there is no fallback path, by design.
 - **Workspace-wide, not per event type.** One list, admin-only, under Settings →
-  Workspace → Default participants. Per-event-type overrides were deliberately left out of
+  Meeting defaults. Per-event-type overrides were deliberately left out of
   the first cut; the column and helpers are shaped so that could be layered on later.
 - **Never block a booking.** The list is loaded once per operation through
   `loadDefaultAttendees`; a load failure is logged and the event is created without extras.

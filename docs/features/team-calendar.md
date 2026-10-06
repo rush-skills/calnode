@@ -152,7 +152,6 @@ Scheduling, visible to every member.
 
 - **Migration number 00074 while the tree's latest is 00067.** The number was assigned
   by the integrator (other branches hold 00068-00073). `db.Migrate` runs `goose.Up` without
-  `AllowMissing`, so if 00074 is ever applied to a database *before* a lower-numbered
   migration lands, the next boot fails with "missing migrations". Merge order is the
   integrator's call; flagged, not changed.
 - **`created_by … ON DELETE CASCADE`** is the schema the brief specified. Consequence:
