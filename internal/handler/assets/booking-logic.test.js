@@ -120,6 +120,21 @@ test('tzMatches finds zones by old name, city, offset and abbreviation', () => {
   assert.equal(first('pst'), 'America/Los_Angeles');
   assert.equal(first('cest'), 'Europe/Berlin');
   assert.equal(B.tzMatches(list, 'nowhere-zone').length, 0);
+});
+
+test('tzMatches ranks the obvious zone first for utc, india and est', () => {
+  // Every zone's keys carry a "UTC+x" offset, and several IDs start with "Indian/" or
+  // "America/Indiana/", so these used to be beaten by offset order.
+  const raw = ['Pacific/Midway', 'Indian/Maldives', 'Indian/Mayotte', 'America/Indiana/Indianapolis',
+    'Asia/Calcutta', 'Asia/Colombo', 'America/Cancun', 'America/Atikokan', 'America/New_York', 'Europe/London'];
+  const list = B.tzList(raw, '', new Date('2026-10-06T12:00:00Z'));
+  const first = q => (B.tzMatches(list, q)[0] || {}).id;
+  assert.equal(first('utc'), 'UTC');
+  assert.equal(first('UTC'), 'UTC');
+  assert.equal(first('india'), 'Asia/Kolkata');
+  assert.equal(first('est'), 'America/New_York');
+  // The whole-word tier does not hide the prefix matches, it only orders them after.
+  assert.ok(B.tzMatches(list, 'india').some(z => z.id === 'Indian/Maldives'));
   // Old and current names collapse to one entry, plus UTC is always present.
   assert.equal(list.filter(z => z.id === 'Asia/Kolkata').length, 1);
   assert.ok(list.some(z => z.id === 'UTC'));

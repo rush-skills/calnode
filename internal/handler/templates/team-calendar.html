@@ -133,13 +133,24 @@ button[aria-pressed="true"] { background: var(--fg); color: #fff; border-color: 
     return { from: s2, to: addDays(s2, 42) };
   }
 
-  function load() {
+  // load(): show the visible range, from the per-range cache when it has it.
+  // load(true): refetch the visible range in the background (the grid stays up while the
+  // request is in flight) — used by the 60 s poll and when the tab becomes visible again,
+  // so a calendar left open on a wall display does not go stale. A 401 means the share
+  // token was revoked: every cached week is dropped so nothing stale is shown again, and
+  // the "no longer valid" state replaces the grid.
+  function load(refresh) {
     var r = gridRange();
     var key = ymd(r.from) + '/' + ymd(addDays(r.to, -1));
-    if (state.cache[key]) { state.members = state.cache[key].members; state.items = state.cache[key].items; render(); return; }
-    $('body').innerHTML = '<div class="tc-status">Loading…</div>';
+    if (state.revoked) { $('body').innerHTML = '<div class="tc-status error">This share link is no longer valid.</div>'; return; }
+    if (!refresh && state.cache[key]) { state.members = state.cache[key].members; state.items = state.cache[key].items; render(); return; }
+    if (!refresh) $('body').innerHTML = '<div class="tc-status">Loading…</div>';
     fetch('/v1/team-calendar?from=' + ymd(r.from) + '&to=' + ymd(addDays(r.to, -1)) + '&token=' + encodeURIComponent(TOKEN), { cache: 'no-store' })
-      .then(function (res) { if (!res.ok) throw new Error(res.status === 401 ? 'This share link is no longer valid.' : 'Could not load the calendar (' + res.status + ').'); return res.json(); })
+      .then(function (res) {
+        if (res.status === 401) { state.cache = {}; state.revoked = true; throw new Error('This share link is no longer valid.'); }
+        if (!res.ok) throw new Error('Could not load the calendar (' + res.status + ').');
+        return res.json();
+      })
       .then(function (data) {
         // All-day bounds are UTC midnights naming calendar days: rebuild them as LOCAL
         // midnights so the day survives the viewer's time zone. Timed events are instants.
@@ -147,10 +158,21 @@ button[aria-pressed="true"] { background: var(--fg); color: #fff; border-color: 
           it.s = it.all_day ? localDay(it.start) : new Date(it.start);
           it.e = it.all_day ? localDay(it.end) : new Date(it.end);
         });
-        state.cache[key] = data; state.members = data.members; state.items = data.items; render();
+        state.cache[key] = data;
+        // The viewer may have moved on while a background refresh was in flight.
+        var now = gridRange();
+        if (ymd(now.from) + '/' + ymd(addDays(now.to, -1)) !== key) return;
+        state.members = data.members; state.items = data.items; render();
       })
-      .catch(function (err) { $('body').innerHTML = '<div class="tc-status error">' + esc(err.message) + '</div>'; });
+      .catch(function (err) {
+        // A failed background refresh keeps the last good grid; only the revoked token
+        // (or an initial load) replaces it with the status line.
+        if (refresh && !state.revoked) return;
+        $('body').innerHTML = '<div class="tc-status error">' + esc(err.message) + '</div>';
+      });
   }
+  setInterval(function () { if (!document.hidden) load(true); }, 60000);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) load(true); });
 
   function memberById(id) { for (var i = 0; i < state.members.length; i++) if (state.members[i].id === id) return state.members[i]; return null; }
   function visibleItems() { return state.items.filter(function (it) { return !state.hidden[it.member_id]; }); }
@@ -300,7 +322,24 @@ button[aria-pressed="true"] { background: var(--fg); color: #fff; border-color: 
   $('prev').onclick = function () { step(-1); };
   $('next').onclick = function () { step(1); };
   $('today').onclick = function () { state.anchor = startOfDay(new Date()); load(); };
-  try { $('tz').textContent = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { $('tz').textContent = 'local'; }
+  // Mirrors TZ_RENAMED in assets/booking-logic.js (this page does not load it): Chromium
+  // still reports old IANA names such as Asia/Calcutta, so the footer shows the current one.
+  var TZ_RENAMED = {
+    'Asia/Calcutta': 'Asia/Kolkata', 'Asia/Saigon': 'Asia/Ho_Chi_Minh', 'Asia/Katmandu': 'Asia/Kathmandu',
+    'Asia/Rangoon': 'Asia/Yangon', 'Asia/Ulan_Bator': 'Asia/Ulaanbaatar', 'Asia/Dacca': 'Asia/Dhaka',
+    'Asia/Thimbu': 'Asia/Thimphu', 'Asia/Ujung_Pandang': 'Asia/Makassar', 'Asia/Macao': 'Asia/Macau',
+    'Europe/Kiev': 'Europe/Kyiv', 'Europe/Uzhgorod': 'Europe/Kyiv', 'Europe/Zaporozhye': 'Europe/Kyiv',
+    'America/Godthab': 'America/Nuuk', 'Atlantic/Faeroe': 'Atlantic/Faroe',
+    'Pacific/Truk': 'Pacific/Chuuk', 'Pacific/Ponape': 'Pacific/Pohnpei', 'Pacific/Enderbury': 'Pacific/Kanton',
+    'America/Buenos_Aires': 'America/Argentina/Buenos_Aires', 'America/Catamarca': 'America/Argentina/Catamarca',
+    'America/Cordoba': 'America/Argentina/Cordoba', 'America/Jujuy': 'America/Argentina/Jujuy',
+    'America/Mendoza': 'America/Argentina/Mendoza', 'America/Indianapolis': 'America/Indiana/Indianapolis',
+    'America/Louisville': 'America/Kentucky/Louisville', 'America/Coral_Harbour': 'America/Atikokan'
+  };
+  try {
+    var zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    $('tz').textContent = (TZ_RENAMED[zone] || zone).replace(/_/g, ' ');
+  } catch (e) { $('tz').textContent = 'local'; }
   load();
 })();
 </script>

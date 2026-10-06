@@ -6,7 +6,8 @@
 	import CheckIcon from '@lucide/svelte/icons/check';
 	import ChevronsUpDownIcon from '@lucide/svelte/icons/chevrons-up-down';
 
-	type Item = { value: string; label: string };
+	// `keywords`: extra searchable text (e.g. aliases) that is matched but never shown.
+	type Item = { value: string; label: string; keywords?: string };
 
 	let {
 		items,
@@ -28,7 +29,9 @@
 	const selectedLabel = $derived(items.find((i) => i.value === value)?.label ?? '');
 	const filtered = $derived(
 		filter.trim()
-			? items.filter((i) => i.label.toLowerCase().includes(filter.trim().toLowerCase()))
+			? items.filter((i) =>
+					`${i.label} ${i.keywords ?? ''}`.toLowerCase().includes(filter.trim().toLowerCase())
+				)
 			: items
 	);
 

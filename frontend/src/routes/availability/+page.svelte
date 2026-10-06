@@ -3,10 +3,12 @@
 	import { base } from '$app/paths';
 	import { api, type AvailabilityRule, type AvailabilityOverride } from '$lib/api';
 
+	import { prefs, fmtDate, canonicalTz } from '$lib/prefs';
+
 	// The zone the browser reports, so a mismatch with the profile zone (the one the
 	// hours below are interpreted in) is called out instead of silently shifting slots.
-	const browserTz = typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : '';
-	import { prefs, fmtDate } from '$lib/prefs';
+	// Both sides are canonicalised so Asia/Kolkata vs Asia/Calcutta is not a mismatch.
+	const browserTz = typeof Intl !== 'undefined' ? canonicalTz(Intl.DateTimeFormat().resolvedOptions().timeZone) : '';
 	import { Button, buttonVariants } from '$lib/components/ui/button';
 	import { ConfirmDialog } from '$lib/components/ui/confirm-dialog';
 	import { Badge } from '$lib/components/ui/badge';
@@ -317,7 +319,7 @@
 	<p class="mt-1 text-sm text-muted-foreground">
 		Set your weekly hours and block off specific dates. Times are in
 		<span class="font-medium text-foreground">{$prefs.timezone}</span>
-		{#if browserTz && browserTz !== $prefs.timezone}
+		{#if browserTz && browserTz !== canonicalTz($prefs.timezone)}
 			<span class="text-amber-700">(your browser is in {browserTz})</span>
 		{/if}
 		&mdash; change it in <a href="{base}/settings/profile" class="underline">Profile</a>.

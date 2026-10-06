@@ -147,12 +147,12 @@
     'America/Louisville': 'America/Kentucky/Louisville', 'America/Coral_Harbour': 'America/Atikokan'
   };
   var TZ_ABBR = {
-    ist: ['Asia/Kolkata'], pst: ['America/Los_Angeles'], pdt: ['America/Los_Angeles'], pt: ['America/Los_Angeles'],
+    ist: ['Asia/Kolkata'], india: ['Asia/Kolkata'], pst: ['America/Los_Angeles'], pdt: ['America/Los_Angeles'], pt: ['America/Los_Angeles'],
     mst: ['America/Denver', 'America/Phoenix'], mdt: ['America/Denver'], mt: ['America/Denver'],
     cst: ['America/Chicago'], cdt: ['America/Chicago'], ct: ['America/Chicago'],
     est: ['America/New_York'], edt: ['America/New_York'], et: ['America/New_York'],
     akst: ['America/Anchorage'], hst: ['Pacific/Honolulu'], brt: ['America/Sao_Paulo'], art: ['America/Argentina/Buenos_Aires'],
-    gmt: ['Europe/London', 'UTC'], bst: ['Europe/London'], wet: ['Europe/Lisbon'],
+    utc: ['UTC'], gmt: ['Europe/London', 'UTC'], bst: ['Europe/London'], wet: ['Europe/Lisbon'],
     cet: ['Europe/Berlin', 'Europe/Paris'], cest: ['Europe/Berlin', 'Europe/Paris'],
     eet: ['Europe/Athens', 'Africa/Cairo'], eest: ['Europe/Athens'], msk: ['Europe/Moscow'],
     gst: ['Asia/Dubai'], pkt: ['Asia/Karachi'], npt: ['Asia/Kathmandu'], ict: ['Asia/Bangkok'], wib: ['Asia/Jakarta'],
@@ -207,8 +207,10 @@
     out.sort(function (a, b) { return a.mins - b.mins || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0); });
     return out;
   }
-  // tzMatches: zones holding every word of the query, best first (pinned abbreviation, city
-  // prefix, exact name/abbreviation, ID prefix, word prefix, substring), offset order within.
+  // tzMatches: zones holding every word of the query, best first (pinned abbreviation, exact
+  // name/abbreviation, whole word of a name, city prefix, ID prefix, word prefix, substring),
+  // offset order within. The whole-word tier sits above city prefix so "india" ranks
+  // Asia/Kolkata ("India Standard Time") ahead of Indianapolis and Indian/Maldives.
   function tzMatches(list, query) {
     var q = String(query || '').trim().toLowerCase();
     if (!q) return list;
@@ -216,11 +218,13 @@
     list.forEach(function (z) {
       var pin = pinned.indexOf(z.id);
       if (pin === -1) for (var i = 0; i < words.length; i++) if (z.keys.indexOf(words[i]) === -1) return;
+      var keyWords = ' ' + z.keys.replace(/[^a-z0-9+:-]+/g, ' ') + ' ', simple = !/\W/.test(q);
       var rank = pin !== -1 ? pin - 100
-        : z.city.indexOf(q) === 0 ? 0
-        : (' | ' + z.keys + ' | ').indexOf(' | ' + q + ' | ') !== -1 ? 1
-        : z.id.toLowerCase().indexOf(q) === 0 ? 2
-        : /\W/.test(q) ? 4 : (' ' + z.keys.replace(/[^a-z0-9+:-]+/g, ' ')).indexOf(' ' + words[0]) !== -1 ? 3 : 4;
+        : (' | ' + z.keys + ' | ').indexOf(' | ' + q + ' | ') !== -1 ? 0
+        : simple && keyWords.indexOf(' ' + q + ' ') !== -1 ? 1
+        : z.city.indexOf(q) === 0 ? 2
+        : z.id.toLowerCase().indexOf(q) === 0 ? 3
+        : simple && keyWords.indexOf(' ' + words[0]) !== -1 ? 4 : 5;
       hits.push({ rank: rank, z: z });
     });
     hits.sort(function (a, b) { return a.rank - b.rank || a.z.mins - b.z.mins || (a.z.id < b.z.id ? -1 : 1); });

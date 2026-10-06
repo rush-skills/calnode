@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api, type User } from '$lib/api';
-	import { prefs, prefsFromUser, timezoneOptions, WEEK_DAYS } from '$lib/prefs';
+	import { prefs, prefsFromUser, timezoneOptions, canonicalTz, WEEK_DAYS } from '$lib/prefs';
 	import { currentUser } from '$lib/stores';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
@@ -78,7 +78,9 @@
 		name = user.name ?? '';
 		handle = user.handle ?? '';
 		booking_accent = user.booking_accent;
-		timezone = user.timezone;
+		// A stored legacy alias (Asia/Calcutta) is shown under its current name; a zone the
+		// browser cannot canonicalise stays as stored and timezoneOptions keeps it selectable.
+		timezone = canonicalTz(user.timezone);
 		time_format = user.time_format ?? '12h';
 		week_start = user.week_start ?? 1;
 		date_format = user.date_format ?? 'dmy';
@@ -126,7 +128,7 @@
 	async function save() {
 		await savingFlag.run(async () => {
 			const updated = await api.patch<User>('/v1/users/me', {
-				name, timezone, time_format, week_start, date_format, booking_accent, handle,
+				name, timezone: canonicalTz(timezone), time_format, week_start, date_format, booking_accent, handle,
 			});
 			currentUser.set(updated);
 			prefs.set(prefsFromUser(updated));
@@ -217,7 +219,7 @@
 				<div class="space-y-1.5">
 					<Label for="timezone">Timezone</Label>
 					<Combobox
-						items={timezoneOptions(timezone).map((tz) => ({ value: tz, label: tz }))}
+						items={timezoneOptions(timezone)}
 						bind:value={timezone}
 						placeholder="Select timezone…"
 						searchPlaceholder="Search timezones…"
