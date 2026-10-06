@@ -65,6 +65,19 @@ must forward the original `Host` header** — Calnode's CSRF check compares
 
 ---
 
+## 3a. Fly.io (scripted)
+
+`deploy/fly/calnode-fly.sh` runs every Fly operation from a `.env` file: create the app and
+volume, generate and push secrets, deploy a checkout, add a custom domain, enable and verify
+Litestream backups, download or restore the database, scale, apply workspace settings
+through the admin API, and tear the app down. See [deploy/fly/README.md](deploy/fly/README.md).
+
+```bash
+cp deploy/fly/.env.example deploy/fly/.env && $EDITOR deploy/fly/.env
+deploy/fly/calnode-fly.sh init      # first time
+deploy/fly/calnode-fly.sh deploy    # every release
+```
+
 ## 3. Railway (reference deploy)
 
 Railway auto-detects the `Dockerfile` and builds it. Steps:
