@@ -28,7 +28,8 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.QueryContext(r.Context(), `
 		SELECT u.id, u.email, u.name, u.iana_timezone, u.is_admin, u.is_owner, u.email_login,
 		       COALESCE(u.provider,''), COALESCE(u.avatar_url,''), COALESCE(u.handle,''), u.created_at,
-		       u.archived_at, COALESCE(u.archived_by,''), COALESCE(ab.name,'')
+		       u.archived_at, COALESCE(u.archived_by,''), COALESCE(ab.name,''),
+		       EXISTS (SELECT 1 FROM calendar_connections cc WHERE cc.user_id = u.id)
 		FROM users u LEFT JOIN users ab ON ab.id = u.archived_by
 		`+where+` ORDER BY u.created_at ASC`)
 	if err != nil {
@@ -59,18 +60,23 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		ArchivedAt     string    `json:"archived_at,omitempty"`
 		ArchivedBy     string    `json:"archived_by,omitempty"`
 		ArchivedByName string    `json:"archived_by_name,omitempty"`
-		Teams          []teamRef `json:"teams"`
+		// HasCalendar is false when the member has no connected calendar at all. A
+		// host in that state sends no invites for their bookings, silently: the
+		// editor's Hosts tab and the members page warn on it.
+		HasCalendar bool      `json:"has_calendar"`
+		Teams       []teamRef `json:"teams"`
 	}
 	out := []userRow{}
 	byID := map[string]*userRow{}
 	for rows.Next() {
 		var u userRow
-		var isAdmin, isOwner, emailLogin int
+		var isAdmin, isOwner, emailLogin, hasCal int
 		var archivedAt sql.NullString
 		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.Timezone, &isAdmin, &isOwner, &emailLogin,
-			&u.Provider, &u.AvatarURL, &u.Handle, &u.CreatedAt, &archivedAt, &u.ArchivedBy, &u.ArchivedByName); err != nil {
+			&u.Provider, &u.AvatarURL, &u.Handle, &u.CreatedAt, &archivedAt, &u.ArchivedBy, &u.ArchivedByName, &hasCal); err != nil {
 			continue
 		}
+		u.HasCalendar = hasCal != 0
 		u.IsAdmin = isAdmin != 0
 		u.IsOwner = isOwner != 0
 		u.EmailLogin = emailLogin != 0

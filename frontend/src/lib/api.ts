@@ -219,6 +219,7 @@ export type CalendarStatus = {
 	providers?: string[]; // configured providers available to connect
 	connections?: CalendarConnection[]; // all connected calendars (many checked, one destination)
 	unconfigured_providers?: string[]; // providers Calnode supports but this instance has no credentials for
+	hosts_event_types?: boolean; // the signed-in user owns or hosts at least one event type
 };
 
 export type EmailSettings = {
@@ -324,6 +325,7 @@ export type TeamMember = {
 	avatar_url?: string;
 	created_at: string;
 	archived: boolean;
+	has_calendar: boolean; // false = no connected calendar: their bookings send no invites
 	archived_at?: string;
 	archived_by?: string;
 	archived_by_name?: string;

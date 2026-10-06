@@ -7,7 +7,7 @@ name: Audit
 # This is separate from ci.yml (build/test) — audit signal, not correctness.
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   schedule:
     - cron: '20 6 * * 1' # weekly, Monday — catches newly-disclosed CVEs even with no code changes
   workflow_dispatch:

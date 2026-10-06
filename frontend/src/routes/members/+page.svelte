@@ -9,6 +9,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import { Badge } from '$lib/components/ui/badge';
+	import * as Tooltip from '$lib/components/ui/tooltip';
 	import * as Select from '$lib/components/ui/select';
 	import { toast } from 'svelte-sonner';
 
@@ -591,6 +592,16 @@
 									<div class="flex items-center gap-1.5">
 										<Badge variant={roleVariant(m)}>{roleLabel(m)}</Badge>
 										{#if m.archived}<Badge variant="outline" class="text-xs text-muted-foreground">Archived</Badge>{/if}
+										{#if !m.archived && !m.has_calendar}
+											<Tooltip.Provider>
+												<Tooltip.Root>
+													<Tooltip.Trigger>
+														<Badge variant="outline" class="border-amber-500/50 text-xs text-amber-700 dark:text-amber-300">No calendar</Badge>
+													</Tooltip.Trigger>
+													<Tooltip.Content>No connected calendar: bookings they host send no invites and get no Meet link.</Tooltip.Content>
+												</Tooltip.Root>
+											</Tooltip.Provider>
+										{/if}
 									</div>
 								</td>
 								<td class="px-4 py-3">

@@ -17,11 +17,21 @@
 	let checking = $state(true);
 	let reportOpen = $state(false);
 	let recordingsConfigured = $state(false);
+	const RELEASES_URL = 'https://github.com/Calnode/calnode/releases';
 	let version = $state('');
+	let commit = $state('');
+	// Shown when this member hosts something but has no calendar connected: their
+	// bookings silently send no invites. Dismissable per browser session only.
+	let noCalendar = $state(false);
+	let noCalendarDismissed = $state(false);
+	// Release-style versions (v1.2.3) link to the upstream release; a branch build
+	// shows "<branch> · <commit>" so it is obvious which deploy is running.
+	const isRelease = $derived(/^v?\d+\.\d+/.test(version));
+	const versionHref = $derived(isRelease || !commit || commit === 'unknown' ? RELEASES_URL : `https://github.com/rush-skills/calnode/commit/${commit}`);
+	const versionLabel = $derived(isRelease || !commit || commit === 'unknown' ? version : `${version} · ${commit.slice(0, 7)}`);
 
 	const ISSUES_URL = 'https://github.com/Calnode/calnode/issues';
 	const NEW_ISSUE_URL = 'https://github.com/Calnode/calnode/issues/new/choose';
-	const RELEASES_URL = 'https://github.com/Calnode/calnode/releases';
 
 	const isLogin = $derived($page.route.id === '/login');
 	const isPublicRoute = $derived(
@@ -171,8 +181,16 @@
 			// Non-critical — the demo banner and calendar/Zoom hiding just won't show.
 		}
 		try {
-			const v = await api.get<{ version: string }>('/version');
+			noCalendarDismissed = sessionStorage.getItem('calnode:no-calendar-dismissed') === '1';
+			const cs = await api.get<{ connected: boolean; configured?: boolean; hosts_event_types?: boolean }>('/v1/calendar/status');
+			noCalendar = !!cs.configured && !cs.connected && !!cs.hosts_event_types;
+		} catch {
+			// Non-critical: the banner just stays hidden.
+		}
+		try {
+			const v = await api.get<{ version: string; commit?: string }>('/version');
 			version = v.version;
+			commit = v.commit ?? '';
 		} catch {
 			// Non-critical - the sidebar version link just won't show.
 		}
@@ -206,6 +224,17 @@
 	<div class="flex h-full flex-col">
 	{#if $authStatus.demo_mode}
 		<DemoBanner />
+	{/if}
+	{#if noCalendar && !noCalendarDismissed && !$page.url.pathname.startsWith(`${base}/settings/calendar`)}
+		<div role="alert" class="flex items-center gap-3 border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm text-amber-900 dark:text-amber-200">
+			<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+			<p class="min-w-0 flex-1">
+				<span class="font-medium">You have no calendar connected.</span>
+				Bookings you host will not create a calendar event, so nobody gets an invite and no meeting link is generated.
+			</p>
+			<a href="{base}/settings/calendar" class={buttonVariants({ variant: 'outline', size: 'sm' })}>Connect calendar</a>
+			<button type="button" class="text-xs text-amber-900/70 hover:text-amber-900 dark:text-amber-200/70 dark:hover:text-amber-200" onclick={() => { noCalendarDismissed = true; try { sessionStorage.setItem('calnode:no-calendar-dismissed', '1'); } catch {} }}>Dismiss</button>
+		</div>
 	{/if}
 	<div class="flex flex-1 overflow-hidden">
 		<!-- Sidebar -->
@@ -279,12 +308,12 @@
 				</button>
 				{#if version}
 					<a
-						href={RELEASES_URL}
+						href={versionHref}
 						target="_blank"
 						rel="noopener noreferrer"
 						class="mt-1 block px-2.5 py-1 text-xs text-sidebar-foreground/35 transition-colors hover:text-sidebar-foreground/60"
 					>
-						{version}
+						{versionLabel}
 					</a>
 				{/if}
 			</div>

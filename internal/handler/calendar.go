@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -194,14 +195,15 @@ func unconfiguredProviders(svc *calendar.Service) []string {
 // this instance hasn't been configured with credentials for yet.
 func (h *Handler) CalendarStatus(w http.ResponseWriter, r *http.Request) {
 	svc := h.getCal()
+	user, _ := userFromContext(r.Context())
 	if svc == nil || !svc.Any() {
 		h.writeJSON(w, http.StatusOK, map[string]any{
 			"connected": false, "configured": false, "connections": []any{},
 			"unconfigured_providers": unconfiguredProviders(svc),
+			"hosts_event_types":      h.userHostsEventTypes(r.Context(), user.ID),
 		})
 		return
 	}
-	user, _ := userFromContext(r.Context())
 	conns, err := svc.Connections(r.Context(), user.ID)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "calendar status", "error", err)
@@ -224,6 +226,7 @@ func (h *Handler) CalendarStatus(w http.ResponseWriter, r *http.Request) {
 		"providers":              svc.ProviderNames(),
 		"connections":            conns,
 		"unconfigured_providers": unconfiguredProviders(svc),
+		"hosts_event_types":      h.userHostsEventTypes(r.Context(), user.ID),
 	}
 	if destProvider != "" {
 		resp["provider"] = destProvider
@@ -381,4 +384,19 @@ func (h *Handler) PutConnectionCalendars(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// userHostsEventTypes reports whether the user owns or is a host on any event
+// type. It drives the "no calendar connected" banner in the admin shell: a
+// member who hosts nothing has no bookings to lose invites on, so no banner.
+func (h *Handler) userHostsEventTypes(ctx context.Context, userID string) bool {
+	var n int
+	err := h.db.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM event_types WHERE user_id = ?)
+		    OR EXISTS (SELECT 1 FROM event_type_hosts WHERE user_id = ?)`, userID, userID).Scan(&n)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "calendar status: hosts check", "error", err)
+		return false
+	}
+	return n != 0
 }

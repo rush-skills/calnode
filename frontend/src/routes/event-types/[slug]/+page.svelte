@@ -146,6 +146,19 @@
 	}
 
 	let members = $state<TeamMember[]>([]);
+	// Hosts in the current staffing who have no connected calendar. Their bookings
+	// create no calendar event, so nobody (host, booker, default participants) gets
+	// an invite. Surfaced as a warning on the Hosts tab; it never blocks saving.
+	const hostsWithoutCalendar = $derived.by(() => {
+		if (members.length === 0) return [] as string[];
+		let ids: string[];
+		if (hostScope === 'me') ids = [et?.owner_id ?? $currentUser?.id ?? ''];
+		else ids = (staffing === 'together' ? togetherHosts : rotationHosts).map((h) => h.user_id);
+		return ids
+			.map((id) => members.find((m) => m.id === id))
+			.filter((m): m is TeamMember => !!m && !m.has_calendar)
+			.map((m) => (m.id === $currentUser?.id ? 'you' : m.name));
+	});
 	let teams = $state<Team[]>([]);
 
 	// routing_mode is derived from the two answers — never set directly.
@@ -196,6 +209,7 @@
 		hostScope = s;
 		if (s === 'people') {
 			if (!hostsLoaded) loadHosts();
+			loadMembers();
 			loadMembers();
 			loadTeams();
 		}
@@ -854,6 +868,16 @@
 	<div class="rounded-lg border bg-card p-6">
 		<div>
 			<p class="-mt-1 mb-4 text-sm text-muted-foreground">Who can host this event, and how meetings are staffed.</p>
+			{#if hostsWithoutCalendar.length > 0}
+				<div role="alert" class="mb-4 flex gap-2.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-900 dark:text-amber-200">
+					<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mt-0.5 shrink-0"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+					<div>
+						<span class="font-medium">No calendar connected for {hostsWithoutCalendar.join(', ')}.</span>
+						Bookings assigned to them will not create a calendar event, so no invite reaches the host, the booker or the default participants, and no Google Meet link is generated.
+						{#if hostsWithoutCalendar.includes('you')}<a href="{base}/settings/calendar" class="underline underline-offset-2">Connect a calendar</a>.{:else}Ask them to connect one in Settings → Calendar.{/if}
+					</div>
+				</div>
+			{/if}
 
 			<!-- Q1 — who can host -->
 			<div class="space-y-1.5">

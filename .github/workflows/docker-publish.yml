@@ -15,7 +15,7 @@ name: Docker publish
 # you, and then nothing records which commit an instance is actually running.
 on:
   push:
-    branches: [main, dev]
+    branches: [main, dev, develop]
     tags: ['v*.*.*']
   pull_request:
 
