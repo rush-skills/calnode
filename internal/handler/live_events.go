@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/calnode/calnode/internal/calendar"
@@ -57,6 +58,11 @@ const (
 // no destination calendar that can mint one.
 var errLiveNoCalendar = errors.New("live event: host has no connected calendar that can create a meeting link")
 
+// errLiveEventGone is a transition refused because the row was cancelled (or otherwise
+// left the expected state) while the caller was deciding: a cancelled session never
+// becomes live or ended again, whatever was in flight. DELETE wins.
+var errLiveEventGone = errors.New("live event: the session was cancelled in the meantime")
+
 // liveEvent is one live_events row, in API shape. Nullable timestamps serialise as null.
 type liveEvent struct {
 	ID               string  `json:"id"`
@@ -73,10 +79,14 @@ type liveEvent struct {
 	AutoStart        bool    `json:"auto_start"`
 	AutoEnd          bool    `json:"auto_end"`
 	JoinURL          string  `json:"join_url"`
-	HasCalendarEvent bool    `json:"has_calendar_event"`
-	CreatedBy        string  `json:"created_by"`
-	CreatedAt        string  `json:"created_at"`
-	UpdatedAt        string  `json:"updated_at"`
+	// JoinURLMinted: the link came from the host's calendar provider (Meet/Teams), so it
+	// belongs to the host's calendar event and is re-minted on a host change. A manual
+	// link is kept across host changes.
+	JoinURLMinted    bool   `json:"join_url_minted"`
+	HasCalendarEvent bool   `json:"has_calendar_event"`
+	CreatedBy        string `json:"created_by"`
+	CreatedAt        string `json:"created_at"`
+	UpdatedAt        string `json:"updated_at"`
 
 	// Stamped calendar event, never serialised: the triple routes updates and cancels to
 	// the provider that wrote the event (see calendar.Service.UpdateEvent).
@@ -88,6 +98,7 @@ type liveEvent struct {
 const liveEventSelect = `
 	SELECT e.id, e.title, e.description, e.kind, e.status, COALESCE(e.host_user_id, ''), COALESCE(u.name, ''),
 	       e.scheduled_start_at, e.scheduled_end_at, e.started_at, e.ended_at, e.auto_start, e.auto_end, e.join_url,
+	       e.join_url_minted,
 	       COALESCE(e.external_event_id, ''), COALESCE(e.external_calendar_id, ''), COALESCE(e.external_provider, ''),
 	       e.created_by, e.created_at, e.updated_at
 	FROM live_events e LEFT JOIN users u ON u.id = e.host_user_id`
@@ -98,15 +109,16 @@ type liveEventScanner interface {
 
 func scanLiveEvent(row liveEventScanner) (*liveEvent, error) {
 	var ev liveEvent
-	var autoStart, autoEnd int
+	var autoStart, autoEnd, minted int
 	if err := row.Scan(&ev.ID, &ev.Title, &ev.Description, &ev.Kind, &ev.Status, &ev.HostUserID, &ev.HostName,
 		&ev.ScheduledStartAt, &ev.ScheduledEndAt, &ev.StartedAt, &ev.EndedAt, &autoStart, &autoEnd, &ev.JoinURL,
-		&ev.externalEventID, &ev.externalCalendarID, &ev.externalProvider,
+		&minted, &ev.externalEventID, &ev.externalCalendarID, &ev.externalProvider,
 		&ev.CreatedBy, &ev.CreatedAt, &ev.UpdatedAt); err != nil {
 		return nil, err
 	}
 	ev.AutoStart = autoStart != 0
 	ev.AutoEnd = autoEnd != 0
+	ev.JoinURLMinted = minted != 0
 	ev.HasCalendarEvent = ev.externalEventID != ""
 	return &ev, nil
 }
@@ -278,7 +290,7 @@ func (h *Handler) ensureLiveEventCalendar(ctx context.Context, ev *liveEvent, no
 			h.saveLiveEventCalendar(ctx, ev)
 			return errLiveNoCalendar
 		}
-		ev.JoinURL = link
+		ev.JoinURL, ev.JoinURLMinted = link, true
 	}
 	h.saveLiveEventCalendar(ctx, ev)
 	return nil
@@ -287,9 +299,9 @@ func (h *Handler) ensureLiveEventCalendar(ctx context.Context, ev *liveEvent, no
 func (h *Handler) saveLiveEventCalendar(ctx context.Context, ev *liveEvent) {
 	if _, err := h.db.ExecContext(ctx, `
 		UPDATE live_events SET external_event_id = ?, external_calendar_id = ?, external_provider = ?,
-		       join_url = ?, updated_at = ? WHERE id = ?`,
+		       join_url = ?, join_url_minted = ?, updated_at = ? WHERE id = ?`,
 		nullIfEmpty(ev.externalEventID), nullIfEmpty(ev.externalCalendarID), nullIfEmpty(ev.externalProvider),
-		ev.JoinURL, liveTime(time.Now()), ev.ID); err != nil {
+		ev.JoinURL, boolInt(ev.JoinURLMinted), liveTime(time.Now()), ev.ID); err != nil {
 		h.logger.Error("live events: save calendar event", "error", err, "live_event_id", ev.ID)
 	}
 }
@@ -323,11 +335,18 @@ func (h *Handler) syncLiveEventCalendarTime(ctx context.Context, ev *liveEvent, 
 // cancelLiveEventCalendar deletes the session's calendar event and clears the stamp.
 // Provider errors are logged; the row is cleared either way so a retry cannot double-cancel.
 func (h *Handler) cancelLiveEventCalendar(ctx context.Context, ev *liveEvent) {
+	h.cancelLiveEventCalendarAs(ctx, ev, ev.HostUserID)
+}
+
+// cancelLiveEventCalendarAs is cancelLiveEventCalendar acting as userID: the event lives on
+// the calendar of the host who held the session when it was minted, so a host change must
+// cancel as that host, not the new one (whose calendar never had it).
+func (h *Handler) cancelLiveEventCalendarAs(ctx context.Context, ev *liveEvent, userID string) {
 	if ev.externalEventID == "" {
 		return
 	}
-	if gc := h.getCal(); gc != nil && ev.HostUserID != "" {
-		if err := gc.CancelEvent(ctx, ev.HostUserID, ev.externalCalendarID, ev.externalEventID, ev.externalProvider); err != nil {
+	if gc := h.getCal(); gc != nil && userID != "" {
+		if err := gc.CancelEvent(ctx, userID, ev.externalCalendarID, ev.externalEventID, ev.externalProvider); err != nil {
 			h.logger.Error("live events: cancel calendar event", "error", err, "live_event_id", ev.ID)
 		}
 	}
@@ -340,12 +359,52 @@ func (h *Handler) cancelLiveEventCalendar(ctx context.Context, ev *liveEvent) {
 	}
 }
 
+// liveEventLock returns the mutex serialising transitions of one session.
+func (h *Handler) liveEventLock(id string) *sync.Mutex {
+	m, _ := h.liveEventLocks.LoadOrStore(id, &sync.Mutex{})
+	return m.(*sync.Mutex)
+}
+
+// refreshLiveEvent re-reads the row into ev (keeping the pointer the caller holds).
+func (h *Handler) refreshLiveEvent(ctx context.Context, ev *liveEvent) error {
+	fresh, err := h.loadLiveEvent(ctx, ev.ID)
+	if err != nil {
+		return err
+	}
+	*ev = *fresh
+	return nil
+}
+
 // goLive flips a scheduled session to live at now, minting the calendar event first. The
 // join link is the precondition: a session nobody can join must not be announced as live.
+//
+// The transition is compare-and-set. The sweep, a manual start and a cancel can all reach
+// the same row within a second, and the mint in between is a provider round-trip, so:
+// the per-event lock serialises starts (the second one finds the row live and returns it,
+// one calendar event, not two); the status is re-read under the lock before anything is
+// minted; and the write itself claims the row only from 'scheduled'. If the claim fails,
+// the row changed under us while the provider was busy - the event just minted is
+// cancelled again and the current row is returned: live means someone else started it
+// (idempotent), anything else means it was cancelled, which wins (errLiveEventGone).
 func (h *Handler) goLive(ctx context.Context, ev *liveEvent, now time.Time) error {
-	if ev.Status == liveStatusLive {
-		return nil
+	mu := h.liveEventLock(ev.ID)
+	mu.Lock()
+	defer mu.Unlock()
+	hostID := ev.HostUserID // a start may name the host; keep it across the re-read
+	if err := h.refreshLiveEvent(ctx, ev); err != nil {
+		return fmt.Errorf("live event: reload: %w", err)
 	}
+	if ev.HostUserID == "" {
+		ev.HostUserID = hostID
+	}
+	switch ev.Status {
+	case liveStatusLive:
+		return nil
+	case liveStatusScheduled:
+	default:
+		return errLiveEventGone
+	}
+	preLink, preMinted, preEvent := ev.JoinURL, ev.JoinURLMinted, ev.externalEventID
 	if err := h.ensureLiveEventCalendar(ctx, ev, now); err != nil {
 		return err
 	}
@@ -356,31 +415,122 @@ func (h *Handler) goLive(ctx context.Context, ev *liveEvent, now time.Time) erro
 		return errLiveNoCalendar
 	}
 	ts := liveTime(now)
-	if _, err := h.db.ExecContext(ctx, `
-		UPDATE live_events SET status = 'live', started_at = ?, host_user_id = ?, updated_at = ? WHERE id = ?`,
-		ts, nullIfEmpty(ev.HostUserID), ts, ev.ID); err != nil {
+	res, err := h.db.ExecContext(ctx, `
+		UPDATE live_events SET status = 'live', started_at = ?, host_user_id = ?, updated_at = ?
+		WHERE id = ? AND status = 'scheduled'`,
+		ts, nullIfEmpty(ev.HostUserID), ts, ev.ID)
+	if err != nil {
 		return fmt.Errorf("live event: go live: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		// Lost the claim: undo what the mint wrote (the event and the link it adopted),
+		// then report the row as it is now.
+		if ev.externalEventID != "" && ev.externalEventID != preEvent {
+			h.cancelLiveEventCalendar(ctx, ev)
+			ev.JoinURL, ev.JoinURLMinted = preLink, preMinted
+			if _, err := h.db.ExecContext(ctx, `UPDATE live_events SET join_url = ?, join_url_minted = ? WHERE id = ?`,
+				preLink, boolInt(preMinted), ev.ID); err != nil {
+				h.logger.Error("live events: restore link after lost claim", "error", err, "live_event_id", ev.ID)
+			}
+		}
+		if err := h.refreshLiveEvent(ctx, ev); err != nil {
+			return fmt.Errorf("live event: reload: %w", err)
+		}
+		if ev.Status == liveStatusLive {
+			return nil
+		}
+		return errLiveEventGone
 	}
 	ev.Status, ev.StartedAt, ev.UpdatedAt = liveStatusLive, &ts, ts
 	return nil
 }
 
 // endLive flips a live session to ended at now and trims its calendar event to the real
-// end, so the host's (and the notetaker's) calendar reflects what happened.
+// end, so the host's (and the notetaker's) calendar reflects what happened. Compare-and-set
+// from 'live' only, under the same per-event lock as goLive: a session cancelled meanwhile
+// stays cancelled (errLiveEventGone), one ended meanwhile is simply returned.
 func (h *Handler) endLive(ctx context.Context, ev *liveEvent, now time.Time, syncCalendar bool) error {
-	if ev.Status != liveStatusLive {
+	mu := h.liveEventLock(ev.ID)
+	mu.Lock()
+	defer mu.Unlock()
+	if err := h.refreshLiveEvent(ctx, ev); err != nil {
+		return fmt.Errorf("live event: reload: %w", err)
+	}
+	switch ev.Status {
+	case liveStatusEnded:
 		return nil
+	case liveStatusLive:
+	default:
+		return errLiveEventGone
 	}
 	ts := liveTime(now)
-	if _, err := h.db.ExecContext(ctx, `
-		UPDATE live_events SET status = 'ended', ended_at = ?, updated_at = ? WHERE id = ?`, ts, ts, ev.ID); err != nil {
+	res, err := h.db.ExecContext(ctx, `
+		UPDATE live_events SET status = 'ended', ended_at = ?, updated_at = ? WHERE id = ? AND status = 'live'`, ts, ts, ev.ID)
+	if err != nil {
 		return fmt.Errorf("live event: end: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		if err := h.refreshLiveEvent(ctx, ev); err != nil {
+			return fmt.Errorf("live event: reload: %w", err)
+		}
+		if ev.Status == liveStatusEnded {
+			return nil
+		}
+		return errLiveEventGone
 	}
 	start, _ := liveEventWindow(ev, now)
 	ev.Status, ev.EndedAt, ev.UpdatedAt = liveStatusEnded, &ts, ts
 	if syncCalendar {
 		h.syncLiveEventCalendarTime(ctx, ev, start, now)
 	}
+	return nil
+}
+
+// rehostLiveEvent moves a scheduled or live session to newHostID. The calendar event is
+// cancelled as the host who held it, a minted join link is dropped (it belonged to that
+// event; a manual one is kept), the row is re-pointed, and a fresh event - with a fresh
+// Meet/Teams link when needed - is minted for the new host. Used by PATCH host_user_id
+// and by member removal in transfer mode. A live session keeps its link whatever its
+// origin: the people already in the room must not be moved mid-session.
+func (h *Handler) rehostLiveEvent(ctx context.Context, ev *liveEvent, newHostID string, now time.Time) error {
+	oldHost := ev.HostUserID
+	h.cancelLiveEventCalendarAs(ctx, ev, oldHost)
+	ev.HostUserID = newHostID
+	if ev.JoinURLMinted && ev.Status == liveStatusScheduled {
+		ev.JoinURL, ev.JoinURLMinted = "", false
+	}
+	ev.UpdatedAt = liveTime(now)
+	if _, err := h.db.ExecContext(ctx, `
+		UPDATE live_events SET host_user_id = ?, join_url = ?, join_url_minted = ?, updated_at = ? WHERE id = ?`,
+		nullIfEmpty(ev.HostUserID), ev.JoinURL, boolInt(ev.JoinURLMinted), ev.UpdatedAt, ev.ID); err != nil {
+		return fmt.Errorf("live event: rehost: %w", err)
+	}
+	if err := h.ensureLiveEventCalendar(ctx, ev, now); err != nil && !errors.Is(err, errLiveNoCalendar) {
+		return err
+	}
+	return nil
+}
+
+// cancelLiveEventNow is the cancel transition (a live session is ended first, its calendar
+// event is deleted) shared by DELETE and by member removal. Idempotent; the status write
+// never resurrects a cancelled row.
+func (h *Handler) cancelLiveEventNow(ctx context.Context, ev *liveEvent, now time.Time) error {
+	if ev.Status == liveStatusCancelled {
+		return nil
+	}
+	if ev.Status == liveStatusLive {
+		// No calendar sync here: cancelLiveEventCalendar deletes the event right after,
+		// so trimming its end first would be a wasted provider round-trip.
+		if err := h.endLive(ctx, ev, now, false); err != nil && !errors.Is(err, errLiveEventGone) {
+			return err
+		}
+	}
+	if _, err := h.db.ExecContext(ctx, `
+		UPDATE live_events SET status = 'cancelled', updated_at = ? WHERE id = ? AND status != 'cancelled'`, liveTime(now), ev.ID); err != nil {
+		return fmt.Errorf("live event: cancel: %w", err)
+	}
+	ev.Status = liveStatusCancelled
+	h.cancelLiveEventCalendar(ctx, ev)
 	return nil
 }
 
@@ -586,6 +736,10 @@ func (h *Handler) writeLiveEventError(w http.ResponseWriter, r *http.Request, ev
 		h.writeError(w, http.StatusConflict, "the host has no connected calendar that can create a meeting link; connect a Google or Microsoft calendar or set join_url")
 		return
 	}
+	if errors.Is(err, errLiveEventGone) {
+		h.writeError(w, http.StatusConflict, "this live event was cancelled in the meantime")
+		return
+	}
 	h.logger.ErrorContext(r.Context(), "live events: start", "error", err, "live_event_id", ev.ID)
 	h.writeError(w, http.StatusBadGateway, "could not create the calendar event for this session")
 }
@@ -781,6 +935,9 @@ func (h *Handler) PatchLiveEvent(w http.ResponseWriter, r *http.Request) {
 		}
 		linkChanged = j != ev.JoinURL
 		ev.JoinURL = j
+		if linkChanged {
+			ev.JoinURLMinted = false // typed in (or cleared): no longer the provider's
+		}
 	}
 	scheduleChanged := false
 	if in.ScheduledStartAt != nil || in.ScheduledEndAt != nil {
@@ -799,6 +956,7 @@ func (h *Handler) PatchLiveEvent(w http.ResponseWriter, r *http.Request) {
 		scheduleChanged = true
 	}
 	hostChanged := false
+	newHostID := ev.HostUserID
 	if requested := strings.TrimSpace(ptrString(in.HostUserID)); requested != "" && requested != ev.HostUserID {
 		// "" means "no change": clients that echo the create payload send it, and reading
 		// it as "default to the caller" would silently reassign someone else's session.
@@ -810,7 +968,9 @@ func (h *Handler) PatchLiveEvent(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		ev.HostUserID = hostID
+		// Not applied to ev yet: the old host is needed to cancel the calendar event
+		// that lives on their calendar (rehostLiveEvent).
+		newHostID = hostID
 		hostChanged = true
 	}
 	if in.AutoStart != nil {
@@ -823,28 +983,31 @@ func (h *Handler) PatchLiveEvent(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	ev.UpdatedAt = liveTime(now)
 	if _, err := h.db.ExecContext(r.Context(), `
-		UPDATE live_events SET title = ?, description = ?, kind = ?, host_user_id = ?, scheduled_start_at = ?, scheduled_end_at = ?,
-		       auto_start = ?, auto_end = ?, join_url = ?, updated_at = ? WHERE id = ?`,
-		ev.Title, ev.Description, ev.Kind, nullIfEmpty(ev.HostUserID), ev.ScheduledStartAt, ev.ScheduledEndAt,
-		boolInt(ev.AutoStart), boolInt(ev.AutoEnd), ev.JoinURL, ev.UpdatedAt, ev.ID); err != nil {
+		UPDATE live_events SET title = ?, description = ?, kind = ?, scheduled_start_at = ?, scheduled_end_at = ?,
+		       auto_start = ?, auto_end = ?, join_url = ?, join_url_minted = ?, updated_at = ? WHERE id = ?`,
+		ev.Title, ev.Description, ev.Kind, ev.ScheduledStartAt, ev.ScheduledEndAt,
+		boolInt(ev.AutoStart), boolInt(ev.AutoEnd), ev.JoinURL, boolInt(ev.JoinURLMinted), ev.UpdatedAt, ev.ID); err != nil {
 		h.logger.ErrorContext(r.Context(), "live events: update", "error", err, "live_event_id", ev.ID)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
 	// The calendar event lives on the host's calendar: a new host means the old event is
-	// cancelled and a fresh one minted (when the new host can). A schedule change on the
-	// same host just moves the existing event.
+	// cancelled (as the old host) and a fresh one minted for the new one, with a fresh
+	// link when the old one was minted (rehostLiveEvent). A schedule change on the same
+	// host just moves the existing event.
 	// A changed join link on a scheduled session re-creates the event too: the conference
 	// on the old event would otherwise send the host and the notetaker into a different
 	// room than the one the public feed publishes. (Only scheduled: a live session cannot
 	// change host, and its link may only be replaced by another manual one.)
-	if hostChanged || (linkChanged && ev.Status == liveStatusScheduled && ev.externalEventID != "") {
+	if hostChanged {
+		if err := h.rehostLiveEvent(r.Context(), ev, newHostID, now); err != nil {
+			h.logger.ErrorContext(r.Context(), "live events: calendar event after host change", "error", err, "live_event_id", ev.ID)
+		}
+	} else if linkChanged && ev.Status == liveStatusScheduled && ev.externalEventID != "" {
 		h.cancelLiveEventCalendar(r.Context(), ev)
-		if ev.Status == liveStatusScheduled {
-			if err := h.ensureLiveEventCalendar(r.Context(), ev, now); err != nil && !errors.Is(err, errLiveNoCalendar) {
-				h.logger.ErrorContext(r.Context(), "live events: calendar event after host/link change", "error", err, "live_event_id", ev.ID)
-			}
+		if err := h.ensureLiveEventCalendar(r.Context(), ev, now); err != nil && !errors.Is(err, errLiveNoCalendar) {
+			h.logger.ErrorContext(r.Context(), "live events: calendar event after link change", "error", err, "live_event_id", ev.ID)
 		}
 	} else if scheduleChanged && ev.Status == liveStatusScheduled {
 		start, end := liveEventWindow(ev, now)
@@ -910,6 +1073,10 @@ func (h *Handler) EndLiveEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.endLive(r.Context(), ev, time.Now(), true); err != nil {
+		if errors.Is(err, errLiveEventGone) {
+			h.writeError(w, http.StatusConflict, "only a live session can be ended")
+			return
+		}
 		h.logger.ErrorContext(r.Context(), "live events: end", "error", err, "live_event_id", ev.ID)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -928,24 +1095,11 @@ func (h *Handler) CancelLiveEvent(w http.ResponseWriter, r *http.Request) {
 		h.writeJSON(w, http.StatusOK, ev)
 		return
 	}
-	now := time.Now()
-	if ev.Status == liveStatusLive {
-		// No calendar sync here: cancelLiveEventCalendar deletes the event right after,
-		// so trimming its end first would be a wasted provider round-trip.
-		if err := h.endLive(r.Context(), ev, now, false); err != nil {
-			h.logger.ErrorContext(r.Context(), "live events: end before cancel", "error", err, "live_event_id", ev.ID)
-			h.writeError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
-	}
-	if _, err := h.db.ExecContext(r.Context(), `
-		UPDATE live_events SET status = 'cancelled', updated_at = ? WHERE id = ?`, liveTime(now), ev.ID); err != nil {
+	if err := h.cancelLiveEventNow(r.Context(), ev, time.Now()); err != nil {
 		h.logger.ErrorContext(r.Context(), "live events: cancel", "error", err, "live_event_id", ev.ID)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	ev.Status = liveStatusCancelled
-	h.cancelLiveEventCalendar(r.Context(), ev)
 	h.respondLiveEvent(w, r, http.StatusOK, ev.ID)
 }
 
@@ -1084,14 +1238,34 @@ func (h *Handler) SweepLiveEvents(ctx context.Context, now time.Time) {
 		return ids
 	}
 
+	// Stale rows are never auto-started: a session whose scheduled end has passed, or an
+	// open-ended one scheduled more than liveEventMaxRunning ago (a forgotten entry, a
+	// workspace that was down for days), would otherwise go live the moment the sweep
+	// first sees it and publish a link to a meeting nobody is holding. auto_start is
+	// turned off so the host decides, once, by hand.
+	staleCutoff := liveTime(now.Add(-liveEventMaxRunning))
 	for _, id := range collect(`
 		SELECT id FROM live_events WHERE status = 'scheduled' AND auto_start = 1
-		  AND scheduled_start_at IS NOT NULL AND scheduled_start_at <= ?`, nowStr) {
+		  AND scheduled_start_at IS NOT NULL AND scheduled_start_at <= ?
+		  AND ((scheduled_end_at IS NOT NULL AND scheduled_end_at <= ?) OR scheduled_start_at < ?)`, nowStr, nowStr, staleCutoff) {
+		h.logger.Warn("live events sweep: auto-start skipped, scheduled start is stale; auto_start turned off", "live_event_id", id)
+		if _, err := h.db.ExecContext(ctx, `UPDATE live_events SET auto_start = 0, updated_at = ? WHERE id = ?`, nowStr, id); err != nil {
+			h.logger.Error("live events sweep: disable auto_start", "error", err, "live_event_id", id)
+		}
+	}
+
+	for _, id := range collect(`
+		SELECT id FROM live_events WHERE status = 'scheduled' AND auto_start = 1
+		  AND scheduled_start_at IS NOT NULL AND scheduled_start_at <= ? AND scheduled_start_at >= ?
+		  AND (scheduled_end_at IS NULL OR scheduled_end_at > ?)`, nowStr, staleCutoff, nowStr) {
 		ev, err := h.loadLiveEvent(ctx, id)
 		if err != nil {
 			continue
 		}
 		if err := h.goLive(ctx, ev, now); err != nil {
+			if errors.Is(err, errLiveEventGone) {
+				continue // cancelled under us; DELETE wins
+			}
 			if errors.Is(err, errLiveNoCalendar) {
 				// Nobody could join, so announcing it live would be wrong, and retrying every
 				// minute changes nothing. Hand it back to the host: auto_start off, start it
@@ -1115,7 +1289,7 @@ func (h *Handler) SweepLiveEvents(ctx context.Context, now time.Time) {
 		if err != nil {
 			continue
 		}
-		if err := h.endLive(ctx, ev, now, true); err != nil {
+		if err := h.endLive(ctx, ev, now, true); err != nil && !errors.Is(err, errLiveEventGone) {
 			h.logger.Error("live events sweep: auto-end", "error", err, "live_event_id", id)
 		}
 	}

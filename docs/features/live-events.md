@@ -25,8 +25,16 @@ Code: `internal/handler/live_events.go` (API + sweep), `live_page.go` (page + wi
   different kind.
 - **Scheduled sessions mint their calendar event at creation**, not at start, so the host's
   and the notetaker's calendars show the session ahead of time. Start reuses that event;
-  a schedule change moves it (`UpdateEvent`); a host change cancels it and mints a fresh one
-  on the new host's calendar.
+  a schedule change moves it (`UpdateEvent`); a host change cancels it **as the old host**
+  (it lives on their calendar) and mints a fresh one on the new host's calendar
+  (`rehostLiveEvent`).
+- **A minted link belongs to the host's calendar event; a manual one belongs to the
+  operator.** `join_url_minted` (migration 00077) records which. On a host change (or
+  when the link is cleared) a minted `join_url` is dropped so `ensureLiveEventCalendar`
+  mints a fresh Meet/Teams for the new host; a manual `join_url` is kept and carried onto
+  the new host's event as `Location`. Typing a link over a minted one marks it manual.
+  A live session keeps its link whatever its origin (member removal can re-host a live
+  session; the people in the room are not moved).
 - **No link, no "live".** `goLive` refuses (**409**) whenever `join_url` is empty after
   the calendar step - a stamped calendar event is not a join link (a personal Microsoft
   account writes the event and mints nothing; a link can also be cleared by PATCH). A
@@ -37,6 +45,15 @@ Code: `internal/handler/live_events.go` (API + sweep), `live_page.go` (page + wi
   link with a manual one (or clears it) on a scheduled session cancels the event and mints
   a fresh one carrying the new link as `Location` - otherwise the host and the notetaker
   would open the old conference while the public feed publishes the new URL.
+- **Transitions are compare-and-set.** `goLive` and `endLive` take a per-event mutex
+  (`liveEventLocks`), re-read the row under it, and claim it with
+  `UPDATE … WHERE id = ? AND status = 'scheduled'` (`'live'` for end), checked through
+  `RowsAffected`. The sweep, a manual start and a cancel can hit one row within a second,
+  and the Meet mint in between is a provider round-trip: a second start waits and then
+  finds the row live (one calendar event, idempotent 200); a cancel that lands during the
+  mint wins - the claim fails, the just-minted event is cancelled again, the link it
+  adopted is restored, and the caller gets the row as it is (409 for a cancelled one).
+  A cancelled session never becomes live or ended again.
 - **A live session keeps its host.** `PATCH host_user_id` on a live row is **409**; end it
   and start a new one. `host_user_id: ""` on any PATCH means "no change" (clients echo the
   create payload), never "reassign to me".
@@ -55,7 +72,12 @@ Code: `internal/handler/live_events.go` (API + sweep), `live_page.go` (page + wi
   `scheduled_start_at` go live; `auto_end` rows past `scheduled_end_at` (or, with none, 4 h
   after `started_at`) are ended. A due auto-start with **no join link is not retried
   forever**: the sweep turns `auto_start` off, logs a warning, and leaves it to the host to
-  start by hand once a link exists. The function takes an explicit clock for tests.
+  start by hand once a link exists. **Stale rows are never auto-started**: only rows with
+  `scheduled_end_at` unset or still ahead, and `scheduled_start_at` within the last
+  `liveEventMaxRunning` (4 h), go live. An older open-ended row, or one whose end has
+  passed (a forgotten entry, a workspace that was down for days), gets `auto_start = 0`
+  and a warning instead of publishing a link to a meeting nobody is holding. The function
+  takes an explicit clock for tests.
 - **Timestamps** are RFC3339 UTC at second precision everywhere in the table (`liveTime`),
   so SQL string comparisons are time comparisons.
 - **The status feed is CORS-open (`*`) by design.** It is read-only public data polled by
@@ -113,7 +135,7 @@ All timestamps are RFC3339; the server stores UTC.
   "scheduled_start_at": "2030-01-01T10:00:00Z", "scheduled_end_at": null,
   "started_at": null, "ended_at": null,
   "auto_start": true, "auto_end": true,
-  "join_url": "https://meet.google.com/abc-defg-hij",
+  "join_url": "https://meet.google.com/abc-defg-hij", "join_url_minted": true,
   "has_calendar_event": true,
   "created_by": "…", "created_at": "…", "updated_at": "…"
 }
@@ -147,7 +169,9 @@ then ended/cancelled most recent first. `limit` defaults to 50, max 200.
 
 Same fields as create (no `start_now`). Validated on change only. Moving the schedule
 updates the calendar event; changing the host or the `join_url` of a scheduled session
-re-creates it (new host's calendar / new link as location). 409 on an ended or cancelled
+re-creates it (new host's calendar / new link as location; a minted link is re-minted for
+the new host, a manual one travels with the session - see `join_url_minted` in the
+object). 409 on an ended or cancelled
 session, and on a host change while live. `host_user_id: ""` is "no change". A live
 session cannot have its `join_url` cleared.
 
