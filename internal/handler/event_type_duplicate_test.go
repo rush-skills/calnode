@@ -661,3 +661,19 @@ func TestDuplicateEventType_handlesEveryEventTypeColumn(t *testing.T) {
 		}
 	}
 }
+
+// A stored slug that predates slug policing (or came through the API) is canonicalised
+// before "-copy" is appended, so the copy's booking URL actually routes.
+func TestDuplicateEventType_nonCanonicalSourceSlugIsSlugified(t *testing.T) {
+	h, database, ownerKey, ownerID := setupWorkspaceWithDB(t)
+	mustExec(t, database, `INSERT INTO event_types (id,user_id,slug,name,duration_minutes) VALUES ('etn',?,'Intro_Call','Intro',30)`, ownerID)
+	rec := duplicate(t, h, ownerKey, "Intro_Call")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("duplicate: %d — %s", rec.Code, rec.Body.String())
+	}
+	var out duplicateResponse
+	json.Unmarshal(rec.Body.Bytes(), &out) //nolint:errcheck
+	if out.Slug != "intro-call-copy" {
+		t.Errorf("slug = %q; want intro-call-copy", out.Slug)
+	}
+}

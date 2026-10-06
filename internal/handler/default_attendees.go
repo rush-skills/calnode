@@ -208,12 +208,26 @@ func (h *Handler) PatchParticipantSettings(w http.ResponseWriter, r *http.Reques
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+	// Both fields are validated before either is written, so a 400 never leaves the
+	// settings half-applied (the form submits both together).
+	var emails []string
 	if req.DefaultAttendeeEmails != nil {
-		emails, err := normalizeAttendeeEmails(*req.DefaultAttendeeEmails)
+		var err error
+		emails, err = normalizeAttendeeEmails(*req.DefaultAttendeeEmails)
 		if err != nil {
 			h.writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+	}
+	var msg string
+	if req.DefaultCalendarMessage != nil {
+		msg = richtext.Sanitize(*req.DefaultCalendarMessage)
+		if len(msg) > maxOrgCalendarMessage {
+			h.writeError(w, http.StatusBadRequest, "the default invite message is too long")
+			return
+		}
+	}
+	if req.DefaultAttendeeEmails != nil {
 		if _, err := h.db.ExecContext(r.Context(),
 			`UPDATE server_settings SET default_attendee_emails = ?, updated_at = datetime('now') WHERE id = 1`,
 			strings.Join(emails, ",")); err != nil {
@@ -223,11 +237,6 @@ func (h *Handler) PatchParticipantSettings(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	if req.DefaultCalendarMessage != nil {
-		msg := richtext.Sanitize(*req.DefaultCalendarMessage)
-		if len(msg) > maxOrgCalendarMessage {
-			h.writeError(w, http.StatusBadRequest, "the default invite message is too long")
-			return
-		}
 		if _, err := h.db.ExecContext(r.Context(),
 			`UPDATE server_settings SET default_calendar_message = ?, updated_at = datetime('now') WHERE id = 1`,
 			msg); err != nil {

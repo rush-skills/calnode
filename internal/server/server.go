@@ -559,11 +559,14 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	// Team calendar — every member's meetings in one view. The data endpoint takes a
 	// session/API key OR a share token (it gates itself); shares are admin-only; the
 	// embed page is public and deliberately frameable (see TeamCalendarEmbed).
-	mux.HandleFunc("GET /v1/team-calendar", h.TeamCalendar)
+	// Readable with a share token from outside the app (an embedded dashboard polling it),
+	// so it is rate-limited per IP like the live status feed.
+	teamCalendarRL := RateLimit(120, time.Minute)
+	mux.HandleFunc("GET /v1/team-calendar", teamCalendarRL(h.TeamCalendar))
 	mux.HandleFunc("GET /v1/team-calendar/shares", h.RequireAuth(h.ListTeamCalendarShares))
 	mux.HandleFunc("POST /v1/team-calendar/shares", h.RequireAuth(h.CreateTeamCalendarShare))
 	mux.HandleFunc("DELETE /v1/team-calendar/shares/{id}", h.RequireAuth(h.RevokeTeamCalendarShare))
-	mux.HandleFunc("GET /embed/team-calendar", h.TeamCalendarEmbed)
+	mux.HandleFunc("GET /embed/team-calendar", teamCalendarRL(h.TeamCalendarEmbed))
 
 	// Connected apps — MCP OAuth grants the user can review and revoke.
 	mux.HandleFunc("GET /v1/oauth/connections", h.RequireAuth(h.ListOAuthConnections))

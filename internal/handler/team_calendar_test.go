@@ -365,3 +365,44 @@ func TestTeamCalendarEmbed_frameableAndTokenGated(t *testing.T) {
 		}
 	}
 }
+
+// Bookings of a private event type read "Busy" (no attendee, event type, location or
+// booking id) to everyone but the event type's owner and the booking's hosts; a
+// share-token viewer always gets "Busy".
+func TestTeamCalendar_privateEventTypeShowsBusyUnlessOwnerOrHost(t *testing.T) {
+	h, database, ownerKey, _ := setupWorkspaceWithDB(t)
+	_, etID := seedEventTypeHTTP(t, h, ownerKey)
+	mustExec(t, database, `UPDATE event_types SET visibility = 'private' WHERE id = ?`, etID)
+	hostKey := seedMemberKey(t, database, "u2", "two@example.com")
+	otherKey := seedMemberKey(t, database, "u3", "three@example.com")
+	mustExec(t, database, `INSERT INTO bookings (id,event_type_id,host_id,start_at,end_at,status,meeting_link)
+		VALUES ('b1',?,'u2','2026-06-03T10:00:00Z','2026-06-03T10:30:00Z','confirmed','https://meet.example/x')`, etID)
+	mustExec(t, database, `INSERT INTO booking_attendees (id,booking_id,name,email,is_organizer) VALUES ('a1','b1','Ada Lovelace','ada@example.com',1)`)
+	mustExec(t, database, `INSERT INTO booking_hosts (id,booking_id,user_id,is_primary) VALUES ('bh1','b1','u2',1)`)
+	_, token := createShare(t, h, ownerKey, "dash")
+
+	check := func(name, query, key string, wantFull bool) {
+		t.Helper()
+		out := teamCalDecode(t, teamCalGet(t, h, query, key))
+		if len(out.Items) != 1 {
+			t.Fatalf("%s: items = %+v; want 1", name, out.Items)
+		}
+		it := out.Items[0]
+		if wantFull {
+			if it.Title != "Test Meeting · Ada Lovelace" || it.AttendeeName == "" || it.EventTypeName == "" {
+				t.Errorf("%s: masked for someone who may see it: %+v", name, it)
+			}
+			return
+		}
+		if it.Title != "Busy" || it.AttendeeName != "" || it.EventTypeName != "" || it.Location != "" || it.BookingID != "" {
+			t.Errorf("%s: private booking leaked: %+v", name, it)
+		}
+		if it.MemberID != "u2" || it.Start != "2026-06-03T10:00:00Z" || it.End != "2026-06-03T10:30:00Z" {
+			t.Errorf("%s: busy block must still show who and when: %+v", name, it)
+		}
+	}
+	check("owner", "from=2026-06-01&to=2026-06-07", ownerKey, true)
+	check("host", "from=2026-06-01&to=2026-06-07", hostKey, true)
+	check("other member", "from=2026-06-01&to=2026-06-07", otherKey, false)
+	check("share token", "from=2026-06-01&to=2026-06-07&token="+token, "", false)
+}

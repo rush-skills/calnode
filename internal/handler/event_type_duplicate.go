@@ -111,7 +111,14 @@ func (h *Handler) DuplicateEventType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newSlug, err := uniqueCopySlug(r.Context(), tx, srcSlug)
+	// The copy's slug is derived from the canonical form of the source's: a slug stored
+	// before slugify policed the editor (or written through the API) may carry case or
+	// underscores the booking URL router would never match with "-copy" appended.
+	base := slugify(srcSlug)
+	if base == "" {
+		base = "event"
+	}
+	newSlug, err := uniqueCopySlug(r.Context(), tx, base)
 	if errors.Is(err, errNoFreeCopySlug) {
 		h.writeError(w, http.StatusConflict,
 			"could not generate a free slug for the copy — rename or delete some existing copies first")

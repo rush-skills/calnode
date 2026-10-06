@@ -985,8 +985,17 @@ func (h *Handler) DeleteEventType(w http.ResponseWriter, r *http.Request) {
 	// delivery logs are kept but detached from the booking).
 	ctx := r.Context()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "delete event type: begin", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer tx.Rollback() //nolint:errcheck
+	// Counted inside the transaction, so a booking made between the check and the delete
+	// cannot slip through (the single-connection pool serialises writers behind it).
 	var upcoming int
-	if err := h.db.QueryRowContext(ctx, `
+	if err := tx.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM bookings
 		WHERE event_type_id = ? AND status != 'cancelled' AND end_at > ?`, etID, now).Scan(&upcoming); err != nil {
 		h.logger.ErrorContext(ctx, "delete event type: count upcoming", "error", err)
@@ -998,14 +1007,6 @@ func (h *Handler) DeleteEventType(w http.ResponseWriter, r *http.Request) {
 			"this event type has %d upcoming booking(s) — cancel or reschedule them first, or deactivate it instead", upcoming))
 		return
 	}
-
-	tx, err := h.db.BeginTx(ctx, nil)
-	if err != nil {
-		h.logger.ErrorContext(ctx, "delete event type: begin", "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	defer tx.Rollback() //nolint:errcheck
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE webhook_deliveries SET booking_id = NULL
 		WHERE booking_id IN (SELECT id FROM bookings WHERE event_type_id = ?)`, etID); err != nil {

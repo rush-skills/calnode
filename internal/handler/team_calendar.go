@@ -139,7 +139,14 @@ func (h *Handler) teamCalendarData(w http.ResponseWriter, r *http.Request) {
 		memberIdx[m.ID] = i
 	}
 
-	items, ownEventIDs, err := h.teamCalendarBookings(r.Context(), qFrom, qTo, memberIdx)
+	// Who is looking decides what a private event type's bookings show: its owner and
+	// its hosts see the meeting, everyone else - and every share-token viewer, who is
+	// nobody in particular - sees "Busy".
+	viewerID := ""
+	if u, ok := userFromContext(r.Context()); ok && q.Get("token") == "" {
+		viewerID = u.ID
+	}
+	items, ownEventIDs, err := h.teamCalendarBookings(r.Context(), qFrom, qTo, memberIdx, viewerID)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "team calendar: bookings", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
@@ -218,14 +225,19 @@ func (h *Handler) teamCalendarMembers(ctx context.Context) ([]teamCalendarMember
 // Seats come from booking_hosts; a booking from before that table existed has no rows
 // there and falls back to bookings.host_id, the way the visibility model reads it
 // (ARCHITECTURE §14). Seats held by archived users are dropped: they are not members.
-func (h *Handler) teamCalendarBookings(ctx context.Context, from, to time.Time, memberIdx map[string]int) ([]teamCalendarItem, map[string]bool, error) {
+//
+// A booking of a private event type (visibility = 'private') is shown as "Busy" - no
+// attendee, event type, location or booking id - unless viewerID owns the event type or
+// holds a seat on the booking. An empty viewerID (share token) never does.
+func (h *Handler) teamCalendarBookings(ctx context.Context, from, to time.Time, memberIdx map[string]int, viewerID string) ([]teamCalendarItem, map[string]bool, error) {
 	rows, err := h.db.QueryContext(ctx, `
 		SELECT b.id, bh.user_id, b.start_at, b.end_at, b.status,
 		       COALESCE(b.meeting_link, ''), COALESCE(b.location_value, ''),
 		       COALESCE(et.name, ''),
 		       COALESCE((SELECT a.name FROM booking_attendees a
 		                 WHERE a.booking_id = b.id AND a.is_organizer = 1 LIMIT 1), ''),
-		       COALESCE(bh.external_event_id, '')
+		       COALESCE(bh.external_event_id, ''),
+		       COALESCE(et.visibility, 'org') = 'private', COALESCE(et.user_id, ''), b.host_id
 		FROM bookings b
 		JOIN booking_hosts bh ON bh.booking_id = b.id
 		LEFT JOIN event_types et ON et.id = b.event_type_id
@@ -236,7 +248,8 @@ func (h *Handler) teamCalendarBookings(ctx context.Context, from, to time.Time, 
 		       COALESCE(et.name, ''),
 		       COALESCE((SELECT a.name FROM booking_attendees a
 		                 WHERE a.booking_id = b.id AND a.is_organizer = 1 LIMIT 1), ''),
-		       COALESCE(b.external_event_id, '')
+		       COALESCE(b.external_event_id, ''),
+		       COALESCE(et.visibility, 'org') = 'private', COALESCE(et.user_id, ''), b.host_id
 		FROM bookings b
 		LEFT JOIN event_types et ON et.id = b.event_type_id
 		WHERE b.status = 'confirmed' AND b.start_at < ? AND b.end_at > ?
@@ -247,17 +260,57 @@ func (h *Handler) teamCalendarBookings(ctx context.Context, from, to time.Time, 
 	}
 	defer rows.Close()
 
-	items := []teamCalendarItem{}
+	type seatRow struct {
+		bookingID, userID, startAt, endAt, status, link, locValue, etName, attendee, extID string
+		private                                                                            bool
+		etOwner, hostID                                                                    string
+	}
+	var seats []seatRow
 	own := map[string]bool{}
 	for rows.Next() {
-		var bookingID, userID, startAt, endAt, status, link, locValue, etName, attendee, extID string
-		if err := rows.Scan(&bookingID, &userID, &startAt, &endAt, &status, &link, &locValue, &etName, &attendee, &extID); err != nil {
+		var s seatRow
+		var private int
+		if err := rows.Scan(&s.bookingID, &s.userID, &s.startAt, &s.endAt, &s.status, &s.link, &s.locValue, &s.etName, &s.attendee, &s.extID,
+			&private, &s.etOwner, &s.hostID); err != nil {
 			return nil, nil, err
 		}
-		if extID != "" {
-			own[extID] = true
+		s.private = private != 0
+		if s.extID != "" {
+			own[s.extID] = true
 		}
+		seats = append(seats, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	// Who holds a seat on each booking: the viewer "hosts" a private booking when they are
+	// on it in any seat, not only the one being drawn.
+	seatHolders := map[string]map[string]bool{}
+	for _, s := range seats {
+		if seatHolders[s.bookingID] == nil {
+			seatHolders[s.bookingID] = map[string]bool{}
+		}
+		seatHolders[s.bookingID][s.userID] = true
+		seatHolders[s.bookingID][s.hostID] = true
+	}
+
+	items := []teamCalendarItem{}
+	for _, s := range seats {
+		bookingID, userID, startAt, endAt, status, link, locValue, etName, attendee := s.bookingID, s.userID, s.startAt, s.endAt, s.status, s.link, s.locValue, s.etName, s.attendee
 		if _, ok := memberIdx[userID]; !ok {
+			continue
+		}
+		if s.private && (viewerID == "" || (viewerID != s.etOwner && !seatHolders[bookingID][viewerID])) {
+			items = append(items, teamCalendarItem{
+				ID:       bookingID + ":" + userID,
+				Kind:     "booking",
+				MemberID: userID,
+				Title:    "Busy",
+				Start:    rfc3339UTC(startAt),
+				End:      rfc3339UTC(endAt),
+				Status:   status,
+				Source:   "calnode",
+			})
 			continue
 		}
 		title := etName
@@ -286,7 +339,7 @@ func (h *Handler) teamCalendarBookings(ctx context.Context, from, to time.Time, 
 			Source:        "calnode",
 		})
 	}
-	return items, own, rows.Err()
+	return items, own, nil
 }
 
 // teamCalendarExternal fans out ListEvents per (connected) member with a bounded

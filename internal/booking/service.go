@@ -328,6 +328,18 @@ func hostBusy(ctx context.Context, tx *sql.Tx, hostID, start, end, excludeBookin
 	return n > 0, err
 }
 
+// HostBusy reports whether hostID attends another non-cancelled booking overlapping
+// [start, end), ignoring excludeBookingID - the same rule ReassignHost applies, exposed
+// so member removal can refuse a transfer before it moves anything.
+func (s *Service) HostBusy(ctx context.Context, hostID string, start, end time.Time, excludeBookingID string) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("booking: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+	return hostBusy(ctx, tx, hostID, start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano), excludeBookingID)
+}
+
 // Get returns a single booking by ID.
 func (s *Service) Get(ctx context.Context, id string) (*Booking, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+bookingColumns+` FROM bookings WHERE id = ?`, id)

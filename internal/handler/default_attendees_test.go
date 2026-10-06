@@ -248,3 +248,23 @@ func TestParticipantSettings_shape(t *testing.T) {
 		t.Fatalf("got %v", out.DefaultAttendeeEmails)
 	}
 }
+
+// Both fields are validated before either is written: a bad message must not leave a
+// new participant list behind (the form submits both together).
+func TestParticipantSettings_validatesBothBeforeWriting(t *testing.T) {
+	h, database, key, _ := setupWorkspaceWithDB(t)
+	mustStatus(t, participantsPatch(t, h, `{"default_attendee_emails":["keep@example.com"],"default_calendar_message":"<p>keep</p>"}`, key), http.StatusOK, "seed")
+	tooLong := strings.Repeat("x", 20001)
+	rec := participantsPatch(t, h, `{"default_attendee_emails":["new@example.com"],"default_calendar_message":"`+tooLong+`"}`, key)
+	mustStatus(t, rec, http.StatusBadRequest, "bad message with a valid list")
+	if got := participantsGet(t, h, key); !reflect.DeepEqual(got, []string{"keep@example.com"}) {
+		t.Errorf("a rejected patch wrote the participant list: %v", got)
+	}
+	rec = participantsPatch(t, h, `{"default_attendee_emails":["not an email"],"default_calendar_message":"<p>new</p>"}`, key)
+	mustStatus(t, rec, http.StatusBadRequest, "bad list with a valid message")
+	var msg string
+	database.QueryRow(`SELECT default_calendar_message FROM server_settings WHERE id = 1`).Scan(&msg) //nolint:errcheck
+	if msg != "<p>keep</p>" {
+		t.Errorf("a rejected patch wrote the message: %q", msg)
+	}
+}

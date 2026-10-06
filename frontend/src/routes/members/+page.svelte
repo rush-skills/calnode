@@ -200,19 +200,9 @@
 		if (removeMode === 'transfer' && !removeTo) { removeError = 'Choose who receives their event types and history.'; return; }
 		removeBusy = true; removeError = '';
 		try {
-			if (removeMode === 'transfer' && (removePreview?.upcoming_hosted ?? 0) > 0) {
-				// Move their upcoming meetings through the reassign flow first, so each
-				// calendar invite moves to the new host's calendar and attendees are told.
-				const res = await api.get<{ items: UpcomingBooking[] }>(`/v1/users/${removeMember.id}/upcoming-bookings`);
-				for (const b of res.items) {
-					try {
-						await api.post(`/v1/bookings/${b.id}/reassign`, { host_id: removeTo });
-					} catch (e: any) {
-						const when = new Date(b.start_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
-						throw new Error(`Couldn't move the meeting on ${when}: ${e.message}. Meetings already moved stay moved; pick someone else or cancel that meeting, then try again.`);
-					}
-				}
-			}
+			// In transfer mode the server moves every upcoming meeting they host (calendar
+			// invites included) before the account goes, and answers 409 naming the meeting
+			// when the receiver is busy at one of those times - nothing has moved by then.
 			await api.del(`/v1/users/${removeMember.id}`,
 				removeMode === 'transfer' ? { mode: 'transfer', transfer_to: removeTo } : { mode: 'delete' });
 			toast.success(`${removeMember.name} removed`);
@@ -396,7 +386,7 @@
 					{#if removeMode === 'transfer'}
 						<p class="text-xs text-muted-foreground">
 							{p.event_types.length} event type{p.event_types.length === 1 ? '' : 's'}{p.event_types.length ? ` (${p.event_types.join(', ')})` : ''},
-							{p.upcoming_hosted ? `${p.upcoming_hosted} upcoming meeting${p.upcoming_hosted === 1 ? '' : 's'} (invites move to the new host's calendar), ` : ''}{p.past_hosted} past booking{p.past_hosted === 1 ? '' : 's'} they hosted and {p.live_events} live event{p.live_events === 1 ? '' : 's'} move to:
+							{p.upcoming_hosted ? `${p.upcoming_hosted} upcoming meeting${p.upcoming_hosted === 1 ? '' : 's'} (invites move to the new host's calendar; attendees are told), ` : ''}{p.past_hosted} past booking{p.past_hosted === 1 ? '' : 's'} they hosted and {p.live_events} live event{p.live_events === 1 ? '' : 's'} move to:
 						</p>
 						<Select.Root type="single" value={removeTo} onValueChange={(v) => (removeTo = v ?? '')}>
 							<Select.Trigger class="w-full" aria-label="Transfer to">{removeTargets.find((m) => m.id === removeTo)?.name ?? 'Choose a member'}</Select.Trigger>
@@ -408,7 +398,7 @@
 						<p class="text-xs text-destructive">
 							Deletes {p.event_types.length} event type{p.event_types.length === 1 ? '' : 's'}{p.event_types.length ? ` (${p.event_types.join(', ')})` : ''}
 							and their booking links, {p.past_on_their_event_types} past booking{p.past_on_their_event_types === 1 ? '' : 's'} of those event types,
-							and {p.past_hosted} past booking{p.past_hosted === 1 ? '' : 's'} they hosted. Live events they created stay, credited to you.
+							and {p.past_hosted} past booking{p.past_hosted === 1 ? '' : 's'} they hosted. Sessions they host that are scheduled or live are cancelled; other live events they created stay, credited to you.
 						</p>
 					{/if}
 					{#if p.blocked_reason && !p.can_delete}

@@ -19,9 +19,11 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	// Archived members are hidden unless explicitly requested (?include_archived=true),
 	// and only an admin gets to ask: the Members page's archived view is admin-only.
 	includeArchived := user.IsAdmin && r.URL.Query().Get("include_archived") == "true"
-	where := "WHERE u.archived_at IS NULL"
+	// The "Former member" tombstone (user_removal.go) is not a member: it is never listed,
+	// archived view or not.
+	where := "WHERE u.archived_at IS NULL AND NOT " + formerMemberSQL
 	if includeArchived {
-		where = ""
+		where = "WHERE NOT " + formerMemberSQL
 	}
 	rows, err := h.db.QueryContext(r.Context(), `
 		SELECT u.id, u.email, u.name, u.iana_timezone, u.is_admin, u.is_owner, u.email_login,

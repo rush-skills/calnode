@@ -27,6 +27,11 @@ func (h *Handler) Setup(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+	// Addresses are stored lowercase: every later lookup (OAuth callback, magic link,
+	// password login) matches case-insensitively, and the NOCASE unique index (db.Migrate)
+	// keeps two spellings of one mailbox from becoming two accounts.
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" || req.Email == "" {
 		h.writeError(w, http.StatusBadRequest, "name and email are required")
 		return

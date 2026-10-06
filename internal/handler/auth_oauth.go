@@ -55,8 +55,10 @@ func (h *Handler) verifyOAuthState(w http.ResponseWriter, r *http.Request) bool 
 func (h *Handler) finishOAuthLogin(w http.ResponseWriter, r *http.Request, email, name string, verified bool, tz string) {
 	var userID string
 	var archivedAt sql.NullString
+	// Case-insensitive: the provider may report the mailbox in any case, and the account
+	// may have been created from an invite typed in another (idx_users_email_nocase).
 	err := h.db.QueryRowContext(r.Context(),
-		`SELECT id, archived_at FROM users WHERE email = ?`, email).Scan(&userID, &archivedAt)
+		`SELECT id, archived_at FROM users WHERE email = ? COLLATE NOCASE`, email).Scan(&userID, &archivedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		domains, derr := h.allowedSigninDomains(r.Context())
 		if derr != nil {
