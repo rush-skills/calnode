@@ -76,6 +76,125 @@
     return out;
   }
 
+  // ── Timezones: the searchable switcher under the calendar ─────────────────────
+  // book.html and manage.html let the visitor change the timezone with a <select>; the
+  // widget used to fix it to the browser's zone. It now has a switcher too, as a search
+  // box over every zone the browser knows, since a 400-entry <select> is not searchable
+  // on a host page. Each zone is findable by its IANA name, its city, its English name
+  // ("India Standard Time"), its abbreviation (IST, CEST, PST) and its offset (GMT+5:30,
+  // UTC+5:30, +05:30).
+  //
+  // Browsers list some zones under the old canonical names ICU still uses (Chrome lists
+  // Asia/Calcutta, not Asia/Kolkata). Show and send the current name when this browser
+  // accepts it; both names resolve to the same zone server-side.
+  var TZ_RENAMED = {
+    'Asia/Calcutta': 'Asia/Kolkata', 'Asia/Saigon': 'Asia/Ho_Chi_Minh', 'Asia/Katmandu': 'Asia/Kathmandu',
+    'Asia/Rangoon': 'Asia/Yangon', 'Asia/Ulan_Bator': 'Asia/Ulaanbaatar', 'Asia/Dacca': 'Asia/Dhaka',
+    'Asia/Thimbu': 'Asia/Thimphu', 'Asia/Ujung_Pandang': 'Asia/Makassar', 'Asia/Macao': 'Asia/Macau',
+    'Europe/Kiev': 'Europe/Kyiv', 'Europe/Uzhgorod': 'Europe/Kyiv', 'Europe/Zaporozhye': 'Europe/Kyiv',
+    'America/Godthab': 'America/Nuuk', 'Atlantic/Faeroe': 'Atlantic/Faroe',
+    'Pacific/Truk': 'Pacific/Chuuk', 'Pacific/Ponape': 'Pacific/Pohnpei', 'Pacific/Enderbury': 'Pacific/Kanton',
+    'America/Buenos_Aires': 'America/Argentina/Buenos_Aires', 'America/Catamarca': 'America/Argentina/Catamarca',
+    'America/Cordoba': 'America/Argentina/Cordoba', 'America/Jujuy': 'America/Argentina/Jujuy',
+    'America/Mendoza': 'America/Argentina/Mendoza', 'America/Indianapolis': 'America/Indiana/Indianapolis',
+    'America/Louisville': 'America/Kentucky/Louisville', 'America/Coral_Harbour': 'America/Atikokan',
+  };
+  function validTz(zone) {
+    if (!zone) return false;
+    try { new Intl.DateTimeFormat('en-US', { timeZone: zone }); return true; } catch (e) { return false; }
+  }
+  function canonicalTz(zone) {
+    var renamed = TZ_RENAMED[zone];
+    return renamed && validTz(renamed) ? renamed : zone;
+  }
+  // tzPart: one timeZoneName style of a zone at a moment ('' where the browser lacks it).
+  function tzPart(zone, style, at) {
+    try {
+      var parts = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: style }).formatToParts(at);
+      for (var i = 0; i < parts.length; i++) if (parts[i].type === 'timeZoneName') return parts[i].value;
+    } catch (e) { /* style unsupported in this browser */ }
+    return '';
+  }
+  // "GMT+5:30" → 330; "GMT" → 0.
+  function offsetMinutes(gmt) {
+    var m = /([+-])(\d{1,2})(?::?(\d{2}))?/.exec(gmt || '');
+    return m ? (m[1] === '-' ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3] || 0)) : 0;
+  }
+  // "Central European Summer Time" → "cest": the abbreviation people type.
+  function initials(name) {
+    return /\s/.test(name || '') ? name.split(/\s+/).map(function (w) { return w.charAt(0); }).join('') : '';
+  }
+  var TZ_LIST = null;
+  // tzList: every zone this browser knows, once per page, sorted by offset then name.
+  // Offsets and names are taken at page load, so a zone shows its current (DST) offset.
+  function tzList() {
+    if (TZ_LIST) return TZ_LIST;
+    var raw = [];
+    try { if (Intl.supportedValuesOf) raw = Intl.supportedValuesOf('timeZone'); } catch (e) { raw = []; }
+    raw = raw.concat(['UTC', TZ]);
+    var now = new Date(), seen = {}, out = [];
+    raw.forEach(function (listed) {
+      var id = canonicalTz(listed);
+      if (seen[id] || !validTz(id)) return;
+      seen[id] = true;
+      var gmt = tzPart(id, 'shortOffset', now) || 'GMT';
+      var mins = offsetMinutes(gmt);
+      var abs = Math.abs(mins), hh = Math.floor(abs / 60), mm = abs % 60, sign = mins < 0 ? '-' : '+';
+      var numeric = sign + (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
+      var long = tzPart(id, 'long', now), generic = tzPart(id, 'longGeneric', now), short = tzPart(id, 'short', now);
+      var keys = [
+        id, id.replace(/[\/_]/g, ' '), listed, listed.replace(/[\/_]/g, ' '),
+        long, generic, short, initials(long), initials(generic),
+        gmt, gmt.replace('GMT', 'UTC'), numeric, sign + hh + ':' + (mm < 10 ? '0' : '') + mm,
+      ].join(' | ').toLowerCase();
+      out.push({ id: id, city: id.split('/').pop().replace(/_/g, ' ').toLowerCase(), gmt: gmt, mins: mins, keys: keys });
+    });
+    out.sort(function (a, b) { return a.mins - b.mins || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0); });
+    TZ_LIST = out;
+    return out;
+  }
+  // Abbreviations people type, pinned to the zone they usually mean. Browsers do not give
+  // these reliably (en-US names India "GMT+5:30" and spells out the rest), so initials of
+  // the long names alone send "IST" to Istanbul and "PST" nowhere in October. Other zones
+  // that match still follow the pinned one.
+  var TZ_ABBR = {
+    ist: ['Asia/Kolkata'], pst: ['America/Los_Angeles'], pdt: ['America/Los_Angeles'], pt: ['America/Los_Angeles'],
+    mst: ['America/Denver', 'America/Phoenix'], mdt: ['America/Denver'], mt: ['America/Denver'],
+    cst: ['America/Chicago'], cdt: ['America/Chicago'], ct: ['America/Chicago'],
+    est: ['America/New_York'], edt: ['America/New_York'], et: ['America/New_York'],
+    akst: ['America/Anchorage'], hst: ['Pacific/Honolulu'], brt: ['America/Sao_Paulo'], art: ['America/Argentina/Buenos_Aires'],
+    gmt: ['Europe/London', 'UTC'], bst: ['Europe/London'], wet: ['Europe/Lisbon'],
+    cet: ['Europe/Berlin', 'Europe/Paris'], cest: ['Europe/Berlin', 'Europe/Paris'],
+    eet: ['Europe/Athens', 'Africa/Cairo'], eest: ['Europe/Athens'], msk: ['Europe/Moscow'],
+    gst: ['Asia/Dubai'], pkt: ['Asia/Karachi'], npt: ['Asia/Kathmandu'], ict: ['Asia/Bangkok'], wib: ['Asia/Jakarta'],
+    sgt: ['Asia/Singapore'], hkt: ['Asia/Hong_Kong'], pht: ['Asia/Manila'], kst: ['Asia/Seoul'], jst: ['Asia/Tokyo'],
+    awst: ['Australia/Perth'], acst: ['Australia/Adelaide'], aest: ['Australia/Sydney'], aedt: ['Australia/Sydney'],
+    nzst: ['Pacific/Auckland'], nzdt: ['Pacific/Auckland'],
+    wat: ['Africa/Lagos'], cat: ['Africa/Maputo'], eat: ['Africa/Nairobi'], sast: ['Africa/Johannesburg'],
+  };
+  // tzMatches: zones holding every word of the query, best first: a pinned abbreviation,
+  // a city that starts with the query, an exact name or abbreviation, a zone ID that
+  // starts with it, a word that starts with it, then any substring; offset order within.
+  function tzMatches(query) {
+    var list = tzList(), q = String(query || '').trim().toLowerCase();
+    if (!q) return list;
+    var words = q.split(/\s+/), pinned = TZ_ABBR[q] || [];
+    var hits = [];
+    list.forEach(function (z) {
+      var pin = pinned.indexOf(z.id);
+      if (pin === -1) for (var i = 0; i < words.length; i++) if (z.keys.indexOf(words[i]) === -1) return;
+      var rank = pin !== -1 ? pin - 100
+        : z.city.indexOf(q) === 0 ? 0
+        : (' | ' + z.keys + ' | ').indexOf(' | ' + q + ' | ') !== -1 ? 1
+        : z.id.toLowerCase().indexOf(q) === 0 ? 2
+        : /\W/.test(q) ? 4 : (' ' + z.keys.replace(/[^a-z0-9+:-]+/g, ' ')).indexOf(' ' + words[0]) !== -1 ? 3 : 4;
+      hits.push({ rank: rank, z: z });
+    });
+    hits.sort(function (a, b) { return a.rank - b.rank || a.z.mins - b.z.mins || (a.z.id < b.z.id ? -1 : 1); });
+    return hits.map(function (h) { return h.z; });
+  }
+  function tzDisplay(zone) { return zone.replace(/_/g, ' '); }
+
   var SVG_CLOCK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>';
   var SVG_PIN = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>';
   var SVG_CARD = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>';
@@ -100,11 +219,11 @@
     return n;
   }
 
-  function dayKey(iso) { return new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso)); }
+  function dayKey(iso, tz) { return new Intl.DateTimeFormat('en-CA', { timeZone: tz || TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso)); }
   // locale is the resolved server-side locale (this.locale), not the browser's own
   // ([]) — see the matching fix/comment in book.html / internal-docs/i18n-plan.md.
-  function timeLabel(iso, locale) { return new Intl.DateTimeFormat(locale || [], { timeZone: TZ, hour: 'numeric', minute: '2-digit' }).format(new Date(iso)); }
-  function shortDay(iso, locale) { return new Intl.DateTimeFormat(locale || [], { timeZone: TZ, weekday: 'short', month: 'short', day: 'numeric' }).format(new Date(iso)); }
+  function timeLabel(iso, locale, tz) { return new Intl.DateTimeFormat(locale || [], { timeZone: tz || TZ, hour: 'numeric', minute: '2-digit' }).format(new Date(iso)); }
+  function shortDay(iso, locale, tz) { return new Intl.DateTimeFormat(locale || [], { timeZone: tz || TZ, weekday: 'short', month: 'short', day: 'numeric' }).format(new Date(iso)); }
   // utcISO: a slot's start/end (which /slots renders with the booker's offset) as
   // RFC3339 UTC without fractional seconds, e.g. 2026-10-07T14:00:00Z: the form value.
   function utcISO(iso) { return new Date(iso).toISOString().replace(/\.\d{3}Z$/, 'Z'); }
@@ -209,7 +328,22 @@
     ':host([compact]) .time-grid .slot-btn{padding:7px 2px;font-size:.8125rem;border-radius:6px;}' +
     ':host([compact]) .hint{font-size:.75rem;}' +
     ':host([compact]) .picked{margin-top:10px;padding:6px 8px;}' +
-    ':host([compact]) .loading{padding:24px 12px;}';
+    ':host([compact]) .loading{padding:24px 12px;}' +
+    // Timezone switcher: the zone in the "Times shown in" line is a button that opens a
+    // search box and a list below it, in the flow (no popover to clip on a host page).
+    '.tz-label{display:flex;flex-wrap:wrap;align-items:center;gap:2px;}' +
+    '.tz-btn{display:inline-flex;align-items:center;gap:2px;margin:-2px 0;padding:2px 4px;border:none;border-radius:4px;background:none;font:inherit;color:inherit;cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px;}' +
+    '.tz-btn:hover{background:#f3f4f6;color:#374151;}' +
+    '.tz-btn:focus-visible{outline:2px solid #111827;outline-offset:1px;}' +
+    '.tz-pop{margin-top:6px;border:1px solid #e5e7eb;border-radius:8px;background:#fff;overflow:hidden;}' +
+    '.tz-search{display:block;width:100%;box-sizing:border-box;margin:0;padding:8px 10px;border:none;border-bottom:1px solid #e5e7eb;font:inherit;font-size:.8125rem;color:#111827;background:#fff;outline:none;}' +
+    '.tz-search:focus{background:#f9fafb;}' +
+    '.tz-list{position:relative;list-style:none;margin:0;padding:4px 0;max-height:220px;overflow-y:auto;}' +
+    '.tz-opt{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:6px 10px;font-size:.8125rem;color:#111827;cursor:pointer;}' +
+    '.tz-opt .tz-sub{flex-shrink:0;font-size:.75rem;color:#6b7280;white-space:nowrap;}' +
+    '.tz-opt.active{background:#f3f4f6;}' +
+    '.tz-opt[aria-selected="true"]{font-weight:600;}' +
+    '.tz-empty{padding:8px 10px;font-size:.8125rem;color:#6b7280;}';
 
   function api(path) {
     return fetch(BASE + path, { headers: { 'Accept': 'application/json' } }).then(function (r) {
@@ -225,7 +359,7 @@
     // (value, required validation, reset). Harmless in the default and popup modes,
     // which never set a value.
     static get formAssociated() { return true; }
-    static get observedAttributes() { return ['required']; }
+    static get observedAttributes() { return ['required', 'timezone']; }
 
     constructor() {
       super();
@@ -234,7 +368,12 @@
       this._sel = null;
     }
 
-    attributeChangedCallback() { if (this._mounted && this.picker) this._syncForm(); }
+    attributeChangedCallback(name, _old, value) {
+      if (!this._mounted) return;
+      // A host page can drive the zone itself (its own picker, a saved preference).
+      if (name === 'timezone') { if (value && this.info) this.setTimezone(value); return; }
+      if (this.picker) this._syncForm();
+    }
 
     connectedCallback() {
       if (this._mounted) return;
@@ -243,6 +382,11 @@
       this.picker = this.getAttribute('mode') === 'picker';
       this.compact = this.hasAttribute('compact');
       this.showTz = this.getAttribute('show-timezone') !== 'false';
+      // timezone="Area/City" overrides the browser's zone; an unknown value is ignored.
+      var wantTz = canonicalTz(this.getAttribute('timezone') || '');
+      this.tz = validTz(wantTz) ? wantTz : canonicalTz(TZ);
+      this.tzOpen = false;
+      this.tzQuery = '';
       if (this.picker && !this._internals) this._installFallback();
       // Validity is set before the first fetch so a `required` picker blocks a submit
       // that races the load.
@@ -310,24 +454,25 @@
       var first = this.state.month, last = endOfMonth(first);
       var today = new Date(); today.setHours(0, 0, 0, 0);
       var from = first < today ? today : first;
+      var tz = this.tz;
       try {
-        var r = await api('/v1/event-types/' + encodeURIComponent(this.slug) + '/slots?from=' + ymd(from) + '&to=' + ymd(last) + '&tz=' + encodeURIComponent(TZ));
+        var r = await api('/v1/event-types/' + encodeURIComponent(this.slug) + '/slots?from=' + ymd(from) + '&to=' + ymd(last) + '&tz=' + encodeURIComponent(tz));
         // `taken` is present only when the event type opts into showing booked times.
         // Tag on the way in so the renderer needs no second lookup, and so a taken entry
         // can never be mistaken for a bookable one further down.
         var by = {};
         (r.slots || []).forEach(function (s) {
           s.taken = false;
-          (by[dayKey(s.start)] = by[dayKey(s.start)] || []).push(s);
+          (by[dayKey(s.start, tz)] = by[dayKey(s.start, tz)] || []).push(s);
         });
         (r.taken || []).forEach(function (s) {
           s.taken = true;
-          (by[dayKey(s.start)] = by[dayKey(s.start)] || []).push(s);
+          (by[dayKey(s.start, tz)] = by[dayKey(s.start, tz)] || []).push(s);
         });
         this.state.slotsByDay = by;
         // Days the minimum-notice policy took starts away from, so an empty or thin day
         // can say why instead of leaving the visitor to guess (#20). Server-side these are
-        // already in TZ, so they match dayKey's output.
+        // already in tz, so they match dayKey's output.
         this.state.noticeDates = (r.min_notice && r.min_notice.dates) || [];
         // An external calendar check failed: busy data is incomplete, so offered
         // times may be unbookable (booking stays fail-closed at commit time).
@@ -472,7 +617,7 @@
         var res = await fetch(BASE + '/v1/event-types/' + encodeURIComponent(this.slug) + '/assistant', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
-          body: JSON.stringify({ messages: this.asstMessages, timezone: TZ, language: this.locale }),
+          body: JSON.stringify({ messages: this.asstMessages, timezone: this.tz, language: this.locale }),
         });
         if (!res.ok || !res.body) throw new Error('http ' + res.status);
         var reader = res.body.getReader(), dec = new TextDecoder(), buf = '';
@@ -540,7 +685,110 @@
         el('span', { class: 'month-label', text: first.toLocaleDateString(this.locale, { month: 'long', year: 'numeric' }) }),
         prev, next,
       ]);
-      return el('section', { class: 'cal-col' }, [nav, grid, this.showTz ? el('p', { class: 'tz-label', text: t(this.i18n, 'times_shown_in') + TZ }) : null]);
+      return el('section', { class: 'cal-col' }, [nav, grid, this.showTz ? this.tzPane() : null]);
+    }
+
+    // tzPane: "Times shown in <zone>", where the zone is a button that opens the search.
+    tzPane() {
+      var self = this;
+      // Only the current zone here: the full list is built when the switcher first opens.
+      var gmt = tzPart(this.tz, 'shortOffset', new Date());
+      var label = tzDisplay(this.tz) + (gmt ? ' (' + gmt + ')' : '');
+      var btn = el('button', {
+        type: 'button', class: 'tz-btn', text: label,
+        'aria-expanded': String(this.tzOpen), 'aria-controls': 'tz-pop',
+        'aria-label': t(this.i18n, 'change_timezone') + ': ' + label,
+      });
+      btn.appendChild(el('span', { 'aria-hidden': 'true', html: '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>' }));
+      btn.addEventListener('click', function () {
+        self.tzOpen = !self.tzOpen;
+        self.tzQuery = '';
+        self._tzFocus = self.tzOpen ? 'search' : 'button';
+        self.render();
+      });
+      var line = el('p', { class: 'tz-label' }, [el('span', { text: t(this.i18n, 'times_shown_in') }), btn]);
+      if (this._tzFocus === 'button') { this._tzFocus = null; requestAnimationFrame(function () { btn.focus(); }); }
+      if (!this.tzOpen) return line;
+
+      var list = el('ul', { class: 'tz-list', id: 'tz-list', role: 'listbox', 'aria-label': t(this.i18n, 'timezone_aria') });
+      var input = el('input', {
+        type: 'text', class: 'tz-search', value: this.tzQuery, autocomplete: 'off', spellcheck: 'false',
+        role: 'combobox', 'aria-expanded': 'true', 'aria-controls': 'tz-list', 'aria-autocomplete': 'list',
+        placeholder: t(this.i18n, 'search_timezone'), 'aria-label': t(this.i18n, 'search_timezone'),
+      });
+      var shown = [], active = 0;
+      function mark(i) {
+        var opts = list.querySelectorAll('.tz-opt');
+        if (!opts.length) { input.removeAttribute('aria-activedescendant'); return; }
+        active = Math.max(0, Math.min(i, opts.length - 1));
+        for (var k = 0; k < opts.length; k++) opts[k].classList.toggle('active', k === active);
+        input.setAttribute('aria-activedescendant', opts[active].id);
+        // Scroll the list only; scrollIntoView would also scroll the host page.
+        var o = opts[active];
+        if (o.offsetTop < list.scrollTop) list.scrollTop = o.offsetTop;
+        else if (o.offsetTop + o.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = o.offsetTop + o.offsetHeight - list.clientHeight;
+      }
+      function fill() {
+        shown = tzMatches(self.tzQuery);
+        list.innerHTML = '';
+        if (!shown.length) {
+          list.appendChild(el('li', { class: 'tz-empty', role: 'presentation', text: t(self.i18n, 'no_timezone_match') }));
+          input.removeAttribute('aria-activedescendant');
+          return;
+        }
+        shown.forEach(function (z, i) {
+          var li = el('li', { class: 'tz-opt', id: 'tz-opt-' + i, role: 'option', 'aria-selected': String(z.id === self.tz) }, [
+            el('span', { text: tzDisplay(z.id) }),
+            el('span', { class: 'tz-sub', text: z.gmt }),
+          ]);
+          // mousedown, not click: picking must win over the input losing focus.
+          li.addEventListener('mousedown', function (e) { e.preventDefault(); self.setTimezone(z.id); });
+          list.appendChild(li);
+        });
+        // With no query, start on the current zone so the list opens where the visitor is.
+        var at = self.tzQuery ? 0 : shown.findIndex(function (z) { return z.id === self.tz; });
+        mark(at < 0 ? 0 : at);
+      }
+      input.addEventListener('input', function () { self.tzQuery = input.value; fill(); });
+      input.addEventListener('keydown', function (e) {
+        if (e.key === 'ArrowDown') { e.preventDefault(); mark(active + 1); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); mark(active - 1); }
+        else if (e.key === 'PageDown') { e.preventDefault(); mark(active + 8); }
+        else if (e.key === 'PageUp') { e.preventDefault(); mark(active - 8); }
+        else if (e.key === 'Enter') { e.preventDefault(); if (shown[active]) self.setTimezone(shown[active].id); }
+        else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); self.tzOpen = false; self._tzFocus = 'button'; self.render(); }
+      });
+      fill();
+      // Focus, and scroll to the current zone, once the list is in the page and has a size.
+      if (this._tzFocus === 'search') { this._tzFocus = null; requestAnimationFrame(function () { input.focus(); mark(active); }); }
+      return el('div', { class: 'tz-pane' }, [line, el('div', { class: 'tz-pop', id: 'tz-pop' }, [input, list])]);
+    }
+
+    // setTimezone re-renders the month in another zone. The selected slot (an instant)
+    // stays selected; only its day, labels and `timezone` change. Fires
+    // calnode:timezone-changed, and calnode:slot-selected again when a slot is held, so a
+    // host form sees the new zone.
+    async setTimezone(zone) {
+      zone = canonicalTz(String(zone || ''));
+      this.tzOpen = false;
+      this.tzQuery = '';
+      this._tzFocus = 'button';
+      if (!validTz(zone) || zone === this.tz) { this.render(); return; }
+      this.tz = zone;
+      if (this._sel) {
+        this._sel = Object.assign({}, this._sel, { timezone: zone });
+        this.state.day = dayKey(this._sel.start, zone);
+      } else {
+        this.state.day = null;
+      }
+      await this.loadMonth();
+      this._autoDay();
+      this.render();
+      this.dispatchEvent(new CustomEvent('calnode:timezone-changed', { bubbles: true, composed: true, detail: { timezone: zone, event_type: this.slug } }));
+      if (this._sel) {
+        this.dispatchEvent(new CustomEvent('calnode:slot-selected', { bubbles: true, composed: true, detail: Object.assign({}, this._sel) }));
+        this.dispatchEvent(new Event('change', { bubbles: true }));
+      }
     }
 
     // noticeHint — the minimum-notice explanation, or '' when the event type sets none.
@@ -578,7 +826,7 @@
         var list = (st.slotsByDay[st.day] || []).slice().sort(function (a, b) { return a.start < b.start ? -1 : 1; });
         var listEl = el('div', { class: 'slots-list' });
         var periodFor = function (slot) {
-          var hour = Number(new Intl.DateTimeFormat('en-GB', {timeZone: TZ, hour: 'numeric', hourCycle: 'h23'}).format(new Date(slot.start)));
+          var hour = Number(new Intl.DateTimeFormat('en-GB', {timeZone: self.tz, hour: 'numeric', hourCycle: 'h23'}).format(new Date(slot.start)));
           return hour < 12 ? 0 : hour < 17 ? 1 : 2;
         };
         var periods = Array.from(new Set(list.map(periodFor))).sort();
@@ -602,14 +850,14 @@
             // slot and is announced as unavailable instead of read out as a plain time.
             var d = el('button', {
               class: 'slot-btn taken',
-              text: timeLabel(s.start, self.locale),
-              'aria-label': timeLabel(s.start, self.locale) + ' - ' + t(self.i18n, 'slot_taken'),
+              text: timeLabel(s.start, self.locale, self.tz),
+              'aria-label': timeLabel(s.start, self.locale, self.tz) + ' - ' + t(self.i18n, 'slot_taken'),
             });
             d.disabled = true;
             grid.appendChild(d);
             return;
           }
-          var b = el('button', { class: 'slot-btn', type: 'button', text: timeLabel(s.start, self.locale) });
+          var b = el('button', { class: 'slot-btn', type: 'button', text: timeLabel(s.start, self.locale, self.tz) });
           if (self.picker) {
             // Picker mode: a click selects (or, on the selected one, keeps) the time.
             // Nothing is booked until the host page calls .book() or its backend posts.
@@ -641,7 +889,7 @@
         if (st.degraded) {
           listEl.appendChild(el('p', { class: 'hint notice-hint', text: t(self.i18n, 'calendar_degraded_notice') }));
         }
-        inner = el('div', {}, [el('p', { class: 'slots-header', text: list[0] ? shortDay(list[0].start, self.locale) : this.dayHeader(st.day) }), listEl]);
+        inner = el('div', {}, [el('p', { class: 'slots-header', text: list[0] ? shortDay(list[0].start, self.locale, self.tz) : this.dayHeader(st.day) }), listEl]);
       } else {
         // Before a day is chosen. The notice line belongs here as well as in the list: a
         // day the policy emptied completely is greyed out in the calendar, so this is the
@@ -666,7 +914,7 @@
       clear.addEventListener('click', function () { self._clear(true); self.render(); });
       return el('div', { class: 'picked', role: 'status' }, [
         el('span', { html: SVG_CLOCK }),
-        el('span', { text: shortDay(s.start, this.locale) + ' · ' + timeLabel(s.start, this.locale) }),
+        el('span', { text: shortDay(s.start, this.locale, this.tz) + ' · ' + timeLabel(s.start, this.locale, this.tz) }),
         clear,
       ]);
     }
@@ -735,7 +983,7 @@
         });
         fetch(BASE + '/v1/bookings', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ event_type_slug: self.slug, start_at: slot.start, name: name.value.trim(), email: email.value.trim().toLowerCase(), phone: phone.value.trim(), timezone: TZ, language: self.locale, hp_extra: hp.value, answers: answers }),
+          body: JSON.stringify({ event_type_slug: self.slug, start_at: slot.start, name: name.value.trim(), email: email.value.trim().toLowerCase(), phone: phone.value.trim(), timezone: self.tz, language: self.locale, hp_extra: hp.value, answers: answers }),
         }).then(function (r) {
           return r.json().then(function (data) { return { ok: r.ok, status: r.status, data: data }; });
         }).then(function (res) {
@@ -757,7 +1005,7 @@
           cta.disabled = false; cta.textContent = t(self.i18n, 'confirm_booking');
         });
       });
-      return el('div', {}, [back, el('p', { class: 'slot-label', text: shortDay(slot.start, this.locale) + ' · ' + timeLabel(slot.start, this.locale) }), form]);
+      return el('div', {}, [back, el('p', { class: 'slot-label', text: shortDay(slot.start, this.locale, this.tz) + ' · ' + timeLabel(slot.start, this.locale, this.tz) }), form]);
     }
 
     confirmView(slot) {
@@ -765,7 +1013,7 @@
         el('div', { class: 'confirm-icon', html: SVG_CHECK }),
         el('div', { class: 'confirm-view' }, [
           el('h3', { text: t(this.i18n, 'booking_confirmed') }),
-          el('p', { class: 'when', text: shortDay(slot.start, this.locale) + ' · ' + timeLabel(slot.start, this.locale) }),
+          el('p', { class: 'when', text: shortDay(slot.start, this.locale, this.tz) + ' · ' + timeLabel(slot.start, this.locale, this.tz) }),
           el('p', { class: 'sub', text: t(this.i18n, 'confirmation_email_sent') }),
         ]),
       ]);
@@ -824,7 +1072,7 @@
     }
 
     _detail(s) {
-      return { start: utcISO(s.start), end: utcISO(s.end), timezone: TZ, event_type: this.slug, host_ids: s.host_ids || [] };
+      return { start: utcISO(s.start), end: utcISO(s.end), timezone: this.tz, event_type: this.slug, host_ids: s.host_ids || [] };
     }
 
     _select(s) {
@@ -962,7 +1210,7 @@
       var body = {
         event_type_slug: this.slug, start_at: sel.start,
         name: String(d.name || '').trim(), email: String(d.email || '').trim().toLowerCase(),
-        phone: String(d.phone || '').trim(), timezone: d.timezone || TZ,
+        phone: String(d.phone || '').trim(), timezone: d.timezone || this.tz,
         language: d.language || this.locale || '', hp_extra: '', answers: answers,
       };
       var headers = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
