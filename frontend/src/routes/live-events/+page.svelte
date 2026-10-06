@@ -16,10 +16,19 @@
 	import { DatePicker } from '$lib/components/ui/date-picker';
 	import { toast } from 'svelte-sonner';
 
-	const KIND_LABELS: Record<LiveEvent['kind'], string> = { office_hours: 'Office hours', event: 'Event' };
+	// Kinds are free-form slugs; show "office_hours" as "Office hours".
+	function kindLabel(k: string) {
+		const t = (k || '').replace(/[_-]+/g, ' ').trim();
+		return t ? t[0].toUpperCase() + t.slice(1) : '';
+	}
+	function normKind(k: string) {
+		return k.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '_').replace(/^[_-]+/, '').slice(0, 40);
+	}
 	const POLL_MS = 30_000;
 
 	let items = $state<LiveEvent[]>([]);
+	// Kinds already used, offered as suggestions in the form.
+	const knownKinds = $derived(Array.from(new Set(['office_hours', ...items.map((e) => e.kind)])).sort());
 	let loading = $state(true);
 	let showEnded = $state(false);
 	let members = $state<TeamMember[]>([]);
@@ -32,7 +41,7 @@
 	const emptyForm = () => ({
 		title: '',
 		description: '',
-		kind: 'office_hours' as LiveEvent['kind'],
+		kind: 'office_hours',
 		start_date: '',
 		start_time: '',
 		end_date: '',
@@ -135,7 +144,7 @@
 		const body: LiveEventInput = {
 			title: form.title.trim(),
 			description: form.description.trim(),
-			kind: form.kind,
+			kind: normKind(form.kind) || 'office_hours',
 			start_now: form.start_now,
 			auto_start: form.auto_start,
 			auto_end: form.auto_end
@@ -277,13 +286,11 @@
 			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 				<div class="space-y-1.5">
 					<Label for="le-kind">Kind</Label>
-					<Select.Root type="single" value={form.kind} onValueChange={(v) => { if (v) form.kind = v as LiveEvent['kind']; }}>
-						<Select.Trigger id="le-kind" class="w-full">{KIND_LABELS[form.kind]}</Select.Trigger>
-						<Select.Content>
-							<Select.Item value="office_hours" label="Office hours">Office hours</Select.Item>
-							<Select.Item value="event" label="Event">Event</Select.Item>
-						</Select.Content>
-					</Select.Root>
+					<Input id="le-kind" list="le-kind-options" bind:value={form.kind} placeholder="office_hours" />
+					<datalist id="le-kind-options">
+						{#each knownKinds as k}<option value={k}>{kindLabel(k)}</option>{/each}
+					</datalist>
+					<p class="text-xs text-muted-foreground">Type a new name to create a separate kind (e.g. demo). Each kind can be shown on its own page or widget.</p>
 				</div>
 				{#if $currentUser?.is_admin && members.length > 0}
 					<div class="space-y-1.5">
@@ -420,7 +427,7 @@
 							</td>
 							<td class="px-4 py-3">
 								<p class="font-medium">{e.title}</p>
-								<p class="text-xs text-muted-foreground">{KIND_LABELS[e.kind]}{e.auto_start && e.status === 'scheduled' && e.scheduled_start_at ? ' · auto-start' : ''}</p>
+								<p class="text-xs text-muted-foreground">{kindLabel(e.kind)}{e.auto_start && e.status === 'scheduled' && e.scheduled_start_at ? ' · auto-start' : ''}</p>
 							</td>
 							<td class="px-4 py-3">{e.host_name || '—'}</td>
 							<td class="px-4 py-3 whitespace-nowrap">{schedule(e)}</td>
@@ -501,7 +508,7 @@
 					<Button variant="ghost" size="sm" onclick={() => copy(iframeSnippet, 'Iframe snippet')}>Copy</Button>
 				</div>
 				<pre class="overflow-x-auto rounded-md bg-muted p-3 text-xs"><code>{iframeSnippet}</code></pre>
-				<p class="text-xs text-muted-foreground">Add <code>?kind=event</code> or <code>?theme=dark</code> to the URL to filter or match a dark site.</p>
+				<p class="text-xs text-muted-foreground">Add <code>?kind=office_hours</code> (or any kind) or <code>?theme=dark</code> to the URL to filter or match a dark site.</p>
 			</div>
 			<div class="space-y-1.5">
 				<div class="flex items-center justify-between">

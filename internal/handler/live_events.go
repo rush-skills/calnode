@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -140,7 +141,12 @@ func canManageLiveEvent(u AuthUser, ev *liveEvent) bool {
 	return u.IsAdmin || ev.CreatedBy == u.ID || (ev.HostUserID != "" && ev.HostUserID == u.ID)
 }
 
-func validLiveKind(k string) bool { return k == liveEventKindOfficeHours || k == liveEventKindEvent }
+// reLiveKind: a live-event type is any short lowercase slug ("office_hours", "demo",
+// "onboarding-q4"), so a workspace can run several kinds of sessions side by side and
+// filter the public feed, page and widget per kind.
+var reLiveKind = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,39}$`)
+
+func validLiveKind(k string) bool { return reLiveKind.MatchString(k) }
 
 // validJoinURL accepts an absolute http(s) URL; anything else (javascript:, a bare path)
 // would be rendered as a link on third-party pages by the widget.
@@ -483,7 +489,7 @@ func (h *Handler) CreateLiveEvent(w http.ResponseWriter, r *http.Request) {
 	if in.Kind != nil && strings.TrimSpace(*in.Kind) != "" {
 		kind = strings.TrimSpace(*in.Kind)
 		if !validLiveKind(kind) {
-			h.writeError(w, http.StatusBadRequest, "kind must be office_hours or event")
+			h.writeError(w, http.StatusBadRequest, "kind must be a short lowercase name: letters, digits, - or _ (e.g. office_hours, demo)")
 			return
 		}
 	}
@@ -729,7 +735,7 @@ func (h *Handler) PatchLiveEvent(w http.ResponseWriter, r *http.Request) {
 	if in.Kind != nil {
 		k := strings.TrimSpace(*in.Kind)
 		if !validLiveKind(k) {
-			h.writeError(w, http.StatusBadRequest, "kind must be office_hours or event")
+			h.writeError(w, http.StatusBadRequest, "kind must be a short lowercase name: letters, digits, - or _ (e.g. office_hours, demo)")
 			return
 		}
 		ev.Kind = k
@@ -939,7 +945,7 @@ func (h *Handler) LiveStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
 	if kind != "" && !validLiveKind(kind) {
-		h.writeError(w, http.StatusBadRequest, "kind must be office_hours or event")
+		h.writeError(w, http.StatusBadRequest, "kind must be a short lowercase name: letters, digits, - or _ (e.g. office_hours, demo)")
 		return
 	}
 	now := liveTime(time.Now())

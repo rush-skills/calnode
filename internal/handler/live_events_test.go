@@ -210,7 +210,7 @@ func TestLiveEvents_validation(t *testing.T) {
 	h, _, key, _ := setupWorkspaceWithDB(t)
 	cases := map[string]string{
 		"no title":      `{"description":"x"}`,
-		"bad kind":      `{"title":"t","kind":"party"}`,
+		"bad kind":      `{"title":"t","kind":"Not A Slug!"}`,
 		"bad join_url":  `{"title":"t","join_url":"javascript:alert(1)"}`,
 		"bad time":      `{"title":"t","scheduled_start_at":"tomorrow"}`,
 		"end<=start":    `{"title":"t","scheduled_start_at":"2030-01-01T10:00:00Z","scheduled_end_at":"2030-01-01T10:00:00Z"}`,
@@ -421,7 +421,7 @@ func TestLiveStatus_publishesJoinURLOnlyWhileLive(t *testing.T) {
 		t.Errorf("kind=event: %v", body)
 	}
 	rec := httptest.NewRecorder()
-	h.LiveStatus(rec, httptest.NewRequest(http.MethodGet, "/v1/live/status?kind=party", nil))
+	h.LiveStatus(rec, httptest.NewRequest(http.MethodGet, "/v1/live/status?kind=Not%20A%20Slug", nil))
 	mustStatus(t, rec, http.StatusBadRequest, "bad kind")
 
 	// Ending withdraws the link.

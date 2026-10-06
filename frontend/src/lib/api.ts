@@ -387,7 +387,8 @@ export type LiveEvent = {
 	id: string;
 	title: string;
 	description: string;
-	kind: 'office_hours' | 'event';
+	/** Session type: any short lowercase slug, e.g. office_hours, demo. */
+	kind: string;
 	status: 'scheduled' | 'live' | 'ended' | 'cancelled';
 	host_user_id: string;
 	host_name: string;
@@ -408,7 +409,7 @@ export type LiveEvent = {
 export type LiveEventInput = {
 	title?: string;
 	description?: string;
-	kind?: 'office_hours' | 'event';
+	kind?: string;
 	scheduled_start_at?: string | null;
 	scheduled_end_at?: string | null;
 	start_now?: boolean;
