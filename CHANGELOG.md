@@ -51,6 +51,10 @@ exact tag (`ghcr.io/calnode/calnode:0.1.0`) if you need stability between upgrad
   Slugs are normalised on create as well as update (spaces and symbols become hyphens, blank
   slugs derive from the name) and a startup sweep repairs stored slugs that were never
   normalised, so a booking link can no longer be broken by its own slug.
+- **Default invite message.** Settings → Meeting defaults takes a workspace-wide calendar
+  invite message (e.g. a recording notice) appended after each event type's own message on
+  every new booking and on live events. Like default participants, it is read at booking
+  time, so every event type, old or new, complies from the next booking on.
 - **Default participants.** Settings → Default participants lists addresses (a notetaker
   bot, a shared mailbox) that are invited on the host's calendar event of every meeting
   booked on the workspace. They receive the provider's calendar invite only: Calnode sends

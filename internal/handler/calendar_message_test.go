@@ -221,3 +221,81 @@ func TestCreateBooking_calendarEventCarriesQuestionAnswers(t *testing.T) {
 		t.Fatal("calendar event was never created")
 	}
 }
+
+// The workspace default invite message follows the event type's own message on every new
+// booking, including event types that never set a message of their own.
+func TestCreateBooking_orgDefaultMessageAppliesToEveryEventType(t *testing.T) {
+	h, db, key, userID := setupWorkspaceWithDB(t)
+	slug, etID := seedEventTypeHTTP(t, h, key)
+	if _, err := db.Exec(`INSERT INTO calendar_connections (id,user_id,provider,access_token_enc,calendar_id,is_destination) VALUES ('conn',?,'google','test','primary',1)`, userID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Settings round trip: sanitized on save, omitted keeps, "" clears.
+	patch := func(body string) map[string]any {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		h.RequireAuth(h.PatchParticipantSettings)(rec, authReq(http.MethodPatch, "/v1/settings/participants", body, key))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("patch %s: %d %s", body, rec.Code, rec.Body)
+		}
+		var m map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &m)
+		return m
+	}
+	out := patch(`{"default_calendar_message":"<p>This call may be recorded.</p><script>x</script>"}`)
+	if out["default_calendar_message"] != "<p>This call may be recorded.</p>" {
+		t.Fatalf("saved message = %v", out["default_calendar_message"])
+	}
+	if out = patch(`{"default_attendee_emails":[]}`); out["default_calendar_message"] != "<p>This call may be recorded.</p>" {
+		t.Fatalf("omitted field changed the message: %v", out["default_calendar_message"])
+	}
+
+	p := telephoneCalendar{events: make(chan calendar.CreateEventParams, 2)}
+	svc := calendar.NewService(db)
+	svc.Register(p)
+	h.SetCalendar(svc)
+	book := func(start string) string {
+		t.Helper()
+		body := fmt.Sprintf(`{"event_type_slug":%q,"start_at":%q,"name":"Test","email":"t%s@example.com"}`, slug, start, start[11:13])
+		req := httptest.NewRequest(http.MethodPost, "/v1/bookings", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		h.CreateBooking(rec, req)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("book: %d %s", rec.Code, rec.Body)
+		}
+		var resp struct {
+			ID string `json:"id"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+		return resp.ID
+	}
+	next := func() calendar.CreateEventParams {
+		t.Helper()
+		select {
+		case ev := <-p.events:
+			return ev
+		case <-time.After(5 * time.Second):
+			t.Fatal("calendar event was never created")
+		}
+		return calendar.CreateEventParams{}
+	}
+
+	// Event type with no message of its own: org message alone.
+	id := book("2026-06-15T09:00:00Z")
+	if ev := next(); ev.Description != "This call may be recorded.\n\nBooking ID: "+id {
+		t.Errorf("no et message: Description = %q", ev.Description)
+	}
+	// Event type message first, then the org message.
+	if _, err := db.Exec(`UPDATE event_types SET calendar_message = '<p>Agenda</p>' WHERE id = ?`, etID); err != nil {
+		t.Fatal(err)
+	}
+	id = book("2026-06-15T10:00:00Z")
+	if ev := next(); ev.Description != "Agenda\n\nThis call may be recorded.\n\nBooking ID: "+id {
+		t.Errorf("both messages: Description = %q", ev.Description)
+	}
+	if out = patch(`{"default_calendar_message":""}`); out["default_calendar_message"] != "" {
+		t.Errorf("clearing: %v", out["default_calendar_message"])
+	}
+}

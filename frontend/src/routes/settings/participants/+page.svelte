@@ -5,6 +5,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Label } from '$lib/components/ui/label';
 	import { Textarea } from '$lib/components/ui/textarea';
+	import { RichTextEditor, normalizeHtml } from '$lib/components/rich-text-editor';
 	import { toast } from 'svelte-sonner';
 	import { saveOnCmdS } from '$lib/save-shortcut';
 	import { createAsyncFlag } from '$lib/async-action.svelte';
@@ -14,6 +15,7 @@
 
 	// One address per line in the textarea; commas are accepted too so a pasted list works.
 	let emailsText = $state('');
+	let calendarMessage = $state('');
 
 	function parseEmails(text: string): string[] {
 		return text
@@ -26,17 +28,20 @@
 		loadingFlag.run(async () => {
 			const s = await api.get<ParticipantSettings>('/v1/settings/participants');
 			emailsText = (s.default_attendee_emails ?? []).join('\n');
-		}, 'Could not load default participants')
+			calendarMessage = s.default_calendar_message ?? '';
+		}, 'Could not load meeting defaults')
 	);
 
 	async function save() {
 		await savingFlag.run(async () => {
 			const s = await api.patch<ParticipantSettings>('/v1/settings/participants', {
-				default_attendee_emails: parseEmails(emailsText)
+				default_attendee_emails: parseEmails(emailsText),
+				default_calendar_message: normalizeHtml(calendarMessage)
 			});
 			emailsText = (s.default_attendee_emails ?? []).join('\n');
-			toast.success('Default participants saved');
-		}, 'Could not save default participants');
+			calendarMessage = s.default_calendar_message ?? '';
+			toast.success('Meeting defaults saved');
+		}, 'Could not save meeting defaults');
 	}
 </script>
 
@@ -51,7 +56,7 @@
 		<div class="rounded-lg border bg-card p-6">
 			<h2 class="text-sm font-semibold">Default participants</h2>
 			<p class="mt-0.5 text-xs text-muted-foreground">
-				These addresses are invited to the calendar event of every meeting booked here, including
+				These addresses are invited to the calendar event of every new meeting booked here, for every event type, including
 				live events. They get the calendar invite only — Calnode does not email them and bookers
 				never see them. Typical use: a notetaker bot that joins when a shared mailbox is invited.
 			</p>
@@ -70,6 +75,20 @@
 					Microsoft email the invite themselves; on CalDAV the addresses are written to the event
 					and whether an invite goes out depends on the server's scheduling support.
 				</p>
+			</div>
+		</div>
+
+		<div class="rounded-lg border bg-card p-6">
+			<h2 class="text-sm font-semibold">Default invite message</h2>
+			<p class="mt-0.5 text-xs text-muted-foreground">
+				Added to the calendar invite of every new booking, for every event type, after the event
+				type's own invite message. Also added to live events. Use it for notices like "This call
+				may be recorded for quality and training purposes." Changes apply to bookings made from
+				now on; invites already sent are not changed.
+			</p>
+			<div class="mt-4 space-y-1.5">
+				<Label for="default-calendar-message">Message</Label>
+				<RichTextEditor id="default-calendar-message" bind:value={calendarMessage} placeholder="This call may be recorded for quality and training purposes." />
 			</div>
 		</div>
 

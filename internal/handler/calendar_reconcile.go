@@ -257,7 +257,7 @@ func (h *Handler) reconcileCreations(ctx context.Context, gc *calendar.Service) 
 		if aerr != nil {
 			h.logger.Error("reconcile: load answers for calendar event", "error", aerr, "booking_id", m.bookingID)
 		}
-		descPlain, descRich := calendarDescription(loc, m.calMsg, answers, m.bookingID)
+		descPlain, descRich := calendarDescription(loc, h.withOrgCalendarMessage(ctx, m.calMsg), answers, m.bookingID)
 		eventID, link, calID, provider, err := gc.CreateEvent(ctx, m.userID, calendar.CreateEventParams{
 			Summary:         loc.Tf("calendar_event_summary", m.etName, m.orgName),
 			Description:     descPlain,

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/calnode/calnode/internal/richtext"
 	"net/http"
 	"net/mail"
 	"strings"
@@ -146,7 +147,45 @@ func (h *Handler) GetParticipantSettings(w http.ResponseWriter, r *http.Request)
 	if emails == nil {
 		emails = []string{}
 	}
-	h.writeJSON(w, http.StatusOK, map[string]any{"default_attendee_emails": emails})
+	h.writeJSON(w, http.StatusOK, map[string]any{
+		"default_attendee_emails":  emails,
+		"default_calendar_message": h.orgCalendarMessage(r.Context()),
+	})
+}
+
+// maxOrgCalendarMessage bounds the stored HTML; calendar providers cap descriptions too.
+const maxOrgCalendarMessage = 8000
+
+// orgCalendarMessage returns the workspace's default invite message (sanitized HTML), or
+// "" when unset or unreadable. A read failure is logged and treated as "no message" so it
+// can never block a booking.
+func (h *Handler) orgCalendarMessage(ctx context.Context) string {
+	var raw string
+	if err := h.db.QueryRowContext(ctx,
+		`SELECT COALESCE(default_calendar_message, '') FROM server_settings WHERE id = 1`).Scan(&raw); err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			h.logger.ErrorContext(ctx, "load default calendar message", "error", err)
+		}
+		return ""
+	}
+	return richtext.Sanitize(raw)
+}
+
+// withOrgCalendarMessage appends the workspace's default invite message after an event
+// type's own calendar message. It is applied wherever a booking's invite text is built
+// (new bookings, reconcile, reassign, reschedule/cancel emails), and read at that moment,
+// so a change reaches every event type from the next booking on.
+func (h *Handler) withOrgCalendarMessage(ctx context.Context, eventTypeMessageHTML string) string {
+	org := h.orgCalendarMessage(ctx)
+	et := richtext.Sanitize(eventTypeMessageHTML)
+	switch {
+	case org == "":
+		return et
+	case et == "":
+		return org
+	default:
+		return et + org
+	}
 }
 
 // PatchParticipantSettings handles PATCH /v1/settings/participants (admin). The list is a
@@ -159,9 +198,11 @@ func (h *Handler) PatchParticipantSettings(w http.ResponseWriter, r *http.Reques
 		h.writeError(w, http.StatusServiceUnavailable, "not available in the demo")
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	var req struct {
 		DefaultAttendeeEmails *[]string `json:"default_attendee_emails"`
+		// Pointer: omitted keeps, "" clears.
+		DefaultCalendarMessage *string `json:"default_calendar_message"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -177,6 +218,20 @@ func (h *Handler) PatchParticipantSettings(w http.ResponseWriter, r *http.Reques
 			`UPDATE server_settings SET default_attendee_emails = ?, updated_at = datetime('now') WHERE id = 1`,
 			strings.Join(emails, ",")); err != nil {
 			h.logger.ErrorContext(r.Context(), "participant settings: update", "error", err)
+			h.writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+	if req.DefaultCalendarMessage != nil {
+		msg := richtext.Sanitize(*req.DefaultCalendarMessage)
+		if len(msg) > maxOrgCalendarMessage {
+			h.writeError(w, http.StatusBadRequest, "the default invite message is too long")
+			return
+		}
+		if _, err := h.db.ExecContext(r.Context(),
+			`UPDATE server_settings SET default_calendar_message = ?, updated_at = datetime('now') WHERE id = 1`,
+			msg); err != nil {
+			h.logger.ErrorContext(r.Context(), "participant settings: update message", "error", err)
 			h.writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}

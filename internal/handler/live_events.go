@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/calnode/calnode/internal/richtext"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -250,7 +251,7 @@ func (h *Handler) ensureLiveEventCalendar(ctx context.Context, ev *liveEvent, no
 	start, end := liveEventWindow(ev, now)
 	eventID, link, calID, prov, err := gc.CreateEvent(ctx, ev.HostUserID, calendar.CreateEventParams{
 		Summary:        ev.Title,
-		Description:    ev.Description,
+		Description:    liveEventDescription(ev.Description, h.orgCalendarMessage(ctx)),
 		Location:       ev.JoinURL,
 		Start:          start,
 		End:            end,
@@ -1123,5 +1124,20 @@ func (h *Handler) SweepLiveEvents(ctx context.Context, now time.Time) {
 		if err := h.endLive(ctx, ev, now, true); err != nil {
 			h.logger.Error("live events sweep: auto-end", "error", err, "live_event_id", id)
 		}
+	}
+}
+
+// liveEventDescription is the session description followed by the workspace's default
+// invite message (as plain text), so live events carry the same notice as bookings.
+func liveEventDescription(desc, orgMessageHTML string) string {
+	org := strings.TrimSpace(richtext.ToPlainText(orgMessageHTML))
+	desc = strings.TrimSpace(desc)
+	switch {
+	case org == "":
+		return desc
+	case desc == "":
+		return org
+	default:
+		return desc + "\n\n" + org
 	}
 }

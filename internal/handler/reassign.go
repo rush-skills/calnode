@@ -179,7 +179,7 @@ func (h *Handler) ReassignBooking(w http.ResponseWriter, r *http.Request) {
 			if aerr != nil {
 				h.logger.Error("reassign: load answers for calendar event", "error", aerr, "booking_id", bCopy.ID)
 			}
-			descPlain, descRich := calendarDescription(loc, calMsg, answers, bCopy.ID)
+			descPlain, descRich := calendarDescription(loc, h.withOrgCalendarMessage(ctx, calMsg), answers, bCopy.ID)
 			newEventID, _, newCalID, newProvider, err := gc.CreateEvent(ctx, newHostID, calendar.CreateEventParams{
 				Summary:         loc.Tf("calendar_event_summary", etName, orgName),
 				Description:     descPlain,

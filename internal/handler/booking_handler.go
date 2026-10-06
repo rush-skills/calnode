@@ -1313,6 +1313,9 @@ func sendWithRetry(ctx context.Context, logger *slog.Logger, bookingID, who stri
 func (h *Handler) dispatchBookingConfirmation(b *booking.Booking, in bookingConfirmationInput) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	// Organisation default invite message rides after the event type's own message on
+	// every new booking, read now so a settings change applies to all event types.
+	in.CalendarMessage = h.withOrgCalendarMessage(ctx, in.CalendarMessage)
 	bData := mailer.BookingData{
 		BookingID:         b.ID,
 		EventTypeName:     in.EventTypeName,
@@ -2031,7 +2034,7 @@ func (h *Handler) loadCancellationData(ctx context.Context, b *booking.Booking) 
 	if err != nil {
 		return d, fmt.Errorf("load event: %w", err)
 	}
-	d.CalendarMessage = calendarMessageText(calMsg)
+	d.CalendarMessage = calendarMessageText(h.withOrgCalendarMessage(ctx, calMsg))
 	if err := h.loadHostIntoData(ctx, b.HostID, &d); err != nil {
 		return d, fmt.Errorf("load host: %w", err)
 	}

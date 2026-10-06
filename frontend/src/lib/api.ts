@@ -306,6 +306,8 @@ export type LLMSettings = {
  *  booking (calendar invite only - never emailed by Calnode, never shown to bookers). */
 export type ParticipantSettings = {
 	default_attendee_emails: string[];
+	/** Workspace invite message (sanitized HTML) appended to every new booking's calendar invite. */
+	default_calendar_message: string;
 };
 
 export type TeamMember = {
