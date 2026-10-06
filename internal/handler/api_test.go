@@ -887,3 +887,26 @@ func TestListBookings_includesAttendeeAndSlug(t *testing.T) {
 		t.Errorf("attendee email = %q; want alice@example.com", b.Attendees[0].Email)
 	}
 }
+
+// An event type with bookings (even cancelled ones) is refused with 409 and a "deactivate
+// instead" message. ON DELETE RESTRICT raises SQLITE_CONSTRAINT_TRIGGER (1811), not 787,
+// and that used to fall through to a 500.
+func TestDeleteEventType_withBookingsIs409(t *testing.T) {
+	h, database, key, _ := setupWorkspaceWithDB(t)
+	slug, _ := seedEventTypeHTTP(t, h, key)
+	var etID, ownerID string
+	if err := database.QueryRow(`SELECT id, user_id FROM event_types WHERE slug = ?`, slug).Scan(&etID, &ownerID); err != nil {
+		t.Fatalf("load event type: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO bookings (id,event_type_id,host_id,start_at,end_at,status)
+		VALUES ('bk-del',?,?,'2026-01-01T10:00:00Z','2026-01-01T10:30:00Z','cancelled')`, etID, ownerID); err != nil {
+		t.Fatalf("seed booking: %v", err)
+	}
+	req := authReq(http.MethodDelete, "/v1/event-types/"+slug, "", key)
+	req.SetPathValue("slug", slug)
+	rec := httptest.NewRecorder()
+	h.RequireAuth(h.DeleteEventType)(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d; want 409 — %s", rec.Code, rec.Body.String())
+	}
+}

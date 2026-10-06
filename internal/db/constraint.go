@@ -23,8 +23,11 @@ import (
 // idempotency_keys.idempotency_key is a bare PRIMARY KEY, so every idempotent replay
 // arrives as 1555. Both belong to IsUniqueViolation.
 const (
-	sqliteConstraintCheck      = 275  // SQLITE_CONSTRAINT_CHECK
-	sqliteConstraintForeignKey = 787  // SQLITE_CONSTRAINT_FOREIGNKEY
+	sqliteConstraintCheck      = 275 // SQLITE_CONSTRAINT_CHECK
+	sqliteConstraintForeignKey = 787 // SQLITE_CONSTRAINT_FOREIGNKEY
+	// SQLITE_CONSTRAINT_TRIGGER: what an ON DELETE RESTRICT foreign key raises (bookings →
+	// event_types), with the same "FOREIGN KEY constraint failed" message as 787.
+	sqliteConstraintTrigger    = 1811
 	sqliteConstraintPrimaryKey = 1555 // SQLITE_CONSTRAINT_PRIMARYKEY
 	sqliteConstraintUnique     = 2067 // SQLITE_CONSTRAINT_UNIQUE
 )
@@ -53,7 +56,7 @@ func IsCheckViolation(err error) bool {
 // IsForeignKeyViolation reports whether err is a foreign-key violation — a reference
 // to a row that does not exist, or a delete that would orphan one.
 func IsForeignKeyViolation(err error) bool {
-	return violates(err, sqliteForeignKeyText, sqliteConstraintForeignKey)
+	return violates(err, sqliteForeignKeyText, sqliteConstraintForeignKey, sqliteConstraintTrigger)
 }
 
 // violates classifies err: the driver's own error code when one is available, the
