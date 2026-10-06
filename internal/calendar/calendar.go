@@ -26,6 +26,22 @@ type CreateEventParams struct {
 	AddMeet        bool
 }
 
+// ExternalEvent is one event read back from a member's connected calendar, for the
+// team calendar. Only what that view shows: no attendees, no description. Start and
+// End are UTC instants; for an all-day event they are the UTC midnights bounding the
+// day(s), which is how both Google ("date") and Graph (isAllDay) express them.
+type ExternalEvent struct {
+	ID       string
+	Title    string
+	Location string
+	Start    time.Time
+	End      time.Time
+	AllDay   bool
+	// Source is the provider name ("google" | "microsoft"). Providers leave it empty;
+	// Service.ListEvents stamps it, so callers never need to know which backend answered.
+	Source string
+}
+
 // CalendarInfo is one calendar the provider exposes for a connected account.
 type CalendarInfo struct {
 	ID      string `json:"id"`      // provider calendar id ("primary", an address, a URL)
@@ -67,6 +83,12 @@ type Provider interface {
 
 	// Operations
 	FreeBusy(ctx context.Context, userID string, from, to time.Time) ([]slots.Interval, error)
+
+	// ListEvents returns the user's events overlapping [from, to) across the calendars
+	// they selected for conflict checking - the same set FreeBusy reads, with titles. A
+	// provider that cannot (or does not) read events back returns (nil, nil), never an
+	// error, so a user with such a connection simply contributes nothing.
+	ListEvents(ctx context.Context, userID string, from, to time.Time) ([]ExternalEvent, error)
 
 	// CreateEvent writes to the user's destination calendar and also returns WHICH calendar
 	// that was, so the caller can store it against the booking. Update and Cancel then act
@@ -379,6 +401,78 @@ func (s *Service) FreeBusy(ctx context.Context, userID string, from, to time.Tim
 		out = append(out, iv...)
 	}
 	return out, nil
+}
+
+// ListEvents reads one user's events in [from, to) from every provider they have a
+// connection with, stamping each event's Source with the provider that returned it.
+//
+// Routed by the providers stored on calendar_connections rather than by asking every
+// registered provider, and the provider list is materialised before any network call:
+// the pool is a single SQLite connection (ARCHITECTURE §17), and a provider's ListEvents
+// runs its own queries, which would deadlock against an open cursor here.
+//
+// Unlike FreeBusy, which must fail closed (a missed busy block is a double booking), this
+// is a read-only view: one provider's failure does not discard what the others returned.
+// The events collected so far are returned together with the first error, and the caller
+// decides whether to show the partial result.
+func (s *Service) ListEvents(ctx context.Context, userID string, from, to time.Time) ([]ExternalEvent, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT provider FROM calendar_connections WHERE user_id = ? ORDER BY provider`, userID)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			rows.Close() // #nosec G104 -- already returning the scan error; nothing more actionable
+			return nil, err
+		}
+		names = append(names, n)
+	}
+	rows.Close() // #nosec G104 -- rows already fully consumed above; nothing actionable on close error
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	var out []ExternalEvent
+	var firstErr error
+	for _, n := range names {
+		p := s.providers[n]
+		if p == nil {
+			continue // connection to a provider that is no longer configured
+		}
+		evs, err := p.ListEvents(ctx, userID, from, to)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		for i := range evs {
+			evs[i].Source = n
+		}
+		out = append(out, evs...)
+	}
+	return out, firstErr
+}
+
+// ConnectedUserIDs returns the ids of the users who have at least one calendar
+// connection, so a caller fanning out per user can skip the ones with nothing to read.
+func (s *Service) ConnectedUserIDs(ctx context.Context) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT user_id FROM calendar_connections`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
 }
 
 // CreateEvent creates an event on the user's DESTINATION calendar. Returns the event id,

@@ -32,6 +32,9 @@ func (p *recordProvider) ListCalendars(context.Context, string, string) ([]Calen
 func (p *recordProvider) FreeBusy(context.Context, string, time.Time, time.Time) ([]slots.Interval, error) {
 	return nil, nil
 }
+func (p *recordProvider) ListEvents(context.Context, string, time.Time, time.Time) ([]ExternalEvent, error) {
+	return nil, nil
+}
 func (p *recordProvider) CreateEvent(context.Context, string, CreateEventParams) (string, string, string, error) {
 	return "", "", "", nil
 }
