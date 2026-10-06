@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/calnode/calnode/internal/calendar"
 	"github.com/calnode/calnode/internal/slots"
 )
 
@@ -51,6 +52,15 @@ func (c *Client) FreeBusy(ctx context.Context, userID string, from, to time.Time
 		out = append(out, iv...)
 	}
 	return out, nil
+}
+
+// ListEvents is deliberately a no-op for CalDAV: the team calendar reads titled events
+// back from Google and Microsoft only. A CalDAV REPORT returns full iCalendar bodies
+// whose titles, recurrence expansion and timezone handling are each their own project;
+// until that exists a CalDAV-only member contributes no external events (their
+// Calnode bookings still show). Returns (nil, nil), never an error, per the interface.
+func (c *Client) ListEvents(context.Context, string, time.Time, time.Time) ([]calendar.ExternalEvent, error) {
+	return nil, nil
 }
 
 // freeBusyForConn runs the REPORT against one calendar collection and parses the busy intervals.

@@ -122,6 +122,50 @@ export type APIKey = {
 	last_used_at?: string;
 };
 
+/** One active member on the team calendar, with the stable palette colour the server assigned. */
+export type TeamCalendarMember = {
+	id: string;
+	name: string;
+	avatar_url: string;
+	color: string;
+};
+
+/** One meeting on the team calendar: a Calnode booking seat or an external calendar event. */
+export type TeamCalendarItem = {
+	id: string;
+	kind: 'booking' | 'external';
+	member_id: string;
+	title: string;
+	start: string; // RFC3339 UTC
+	end: string;
+	all_day: boolean;
+	location: string;
+	booking_id?: string;
+	event_type_name?: string;
+	attendee_name?: string;
+	status: string;
+	source: 'calnode' | 'google' | 'microsoft' | string;
+};
+
+export type TeamCalendarResponse = {
+	members: TeamCalendarMember[];
+	items: TeamCalendarItem[];
+};
+
+/** A share link for the embeddable team calendar. The token is only ever in the create response. */
+export type TeamCalendarShare = {
+	id: string;
+	name: string;
+	created_by: string;
+	created_at: string;
+	revoked_at: string | null;
+};
+
+export type TeamCalendarShareCreated = TeamCalendarShare & {
+	token: string;
+	embed_url: string;
+};
+
 export type OAuthConnection = {
 	id: string;
 	client_name: string;

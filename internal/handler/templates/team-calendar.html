@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<title>Team calendar</title>
+<style>
+/* Framework-free, same family as book.html: system font, neutral greys, one card.
+   Styled here (not booking.css) because nothing is shared with the booking widgets. */
+:root { --fg: #111827; --muted: #6b7280; --line: #e5e7eb; --bg: #ffffff; --soft: #f9fafb; --hour: 44px; }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  background: var(--bg); color: var(--fg); font-size: 14px; line-height: 1.4;
+  display: flex; flex-direction: column; min-height: 100%;
+}
+button { font: inherit; color: inherit; background: none; border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+button:hover { background: var(--soft); }
+button[aria-pressed="true"] { background: var(--fg); color: #fff; border-color: var(--fg); }
+.tc-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.tc-head h1 { font-size: 16px; font-weight: 600; margin: 0; }
+.tc-nav { display: flex; align-items: center; gap: 4px; }
+.tc-nav .tc-range { min-width: 150px; text-align: center; font-weight: 500; }
+.tc-views { display: flex; gap: 4px; margin-left: auto; }
+.tc-members { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.tc-chip { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 3px 10px 3px 6px; font-size: 12px; }
+.tc-chip .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--c); flex: none; }
+.tc-chip[aria-pressed="false"] { opacity: .45; }
+.tc-chip[aria-pressed="true"] { background: var(--soft); color: var(--fg); border-color: var(--line); }
+.tc-body { flex: 1; overflow: auto; position: relative; }
+.tc-status { padding: 24px; color: var(--muted); text-align: center; }
+.tc-status.error { color: #b91c1c; }
+
+/* Week */
+.wk { display: grid; grid-template-columns: 48px repeat(7, minmax(0, 1fr)); min-width: 640px; }
+.wk-hd { position: sticky; top: 0; z-index: 2; background: var(--bg); border-bottom: 1px solid var(--line); padding: 6px 4px; text-align: center; font-size: 12px; }
+.wk-hd .d { font-size: 16px; font-weight: 600; }
+.wk-hd.today .d { color: #2563eb; }
+.wk-allday { border-bottom: 1px solid var(--line); border-left: 1px solid var(--line); padding: 2px; min-height: 22px; display: flex; flex-direction: column; gap: 2px; }
+.wk-gutter { position: relative; }
+.wk-gutter .h { height: var(--hour); font-size: 10px; color: var(--muted); text-align: right; padding-right: 4px; transform: translateY(-6px); }
+.wk-col { position: relative; border-left: 1px solid var(--line); height: calc(var(--hour) * 24); background-image: linear-gradient(to bottom, var(--line) 1px, transparent 1px); background-size: 100% var(--hour); }
+.ev { position: absolute; left: 2px; right: 2px; border-radius: 4px; padding: 2px 4px; font-size: 11px; line-height: 1.25; overflow: hidden; cursor: pointer; background: var(--c); color: #fff; border: 1px solid rgba(255,255,255,.6); }
+.ev.external { background: color-mix(in srgb, var(--c) 18%, white); color: var(--fg); border: 1px solid var(--c); }
+.ev .t { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ev .m { opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ev.allday { position: static; }
+
+/* Month */
+.mo { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); min-width: 560px; }
+.mo-hd { position: sticky; top: 0; z-index: 2; background: var(--bg); border-bottom: 1px solid var(--line); padding: 6px 4px; font-size: 12px; text-align: center; color: var(--muted); }
+.mo-day { min-height: 96px; border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); padding: 4px; }
+.mo-day.other { background: var(--soft); color: var(--muted); }
+.mo-day .n { font-size: 12px; font-weight: 600; margin-bottom: 2px; }
+.mo-day.today .n { color: #2563eb; }
+.mo-day .ev { position: static; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+.mo-day .more { font-size: 11px; color: var(--muted); cursor: pointer; }
+
+/* Detail popover */
+.tc-detail { position: fixed; inset: 0; background: rgba(17,24,39,.35); display: flex; align-items: center; justify-content: center; z-index: 10; }
+.tc-detail[hidden] { display: none; }
+.tc-card { background: var(--bg); border-radius: 10px; padding: 16px 18px; width: min(92vw, 380px); box-shadow: 0 10px 30px rgba(0,0,0,.2); }
+.tc-card h2 { font-size: 15px; margin: 0 0 8px; padding-left: 10px; border-left: 4px solid var(--c); }
+.tc-card dl { margin: 0; display: grid; grid-template-columns: 80px 1fr; gap: 4px 8px; font-size: 13px; }
+.tc-card dt { color: var(--muted); }
+.tc-card dd { margin: 0; overflow-wrap: anywhere; }
+.tc-card .close { margin-top: 12px; float: right; }
+.tc-foot { padding: 6px 12px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--line); }
+.tc-foot a { color: inherit; }
+@media (max-width: 640px) { .tc-nav .tc-range { min-width: 0; } .tc-head h1 { display: none; } }
+</style>
+</head>
+<body>
+{{if .NotFound}}
+<div class="tc-status" style="padding-top:64px">
+  <h1 style="font-size:18px;margin:0 0 8px">Calendar not found</h1>
+  <p>This share link is invalid or has been revoked.</p>
+</div>
+{{else}}
+<header class="tc-head">
+  <h1>Team calendar</h1>
+  <div class="tc-nav">
+    <button type="button" id="prev" aria-label="Previous">&lsaquo;</button>
+    <button type="button" id="today">Today</button>
+    <button type="button" id="next" aria-label="Next">&rsaquo;</button>
+    <span class="tc-range" id="range"></span>
+  </div>
+  <div class="tc-views" role="group" aria-label="View">
+    <button type="button" data-view="week" aria-pressed="true">Week</button>
+    <button type="button" data-view="month" aria-pressed="false">Month</button>
+  </div>
+</header>
+<div class="tc-members" id="members" aria-label="Members"></div>
+<div class="tc-body" id="body"><div class="tc-status">Loading…</div></div>
+<div class="tc-foot">All times are shown in your local time zone (<span id="tz"></span>).</div>
+
+<div class="tc-detail" id="detail" hidden>
+  <div class="tc-card" role="dialog" aria-modal="true" aria-labelledby="dtitle">
+    <h2 id="dtitle"></h2>
+    <dl id="dbody"></dl>
+    <button type="button" class="close" id="dclose">Close</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var TOKEN = {{.Token}};
+  var WEEK_START = 1; // Monday; the embed has no viewer preferences to read
+  var HOUR = 44;
+
+  var state = { view: 'week', anchor: startOfDay(new Date()), members: [], items: [], hidden: {}, cache: {} };
+  var $ = function (id) { return document.getElementById(id); };
+  var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+  function ymd(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+  function startOfDay(d) { var x = new Date(d); x.setHours(0, 0, 0, 0); return x; }
+  function localDay(iso) { var p = iso.slice(0, 10).split('-'); return new Date(+p[0], +p[1] - 1, +p[2]); }
+  function addDays(d, n) { var x = new Date(d); x.setDate(x.getDate() + n); return x; }
+  function startOfWeek(d) { var x = startOfDay(d); var diff = (x.getDay() - WEEK_START + 7) % 7; return addDays(x, -diff); }
+  function sameDay(a, b) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(); }
+  function fmtTime(d) { return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }); }
+  function fmtDate(d) { return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }); }
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+
+  // The grid's date span: 7 days for week, a 6-row Monday-aligned grid for month.
+  function gridRange() {
+    if (state.view === 'week') { var s = startOfWeek(state.anchor); return { from: s, to: addDays(s, 7) }; }
+    var first = new Date(state.anchor.getFullYear(), state.anchor.getMonth(), 1);
+    var s2 = startOfWeek(first);
+    return { from: s2, to: addDays(s2, 42) };
+  }
+
+  function load() {
+    var r = gridRange();
+    var key = ymd(r.from) + '/' + ymd(addDays(r.to, -1));
+    if (state.cache[key]) { state.members = state.cache[key].members; state.items = state.cache[key].items; render(); return; }
+    $('body').innerHTML = '<div class="tc-status">Loading…</div>';
+    fetch('/v1/team-calendar?from=' + ymd(r.from) + '&to=' + ymd(addDays(r.to, -1)) + '&token=' + encodeURIComponent(TOKEN), { cache: 'no-store' })
+      .then(function (res) { if (!res.ok) throw new Error(res.status === 401 ? 'This share link is no longer valid.' : 'Could not load the calendar (' + res.status + ').'); return res.json(); })
+      .then(function (data) {
+        // All-day bounds are UTC midnights naming calendar days: rebuild them as LOCAL
+        // midnights so the day survives the viewer's time zone. Timed events are instants.
+        data.items.forEach(function (it) {
+          it.s = it.all_day ? localDay(it.start) : new Date(it.start);
+          it.e = it.all_day ? localDay(it.end) : new Date(it.end);
+        });
+        state.cache[key] = data; state.members = data.members; state.items = data.items; render();
+      })
+      .catch(function (err) { $('body').innerHTML = '<div class="tc-status error">' + esc(err.message) + '</div>'; });
+  }
+
+  function memberById(id) { for (var i = 0; i < state.members.length; i++) if (state.members[i].id === id) return state.members[i]; return null; }
+  function visibleItems() { return state.items.filter(function (it) { return !state.hidden[it.member_id]; }); }
+
+  function renderMembers() {
+    var el = $('members'); el.innerHTML = '';
+    state.members.forEach(function (m) {
+      var b = document.createElement('button'); b.type = 'button'; b.className = 'tc-chip';
+      b.style.setProperty('--c', m.color); b.setAttribute('aria-pressed', state.hidden[m.id] ? 'false' : 'true');
+      b.innerHTML = '<span class="dot"></span>' + esc(m.name);
+      b.onclick = function () { state.hidden[m.id] = !state.hidden[m.id]; render(); };
+      el.appendChild(b);
+    });
+  }
+
+  function evNode(it, cls) {
+    var m = memberById(it.member_id);
+    var d = document.createElement('div');
+    d.className = 'ev ' + it.kind + (cls ? ' ' + cls : '');
+    d.style.setProperty('--c', m ? m.color : '#6b7280');
+    d.title = it.title;
+    d.innerHTML = '<div class="t">' + esc(it.title) + '</div>' + (cls === 'allday' ? '' : '<div class="m">' + (it.all_day ? 'All day' : fmtTime(it.s)) + (m ? ' · ' + esc(m.name) : '') + '</div>');
+    d.onclick = function () { showDetail(it); };
+    return d;
+  }
+
+  function renderWeek() {
+    var r = gridRange(), items = visibleItems(), today = new Date();
+    var g = document.createElement('div'); g.className = 'wk';
+    g.appendChild(Object.assign(document.createElement('div'), { className: 'wk-hd' }));
+    var days = [];
+    for (var i = 0; i < 7; i++) {
+      var d = addDays(r.from, i); days.push(d);
+      var h = document.createElement('div'); h.className = 'wk-hd' + (sameDay(d, today) ? ' today' : '');
+      h.innerHTML = d.toLocaleDateString(undefined, { weekday: 'short' }) + '<div class="d">' + d.getDate() + '</div>';
+      g.appendChild(h);
+    }
+    // all-day row
+    g.appendChild(Object.assign(document.createElement('div'), { className: 'wk-allday' }));
+    days.forEach(function (d) {
+      var cell = document.createElement('div'); cell.className = 'wk-allday';
+      var next = addDays(d, 1);
+      items.forEach(function (it) { if (it.all_day && it.s < next && it.e > d) cell.appendChild(evNode(it, 'allday')); });
+      g.appendChild(cell);
+    });
+    // hour gutter + columns
+    var gut = document.createElement('div'); gut.className = 'wk-gutter';
+    for (var hh = 0; hh < 24; hh++) { var hl = document.createElement('div'); hl.className = 'h'; hl.textContent = hh === 0 ? '' : fmtTime(new Date(2000, 0, 1, hh)); gut.appendChild(hl); }
+    g.appendChild(gut);
+    days.forEach(function (d) {
+      var col = document.createElement('div'); col.className = 'wk-col';
+      var next = addDays(d, 1);
+      var dayItems = items.filter(function (it) { return !it.all_day && it.s < next && it.e > d; });
+      layoutDay(dayItems, d).forEach(function (p) {
+        var n = evNode(p.it);
+        n.style.top = p.top + 'px'; n.style.height = Math.max(p.height, 18) + 'px';
+        n.style.left = 'calc(' + (p.col * 100 / p.cols) + '% + 2px)'; n.style.width = 'calc(' + (100 / p.cols) + '% - 4px)';
+        col.appendChild(n);
+      });
+      g.appendChild(col);
+    });
+    $('body').innerHTML = ''; $('body').appendChild(g);
+    $('body').scrollTop = HOUR * 7;
+  }
+
+  // Overlapping events share the column width: a simple greedy cluster layout.
+  function layoutDay(items, day) {
+    var mins = function (t) { return Math.max(0, Math.min(1440, (t - day) / 60000)); };
+    var sorted = items.slice().sort(function (a, b) { return a.s - b.s || b.e - a.e; });
+    var out = [], cluster = [], clusterEnd = null;
+    function flush() {
+      var cols = [];
+      cluster.forEach(function (it) {
+        var c = 0; while (cols[c] && cols[c] > it.s) c++;
+        cols[c] = it.e; it._col = c;
+      });
+      cluster.forEach(function (it) { out.push({ it: it, col: it._col, cols: cols.length, top: mins(it.s) / 60 * HOUR, height: (mins(it.e) - mins(it.s)) / 60 * HOUR }); });
+      cluster = []; clusterEnd = null;
+    }
+    sorted.forEach(function (it) {
+      if (clusterEnd && it.s >= clusterEnd) flush();
+      cluster.push(it); if (!clusterEnd || it.e > clusterEnd) clusterEnd = it.e;
+    });
+    if (cluster.length) flush();
+    return out;
+  }
+
+  function renderMonth() {
+    var r = gridRange(), items = visibleItems(), today = new Date(), month = state.anchor.getMonth();
+    var g = document.createElement('div'); g.className = 'mo';
+    for (var i = 0; i < 7; i++) { var h = document.createElement('div'); h.className = 'mo-hd'; h.textContent = addDays(r.from, i).toLocaleDateString(undefined, { weekday: 'short' }); g.appendChild(h); }
+    for (var d = 0; d < 42; d++) {
+      var day = addDays(r.from, d), next = addDays(day, 1);
+      var cell = document.createElement('div'); cell.className = 'mo-day' + (day.getMonth() !== month ? ' other' : '') + (sameDay(day, today) ? ' today' : '');
+      cell.innerHTML = '<div class="n">' + day.getDate() + '</div>';
+      var dayItems = items.filter(function (it) { return it.s < next && it.e > day; });
+      var shown = dayItems.slice(0, 4);
+      shown.forEach(function (it) { cell.appendChild(evNode(it, 'allday')); });
+      if (dayItems.length > shown.length) {
+        var more = document.createElement('div'); more.className = 'more'; more.textContent = '+' + (dayItems.length - shown.length) + ' more';
+        more.onclick = (function (dd) { return function () { state.anchor = dd; state.view = 'week'; syncViewButtons(); load(); }; })(day);
+        cell.appendChild(more);
+      }
+      g.appendChild(cell);
+    }
+    $('body').innerHTML = ''; $('body').appendChild(g);
+  }
+
+  function render() {
+    renderMembers();
+    var r = gridRange();
+    $('range').textContent = state.view === 'week'
+      ? fmtDate(r.from) + ' – ' + fmtDate(addDays(r.to, -1))
+      : state.anchor.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    if (state.view === 'week') renderWeek(); else renderMonth();
+  }
+
+  function showDetail(it) {
+    var m = memberById(it.member_id);
+    $('dtitle').textContent = it.title; $('dtitle').style.setProperty('--c', m ? m.color : '#6b7280');
+    var rows = [
+      ['When', it.all_day ? fmtDate(it.s) + ' (all day)' : fmtDate(it.s) + ', ' + fmtTime(it.s) + ' – ' + fmtTime(it.e)],
+      ['Member', m ? m.name : '—'],
+      ['Source', it.kind === 'booking' ? 'Calnode booking' : (it.source === 'google' ? 'Google Calendar' : it.source === 'microsoft' ? 'Microsoft 365' : it.source)]
+    ];
+    if (it.event_type_name) rows.push(['Event type', it.event_type_name]);
+    if (it.attendee_name) rows.push(['Attendee', it.attendee_name]);
+    if (it.location) rows.push(['Location', it.location]);
+    $('dbody').innerHTML = rows.map(function (r) { return '<dt>' + esc(r[0]) + '</dt><dd>' + esc(r[1]) + '</dd>'; }).join('');
+    $('detail').hidden = false;
+  }
+  $('dclose').onclick = function () { $('detail').hidden = true; };
+  $('detail').onclick = function (e) { if (e.target === $('detail')) $('detail').hidden = true; };
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') $('detail').hidden = true; });
+
+  function syncViewButtons() {
+    Array.prototype.forEach.call(document.querySelectorAll('[data-view]'), function (b) { b.setAttribute('aria-pressed', b.getAttribute('data-view') === state.view ? 'true' : 'false'); });
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('[data-view]'), function (b) {
+    b.onclick = function () { state.view = b.getAttribute('data-view'); syncViewButtons(); load(); };
+  });
+  function step(n) {
+    if (state.view === 'week') state.anchor = addDays(state.anchor, 7 * n);
+    else state.anchor = new Date(state.anchor.getFullYear(), state.anchor.getMonth() + n, 1);
+    load();
+  }
+  $('prev').onclick = function () { step(-1); };
+  $('next').onclick = function () { step(1); };
+  $('today').onclick = function () { state.anchor = startOfDay(new Date()); load(); };
+  try { $('tz').textContent = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { $('tz').textContent = 'local'; }
+  load();
+})();
+</script>
+{{end}}
+</body>
+</html>

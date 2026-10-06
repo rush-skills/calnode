@@ -274,6 +274,9 @@ func (p *otherProvider) ListCalendars(context.Context, string, string) ([]calend
 func (p *otherProvider) FreeBusy(context.Context, string, time.Time, time.Time) ([]slots.Interval, error) {
 	return nil, nil
 }
+func (p *otherProvider) ListEvents(context.Context, string, time.Time, time.Time) ([]calendar.ExternalEvent, error) {
+	return nil, nil
+}
 func (p *otherProvider) CreateEvent(context.Context, string, calendar.CreateEventParams) (string, string, string, error) {
 	return "other-event-1", "", "primary", nil
 }
