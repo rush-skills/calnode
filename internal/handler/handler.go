@@ -166,6 +166,9 @@ func (h *Handler) SetEncKey(hexKey string) {
 // and team invites.
 func (h *Handler) SetBaseURL(url string) {
 	h.baseURL = url
+	if h.webhookSvc != nil {
+		h.webhookSvc.SetBaseURL(url) // admin_url in webhook payloads
+	}
 }
 
 // SetPublicBaseURL sets the booker-facing host used for booking-page links and
@@ -250,6 +253,9 @@ func (h *Handler) getMicrosoftAuth() *oauth2.Config {
 // backed by the configured encryption key.
 func (h *Handler) SetWebhookSvc(svc *webhook.Service) {
 	h.webhookSvc = svc
+	if svc != nil {
+		svc.SetBaseURL(h.baseURL)
+	}
 }
 
 // isEmailEnabled reports whether a real SMTP sender is configured.

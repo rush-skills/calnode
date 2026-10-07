@@ -423,3 +423,72 @@ func TestEnqueue_orgScopeFiresForEveryHost(t *testing.T) {
 		t.Errorf("ListOrg = %+v, %v; want the one org webhook", org, err)
 	}
 }
+
+// PRD P0.5: a webhook limited to some event types fires only for those.
+func TestEnqueue_eventTypeFilter(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	demo, _, _ := e.svc.Create(ctx, testUserID, "https://a.example.com/hook", []string{"booking.created"})
+	all, _, _ := e.svc.Create(ctx, testUserID, "https://b.example.com/hook", []string{"booking.created"})
+	if err := e.svc.SetEventTypes(ctx, testUserID, demo.ID, []string{"demo", " ", "demo"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.SetEventTypes(ctx, otherUser, demo.ID, []string{"x"}); err == nil {
+		t.Fatal("a non-owner set the filter")
+	}
+
+	for _, slug := range []string{"internal-sync", "demo"} {
+		if err := e.svc.Enqueue(ctx, "booking.created", webhook.BookingPayload{HostID: testUserID, EventTypeSlug: slug}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	count := func(id string) (n int) {
+		_ = e.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM webhook_deliveries WHERE webhook_id = ?`, id).Scan(&n)
+		return
+	}
+	if got := count(demo.ID); got != 1 {
+		t.Errorf("filtered webhook got %d deliveries; want 1 (demo only)", got)
+	}
+	if got := count(all.ID); got != 2 {
+		t.Errorf("unfiltered webhook got %d deliveries; want 2", got)
+	}
+	list, _ := e.svc.List(ctx, testUserID)
+	for _, wh := range list {
+		if wh.ID == demo.ID && (len(wh.EventTypes) != 1 || wh.EventTypes[0] != "demo") {
+			t.Errorf("EventTypes = %v; want [demo] (deduplicated, blanks dropped)", wh.EventTypes)
+		}
+	}
+}
+
+// PRD P0.6: deliveries get 8 attempts, and a delivery can be sent again with a fresh set.
+func TestRedeliver(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	wh, _, _ := e.svc.Create(ctx, testUserID, "https://example.com/hook", []string{"booking.created"})
+	if err := e.svc.Enqueue(ctx, "booking.created", webhook.BookingPayload{HostID: testUserID}); err != nil {
+		t.Fatal(err)
+	}
+	var deliveryID string
+	var maxAttempts int
+	_ = e.db.QueryRowContext(ctx, `SELECT id FROM webhook_deliveries`).Scan(&deliveryID)
+	_ = e.db.QueryRowContext(ctx, `SELECT max_attempts FROM jobs`).Scan(&maxAttempts)
+	if maxAttempts != 8 {
+		t.Errorf("max_attempts = %d; want 8", maxAttempts)
+	}
+	e.db.ExecContext(ctx, `UPDATE webhook_deliveries SET status = 'failed'`)
+	e.db.ExecContext(ctx, `UPDATE jobs SET status = 'failed'`)
+
+	if err := e.svc.Redeliver(ctx, otherUser, wh.ID, deliveryID); err == nil {
+		t.Fatal("a non-owner redelivered")
+	}
+	if err := e.svc.Redeliver(ctx, testUserID, wh.ID, deliveryID); err != nil {
+		t.Fatalf("Redeliver: %v", err)
+	}
+	var status string
+	var pending int
+	_ = e.db.QueryRowContext(ctx, `SELECT status FROM webhook_deliveries WHERE id = ?`, deliveryID).Scan(&status)
+	_ = e.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs WHERE status = 'pending' AND max_attempts = 8 AND payload LIKE ?`, "%"+deliveryID+"%").Scan(&pending)
+	if status != "pending" || pending != 1 {
+		t.Errorf("after redeliver: delivery %q, pending jobs %d; want pending and 1", status, pending)
+	}
+}

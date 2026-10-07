@@ -233,7 +233,11 @@ func (w *Worker) Poll(ctx context.Context) {
 					w.markDeliveryFailed(ctx, j.payload)
 				}
 			} else {
-				runAt := time.Now().UTC().Add(backoff(j.attempts)).Format(time.RFC3339)
+				wait := backoff(j.attempts)
+				if j.typ == "webhook.deliver" {
+					wait = webhookBackoff(j.attempts)
+				}
+				runAt := time.Now().UTC().Add(wait).Format(time.RFC3339)
 				if _, uerr := w.db.ExecContext(ctx,
 					`UPDATE jobs SET status = 'pending', last_error = ?, run_at = ? WHERE id = ?`,
 					err.Error(), runAt, j.id); uerr != nil {
@@ -254,6 +258,21 @@ func (w *Worker) Poll(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// webhookBackoff is the wait after failed webhook attempt n (1-based): 5 minutes,
+// tripling each time, capped at 6 hours. Over webhook's 8 attempts that is 5m, 15m,
+// 45m, 2h15m, 6h, 6h, 6h: about 21 hours, so a receiver that is down for most of a day
+// still gets every event.
+func webhookBackoff(attempt int) time.Duration {
+	d := 5 * time.Minute
+	for i := 1; i < attempt; i++ {
+		d *= 3
+		if d >= 6*time.Hour {
+			return 6 * time.Hour
+		}
+	}
+	return d
 }
 
 func backoff(attempt int) time.Duration {
@@ -372,13 +391,15 @@ func (w *Worker) deliverWebhook(ctx context.Context, jobPayload string) error {
 		event           string
 		webhookURL      string
 		secretEnc       string
+		prevEnc         string
+		prevUntil       string
 	)
 	err := w.db.QueryRowContext(ctx, `
-		SELECT d.payload, d.event, wh.url, wh.secret_enc
+		SELECT d.payload, d.event, wh.url, wh.secret_enc, wh.secret_prev_enc, wh.secret_prev_expires_at
 		FROM webhook_deliveries d
 		JOIN webhooks wh ON wh.id = d.webhook_id
 		WHERE d.id = ?`, p.WebhookDeliveryID).
-		Scan(&deliveryPayload, &event, &webhookURL, &secretEnc)
+		Scan(&deliveryPayload, &event, &webhookURL, &secretEnc, &prevEnc, &prevUntil)
 	if err == sql.ErrNoRows {
 		return nil // delivery or webhook deleted; skip silently
 	}
@@ -386,13 +407,13 @@ func (w *Worker) deliverWebhook(ctx context.Context, jobPayload string) error {
 		return fmt.Errorf("worker: fetch delivery: %w", err)
 	}
 
-	secret, err := w.svc.DecryptSecret(secretEnc)
+	payloadBytes := []byte(deliveryPayload)
+	// Signed with the current secret, and also the previous one while a rotation's
+	// overlap window is open (webhook.SignatureHeader).
+	sig, err := w.svc.SignatureHeader(secretEnc, prevEnc, prevUntil, payloadBytes, time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("worker: decrypt secret: %w", err)
 	}
-
-	payloadBytes := []byte(deliveryPayload)
-	sig := webhook.Sign(secret, payloadBytes)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL,
 		bytes.NewReader(payloadBytes))

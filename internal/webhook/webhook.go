@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/calnode/calnode/internal/bookingsnap"
 	"github.com/calnode/calnode/internal/uid"
 )
 
@@ -31,9 +32,13 @@ type Webhook struct {
 	Fields []string // payload field keys; nil means the default set
 	// Scope is ScopeUser (fires for bookings UserID hosts) or ScopeOrg (fires for every
 	// booking in the workspace; created and managed by admins).
-	Scope     string
-	IsActive  bool
-	CreatedAt time.Time
+	Scope string
+	// EventTypes limits the webhook to bookings of these event type slugs; empty is all.
+	EventTypes []string
+	// PreviousSecretUntil is set while a rotated-out secret still signs deliveries.
+	PreviousSecretUntil *time.Time
+	IsActive            bool
+	CreatedAt           time.Time
 }
 
 // Payload field keys (the JSON keys in a delivery's "data" object).
@@ -60,10 +65,34 @@ const (
 	FieldAmountPaid      = "amount_paid_cents"
 	FieldCurrency        = "amount_paid_currency"
 	FieldRSVPStatus      = "rsvp_status"
-	// FieldInitiatedBy says who caused a cancel or reschedule: InitiatedByBooker (through
-	// the booking's manage link, from the confirmation email or the calendar invite) or
-	// InitiatedByHost (a signed-in member, an admin, or an API key).
+	// FieldInitiatedBy says who caused a change: InitiatedByBooker (through the booking's
+	// manage link, from the confirmation email or the calendar invite), InitiatedByHost (a
+	// host of the booking, signed in or by API key), InitiatedByAdmin (an admin who does
+	// not host it) or InitiatedBySystem (Calnode itself, e.g. the calendar sweep).
 	FieldInitiatedBy = "initiated_by"
+
+	// The full-shape fields (docs/webhooks.md). meeting, revision, occurred_at, admin_url
+	// and changed carry no personal data and are in the default set; hosts and attendees do.
+	FieldMeeting           = "meeting"
+	FieldHosts             = "hosts"
+	FieldAttendees         = "attendees"
+	FieldRevision          = "revision"
+	FieldOccurredAt        = "occurred_at"
+	FieldAdminURL          = "admin_url"
+	FieldChanged           = "changed"
+	FieldPreviousHostID    = "previous_host_id"
+	FieldPreviousHostName  = "previous_host_name"
+	FieldPreviousHostEmail = "previous_host_email"
+)
+
+// Booking events.
+const (
+	EventBookingCreated     = "booking.created"
+	EventBookingRescheduled = "booking.rescheduled"
+	EventBookingCancelled   = "booking.cancelled"
+	EventBookingReassigned  = "booking.reassigned"
+	EventBookingUpdated     = "booking.updated"
+	EventBookingRSVP        = "booking.rsvp"
 )
 
 // AllFields is every selectable field, in payload order. Used to validate config
@@ -75,6 +104,8 @@ var AllFields = []string{
 	FieldHostID, FieldHostName, FieldHostEmail,
 	FieldAttendeeName, FieldAttendeeEmail, FieldAttendeeTZ, FieldAnswers,
 	FieldPaymentStatus, FieldAmountPaid, FieldCurrency, FieldRSVPStatus, FieldInitiatedBy,
+	FieldMeeting, FieldHosts, FieldAttendees, FieldRevision, FieldOccurredAt, FieldAdminURL,
+	FieldChanged, FieldPreviousHostID, FieldPreviousHostName, FieldPreviousHostEmail,
 }
 
 // Webhook scopes.
@@ -87,6 +118,8 @@ const (
 const (
 	InitiatedByBooker = "booker"
 	InitiatedByHost   = "host"
+	InitiatedByAdmin  = "admin"
+	InitiatedBySystem = "system"
 )
 
 // defaultFields reproduces the original payload (no PII, no answers) so a webhook with no
@@ -97,6 +130,7 @@ var defaultFields = []string{
 	FieldStatus, FieldLocation, FieldCancelReason, FieldCreatedAt,
 	FieldPreviousStartAt, FieldPreviousEndAt,
 	FieldPaymentStatus, FieldAmountPaid, FieldCurrency, FieldRSVPStatus, FieldInitiatedBy,
+	FieldMeeting, FieldRevision, FieldOccurredAt, FieldAdminURL, FieldChanged, FieldPreviousHostID,
 }
 
 var validField = func() map[string]bool {
@@ -152,12 +186,22 @@ type BookingPayload struct {
 	// InitiatedBy is who caused a booking.cancelled or booking.rescheduled
 	// (InitiatedByBooker / InitiatedByHost); empty on other events.
 	InitiatedBy string `json:"initiated_by,omitempty"`
+	// Changed names the fields a booking.updated changed (e.g. "location_value").
+	Changed []string `json:"changed,omitempty"`
+	// PreviousHostID is the host a booking.reassigned moved the booking away from.
+	PreviousHostID string `json:"previous_host_id,omitempty"`
+	// OccurredAt is when the change happened (RFC3339). Empty: the booking's changed_at.
+	OccurredAt string `json:"occurred_at,omitempty"`
 }
 
 type Service struct {
-	db  *sql.DB
-	key [32]byte
+	db      *sql.DB
+	key     [32]byte
+	baseURL string // public URL, for admin_url
 }
+
+// SetBaseURL sets the instance's public URL, used to build admin_url in payloads.
+func (s *Service) SetBaseURL(u string) { s.baseURL = u }
 
 // New creates a Service. If encKeyHex is empty an ephemeral key is generated
 // (secrets won't survive restarts but the server still works in dev/test).
@@ -252,7 +296,7 @@ func (s *Service) Update(ctx context.Context, userID, id string, events, fields 
 // List returns all webhooks for a user, most recent first.
 func (s *Service) List(ctx context.Context, userID string) ([]Webhook, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, user_id, url, events, fields, scope, is_active, created_at
+		SELECT id, user_id, url, events, fields, scope, event_types, secret_prev_expires_at, is_active, created_at
 		FROM webhooks WHERE user_id = ? ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("webhook: list: %w", err)
@@ -266,8 +310,17 @@ func (s *Service) List(ctx context.Context, userID string) ([]Webhook, error) {
 		var fieldsJSON sql.NullString
 		var isActive int
 		var createdAt string
-		if err := rows.Scan(&wh.ID, &wh.UserID, &wh.URL, &eventsJSON, &fieldsJSON, &wh.Scope, &isActive, &createdAt); err != nil {
+		var typesJSON sql.NullString
+		var prevUntil string
+		if err := rows.Scan(&wh.ID, &wh.UserID, &wh.URL, &eventsJSON, &fieldsJSON, &wh.Scope, &typesJSON, &prevUntil, &isActive, &createdAt); err != nil {
 			return nil, fmt.Errorf("webhook: scan: %w", err)
+		}
+		wh.EventTypes = []string{}
+		if typesJSON.Valid && typesJSON.String != "" {
+			_ = json.Unmarshal([]byte(typesJSON.String), &wh.EventTypes)
+		}
+		if t, err := time.Parse(time.RFC3339, prevUntil); err == nil && t.After(time.Now()) {
+			wh.PreviousSecretUntil = &t
 		}
 		wh.IsActive = isActive == 1
 		_ = json.Unmarshal([]byte(eventsJSON), &wh.Events)
@@ -342,6 +395,107 @@ func (s *Service) ListOrg(ctx context.Context) ([]Webhook, error) {
 	return out, nil
 }
 
+// SetEventTypes limits a webhook owned by userID to bookings of these event type slugs
+// (deduplicated, blanks dropped); an empty list means every event type.
+func (s *Service) SetEventTypes(ctx context.Context, userID, id string, slugs []string) error {
+	var clean []string
+	for _, v := range slugs {
+		if v = strings.TrimSpace(v); v != "" && !slices.Contains(clean, v) {
+			clean = append(clean, v)
+		}
+	}
+	var arg any // NULL = all
+	if len(clean) > 0 {
+		b, _ := json.Marshal(clean)
+		arg = string(b)
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE webhooks SET event_types = ? WHERE id = ? AND user_id = ?`, arg, id, userID)
+	if err != nil {
+		return fmt.Errorf("webhook: set event types: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SecretOverlap is how long a rotated-out secret keeps signing deliveries next to the
+// new one, so a receiver can switch secrets without rejecting anything in between.
+const SecretOverlap = 24 * time.Hour
+
+// RotateSecret gives a webhook owned by userID a new signing secret and returns it (hex,
+// shown once). The old secret signs alongside it for SecretOverlap; deliveries in that
+// window carry both signatures. Rotating again inside the window drops the oldest.
+func (s *Service) RotateSecret(ctx context.Context, userID, id string) (string, time.Time, error) {
+	raw := make([]byte, 32)
+	if _, err := io.ReadFull(rand.Reader, raw); err != nil {
+		return "", time.Time{}, fmt.Errorf("webhook: generate secret: %w", err)
+	}
+	enc, err := s.encrypt(raw)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	until := time.Now().UTC().Add(SecretOverlap).Truncate(time.Second)
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE webhooks SET secret_prev_enc = secret_enc, secret_prev_expires_at = ?, secret_enc = ?
+		WHERE id = ? AND user_id = ?`, until.Format(time.RFC3339), enc, id, userID)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("webhook: rotate secret: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return "", time.Time{}, ErrNotFound
+	}
+	return hex.EncodeToString(raw), until, nil
+}
+
+// SignatureHeader is the X-Calnode-Signature value for payload: "sha256=<hex>" with the
+// current secret, followed by ",sha256=<hex>" with the previous one while it is inside
+// its overlap window. The HMAC key is the secret's raw 32 bytes (hex-decoded), not the
+// hex string shown to the user.
+func (s *Service) SignatureHeader(secretEnc, prevEnc, prevUntil string, payload []byte, now time.Time) (string, error) {
+	secret, err := s.decrypt(secretEnc)
+	if err != nil {
+		return "", err
+	}
+	sig := Sign(secret, payload)
+	if prevEnc != "" {
+		if t, err := time.Parse(time.RFC3339, prevUntil); err == nil && now.Before(t) {
+			if prev, err := s.decrypt(prevEnc); err == nil {
+				sig += "," + Sign(prev, payload)
+			}
+		}
+	}
+	return sig, nil
+}
+
+// Redeliver queues delivery deliveryID of webhook webhookID (owned by userID) to be
+// sent again now, with a fresh set of attempts. It is the same delivery, so the
+// X-Calnode-Delivery id and the payload are unchanged and a receiver that already
+// stored it can recognise the repeat.
+func (s *Service) Redeliver(ctx context.Context, userID, webhookID, deliveryID string) error {
+	var owner string
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT wh.user_id FROM webhook_deliveries d JOIN webhooks wh ON wh.id = d.webhook_id
+		WHERE d.id = ? AND d.webhook_id = ?`, deliveryID, webhookID).Scan(&owner); err != nil || owner != userID {
+		return ErrNotFound
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("webhook: redeliver begin: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+	if _, err := tx.ExecContext(ctx, `UPDATE webhook_deliveries SET status = 'pending' WHERE id = ?`, deliveryID); err != nil {
+		return fmt.Errorf("webhook: redeliver reset: %w", err)
+	}
+	jobPayload, _ := json.Marshal(map[string]string{"webhook_delivery_id": deliveryID})
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO jobs (id, type, payload, run_at, max_attempts) VALUES (?, 'webhook.deliver', ?, ?, ?)`,
+		uid.New(), string(jobPayload), time.Now().UTC().Format(time.RFC3339), webhookDeliverAttempts); err != nil {
+		return fmt.Errorf("webhook: redeliver job: %w", err)
+	}
+	return tx.Commit()
+}
+
 // Delete removes a webhook owned by userID. Returns ErrNotFound if it doesn't exist.
 func (s *Service) Delete(ctx context.Context, userID, id string) error {
 	res, err := s.db.ExecContext(ctx,
@@ -362,50 +516,70 @@ type enrichedBooking struct {
 	eventTypeName                           string
 	hostName, hostEmail                     string
 	attendeeName, attendeeEmail, attendeeTZ string
-	answers                                 []map[string]string
+	answers                                 []bookingsnap.Answer
+	snap                                    *bookingsnap.Snapshot // nil when the booking row is gone
+	previousHostName, previousHostEmail     string
 }
 
-// enrich loads the data not carried in BookingPayload (host name/email, event-type
-// name, attendee identity, intake answers) from the booking row. Best-effort: any
-// query failure simply leaves those fields empty. Queries are drained sequentially,
-// safe on the single-connection pool, and run before Enqueue opens its tx.
+// enrich loads the booking as it stands now (bookingsnap) and lets it override the
+// caller's copy of the current-state fields: status, times, location, host, slug. One
+// row read gives those and the revision together, so a payload's fields always match
+// its revision, whatever order events are built in. That is also what makes
+// booking.created carry the Meet/Teams link the calendar minted after the caller took
+// its copy. The caller still owns what the row does not hold: previous times, the
+// actor, payment, what changed. Best-effort: a booking that cannot be read keeps the
+// caller's values.
 func (s *Service) enrich(ctx context.Context, p BookingPayload) enrichedBooking {
-	bd := enrichedBooking{core: p, answers: []map[string]string{}}
+	bd := enrichedBooking{core: p, answers: []bookingsnap.Answer{}}
 	if p.ID == "" {
 		return bd
 	}
-	_ = s.db.QueryRowContext(ctx, `
-		SELECT COALESCE(et.name,''), COALESCE(u.name,''), COALESCE(u.email,'')
-		FROM bookings b
-		JOIN event_types et ON et.id = b.event_type_id
-		JOIN users u ON u.id = b.host_id
-		WHERE b.id = ?`, p.ID).Scan(&bd.eventTypeName, &bd.hostName, &bd.hostEmail)
-
-	_ = s.db.QueryRowContext(ctx, `
-		SELECT COALESCE(name,''), COALESCE(email,''), COALESCE(iana_timezone,'')
-		FROM booking_attendees WHERE booking_id = ? AND is_organizer = 1`, p.ID).
-		Scan(&bd.attendeeName, &bd.attendeeEmail, &bd.attendeeTZ)
-
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT q.label, ba.value
-		FROM booking_answers ba
-		JOIN event_type_questions q ON q.id = ba.question_id
-		WHERE ba.booking_id = ?
-		ORDER BY q.position`, p.ID)
-	if err == nil {
-		for rows.Next() {
-			var label, value string
-			if err := rows.Scan(&label, &value); err == nil {
-				bd.answers = append(bd.answers, map[string]string{"question": label, "answer": value})
-			}
+	snap, err := bookingsnap.Load(ctx, s.db, p.ID, s.baseURL)
+	if err != nil {
+		return bd
+	}
+	bd.snap = snap
+	c := &bd.core
+	c.Status = snap.Status
+	c.StartAt = rfc3339(snap.StartAt)
+	c.EndAt = rfc3339(snap.EndAt)
+	c.CreatedAt = rfc3339(snap.CreatedAt)
+	c.LocationValue = snap.LocationValue
+	c.HostID = snap.HostID
+	c.EventTypeSlug = snap.EventTypeSlug
+	if c.CancellationReason == "" {
+		c.CancellationReason = snap.CancellationReason
+	}
+	if c.OccurredAt == "" {
+		c.OccurredAt = rfc3339(snap.ChangedAt)
+	}
+	bd.eventTypeName, bd.hostName, bd.hostEmail = snap.EventTypeName, snap.HostName, snap.HostEmail
+	for _, a := range snap.Attendees {
+		if a.Organizer {
+			bd.attendeeName, bd.attendeeEmail, bd.attendeeTZ = a.Name, a.Email, a.Timezone
 		}
-		rows.Close() // #nosec G104 -- rows already fully consumed above; nothing actionable on close error
+	}
+	bd.answers = snap.Answers
+	if p.PreviousHostID != "" {
+		_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(name,''), COALESCE(email,'') FROM users WHERE id = ?`,
+			p.PreviousHostID).Scan(&bd.previousHostName, &bd.previousHostEmail)
 	}
 	return bd
 }
 
+// rfc3339 normalises a stored timestamp to RFC3339 in UTC, the format every payload
+// time uses. A value that does not parse is returned unchanged.
+func rfc3339(v string) string {
+	for _, layout := range []string{time.RFC3339Nano, "2006-01-02 15:04:05"} {
+		if t, err := time.Parse(layout, v); err == nil {
+			return t.UTC().Format(time.RFC3339)
+		}
+	}
+	return v
+}
+
 // buildData renders the "data" object containing only the requested field keys.
-// The four optional booking fields are omitted when empty (matching the original
+// The optional booking fields are omitted when empty (matching the original
 // payload's omitempty behaviour); everything else is always included when selected.
 func buildData(bd enrichedBooking, fields []string) map[string]any {
 	always := map[string]any{
@@ -424,15 +598,28 @@ func buildData(bd enrichedBooking, fields []string) map[string]any {
 		FieldAttendeeTZ:    bd.attendeeTZ,
 		FieldAnswers:       bd.answers,
 	}
+	if bd.snap != nil {
+		always[FieldMeeting] = bd.snap.Meeting
+		always[FieldHosts] = bd.snap.Hosts
+		always[FieldAttendees] = bd.snap.Attendees
+		always[FieldRevision] = bd.snap.Revision
+	}
 	omitEmpty := map[string]string{
-		FieldLocation:        bd.core.LocationValue,
-		FieldCancelReason:    bd.core.CancellationReason,
-		FieldPreviousStartAt: bd.core.PreviousStartAt,
-		FieldPreviousEndAt:   bd.core.PreviousEndAt,
-		FieldPaymentStatus:   bd.core.PaymentStatus,
-		FieldCurrency:        bd.core.AmountPaidCurrency,
-		FieldRSVPStatus:      bd.core.RSVPStatus,
-		FieldInitiatedBy:     bd.core.InitiatedBy,
+		FieldLocation:          bd.core.LocationValue,
+		FieldCancelReason:      bd.core.CancellationReason,
+		FieldPreviousStartAt:   bd.core.PreviousStartAt,
+		FieldPreviousEndAt:     bd.core.PreviousEndAt,
+		FieldPaymentStatus:     bd.core.PaymentStatus,
+		FieldCurrency:          bd.core.AmountPaidCurrency,
+		FieldRSVPStatus:        bd.core.RSVPStatus,
+		FieldInitiatedBy:       bd.core.InitiatedBy,
+		FieldOccurredAt:        bd.core.OccurredAt,
+		FieldPreviousHostID:    bd.core.PreviousHostID,
+		FieldPreviousHostName:  bd.previousHostName,
+		FieldPreviousHostEmail: bd.previousHostEmail,
+	}
+	if bd.snap != nil {
+		omitEmpty[FieldAdminURL] = bd.snap.AdminURL
 	}
 	out := make(map[string]any, len(fields))
 	for _, f := range fields {
@@ -442,31 +629,41 @@ func buildData(bd enrichedBooking, fields []string) map[string]any {
 			out[f] = v
 		} else if f == FieldAmountPaid && bd.core.AmountPaidCents > 0 {
 			out[f] = bd.core.AmountPaidCents
+		} else if f == FieldChanged && len(bd.core.Changed) > 0 {
+			out[f] = bd.core.Changed
 		}
 	}
 	return out
 }
 
-// Enqueue finds all active webhooks for p.HostID that subscribe to event,
+// webhookDeliverAttempts is how many times a delivery is tried before it is marked
+// failed. With the worker's webhook backoff (5 min, tripling, capped at 6 h) the last
+// try is about 21 hours after the first, so a receiver can be down most of a day
+// without losing an event (worker.webhookBackoff).
+const webhookDeliverAttempts = 8
+
+// Enqueue finds all active webhooks for p.HostID (and p.PreviousHostID, so a host hears
+// that a booking moved away from them) or org-wide that subscribe to event,
 // and creates a webhook_deliveries + jobs row pair for each. Failures are
 // soft-errors (caller logs; a booking is already committed).
 func (s *Service) Enqueue(ctx context.Context, event string, p BookingPayload) error {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, events, fields FROM webhooks
-		WHERE is_active = 1 AND (user_id = ? OR scope = 'org')`, p.HostID)
+		SELECT id, events, fields, event_types FROM webhooks
+		WHERE is_active = 1 AND (user_id = ? OR user_id = ? OR scope = 'org')`, p.HostID, p.PreviousHostID)
 	if err != nil {
 		return fmt.Errorf("webhook: list for enqueue: %w", err)
 	}
 
 	type wrow struct {
-		id     string
-		fields []string // nil = default set
+		id         string
+		fields     []string // nil = default set
+		eventTypes []string // nil = every event type
 	}
 	var matching []wrow
 	for rows.Next() {
 		var id, eventsJSON string
-		var fieldsJSON sql.NullString
-		if err := rows.Scan(&id, &eventsJSON, &fieldsJSON); err != nil {
+		var fieldsJSON, typesJSON sql.NullString
+		if err := rows.Scan(&id, &eventsJSON, &fieldsJSON, &typesJSON); err != nil {
 			rows.Close() // #nosec G104 -- already returning the scan error; nothing more actionable
 			return fmt.Errorf("webhook: scan: %w", err)
 		}
@@ -482,16 +679,33 @@ func (s *Service) Enqueue(ctx context.Context, event string, p BookingPayload) e
 		if !subscribed {
 			continue
 		}
+		var types []string
+		if typesJSON.Valid && typesJSON.String != "" {
+			_ = json.Unmarshal([]byte(typesJSON.String), &types)
+		}
 		var fields []string
 		if fieldsJSON.Valid && fieldsJSON.String != "" {
 			_ = json.Unmarshal([]byte(fieldsJSON.String), &fields)
 		}
-		matching = append(matching, wrow{id: id, fields: fields})
+		matching = append(matching, wrow{id: id, fields: fields, eventTypes: types})
 	}
 	rows.Close() // #nosec G104 -- rows already fully consumed above; nothing actionable on close error
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	// The event-type filter needs the slug; callers that did not pass one (the notetaker
+	// events) have it looked up from the booking.
+	slug := p.EventTypeSlug
+	if slug == "" && p.ID != "" {
+		_ = s.db.QueryRowContext(ctx, `SELECT et.slug FROM bookings b JOIN event_types et ON et.id = b.event_type_id WHERE b.id = ?`, p.ID).Scan(&slug)
+	}
+	kept := matching[:0]
+	for _, wh := range matching {
+		if len(wh.eventTypes) == 0 || slices.Contains(wh.eventTypes, slug) {
+			kept = append(kept, wh)
+		}
+	}
+	matching = kept
 	if len(matching) == 0 {
 		return nil
 	}
@@ -539,9 +753,9 @@ func (s *Service) Enqueue(ctx context.Context, event string, p BookingPayload) e
 		}
 		jobPayload, _ := json.Marshal(map[string]string{"webhook_delivery_id": deliveryID})
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO jobs (id, type, payload, run_at)
-			VALUES (?, 'webhook.deliver', ?, ?)`,
-			jobID, string(jobPayload), now); err != nil {
+			INSERT INTO jobs (id, type, payload, run_at, max_attempts)
+			VALUES (?, 'webhook.deliver', ?, ?, ?)`,
+			jobID, string(jobPayload), now, webhookDeliverAttempts); err != nil {
 			return fmt.Errorf("webhook: insert job: %w", err)
 		}
 	}

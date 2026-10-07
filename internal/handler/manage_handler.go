@@ -295,7 +295,7 @@ func (h *Handler) RescheduleByToken(w http.ResponseWriter, r *http.Request) {
 
 	h.writeJSON(w, http.StatusOK, toBookingJSON(updated))
 
-	go h.rescheduleSideEffects(*updated, b.EventTypeID, previousStart, previousEnd) // #nosec G118 -- deliberately its own context.Background(); see rescheduleSideEffects' doc comment
+	go h.rescheduleSideEffects(*updated, b.EventTypeID, previousStart, previousEnd, webhook.InitiatedByBooker) // #nosec G118 -- deliberately its own context.Background(); see rescheduleSideEffects' doc comment
 }
 
 // rescheduleSideEffects moves the calendar event(s) to the new time, rotates the
@@ -303,7 +303,9 @@ func (h *Handler) RescheduleByToken(w http.ResponseWriter, r *http.Request) {
 // reschedules reminders. Intended to run in its own goroutine; every failure is
 // logged, never fatal. Shared by the manage-link RescheduleByToken handler and the
 // MCP reschedule_booking tool.
-func (h *Handler) rescheduleSideEffects(bCopy booking.Booking, capturedEtID string, previousStart, previousEnd time.Time) {
+// initiatedBy is the webhook initiated_by: "booker" from the manage page, the actor's
+// role (initiatorFor) from the host REST and MCP paths.
+func (h *Handler) rescheduleSideEffects(bCopy booking.Booking, capturedEtID string, previousStart, previousEnd time.Time, initiatedBy string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -374,7 +376,7 @@ func (h *Handler) rescheduleSideEffects(bCopy booking.Booking, capturedEtID stri
 			CreatedAt:       bCopy.CreatedAt.UTC().Format(time.RFC3339),
 			PreviousStartAt: previousStart.UTC().Format(time.RFC3339),
 			PreviousEndAt:   previousEnd.UTC().Format(time.RFC3339),
-			InitiatedBy:     webhook.InitiatedByBooker,
+			InitiatedBy:     initiatedBy,
 		}); err != nil {
 			h.logger.Error("enqueue booking.rescheduled webhook", "error", err, "booking_id", bCopy.ID)
 		}

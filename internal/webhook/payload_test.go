@@ -1,6 +1,10 @@
 package webhook
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/calnode/calnode/internal/bookingsnap"
+)
 
 func TestBuildData_defaultSetMatchesOriginalShape(t *testing.T) {
 	bd := enrichedBooking{
@@ -13,7 +17,7 @@ func TestBuildData_defaultSetMatchesOriginalShape(t *testing.T) {
 		// enrichment present but must NOT leak via the default set
 		attendeeEmail: "bob@example.com",
 		hostEmail:     "host@example.com",
-		answers:       []map[string]string{{"question": "Topic", "answer": "Demo"}},
+		answers:       []bookingsnap.Answer{{QuestionID: "q1", Question: "Topic", Answer: "Demo"}},
 	}
 	d := buildData(bd, defaultFields)
 	for _, k := range []string{"id", "event_type_slug", "host_id", "start_at", "end_at", "status", "created_at"} {
@@ -37,7 +41,7 @@ func TestBuildData_includesOnlySelected(t *testing.T) {
 	bd := enrichedBooking{
 		core:          BookingPayload{ID: "b1", Status: "confirmed"},
 		attendeeEmail: "bob@example.com",
-		answers:       []map[string]string{{"question": "Topic", "answer": "Demo"}},
+		answers:       []bookingsnap.Answer{{QuestionID: "q1", Question: "Topic", Answer: "Demo"}},
 	}
 	d := buildData(bd, []string{FieldAttendeeEmail, FieldAnswers})
 	if len(d) != 2 {
@@ -49,8 +53,8 @@ func TestBuildData_includesOnlySelected(t *testing.T) {
 	if _, ok := d[FieldID]; ok {
 		t.Error("id must not be present when not selected")
 	}
-	ans, ok := d[FieldAnswers].([]map[string]string)
-	if !ok || len(ans) != 1 || ans[0]["answer"] != "Demo" {
+	ans, ok := d[FieldAnswers].([]bookingsnap.Answer)
+	if !ok || len(ans) != 1 || ans[0].Answer != "Demo" || ans[0].QuestionID != "q1" {
 		t.Errorf("answers not carried correctly: %v", d[FieldAnswers])
 	}
 }

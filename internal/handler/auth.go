@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"net/http"
 	"strings"
@@ -67,19 +68,26 @@ func (h *Handler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 			hash := hashAPIKey(key)
 			var user AuthUser
 			var keyID string
+			var scopesJSON sql.NullString
 			var nc, nca, nr, nrm, nhb, nhc, nhr int
 			err := h.db.QueryRowContext(r.Context(), `
-				SELECT ak.id, u.id, u.email, u.name, u.iana_timezone, u.time_format, u.week_start, u.date_format, COALESCE(u.avatar_url,''), u.is_admin, u.is_owner,
+				SELECT ak.id, ak.scopes, u.id, u.email, u.name, u.iana_timezone, u.time_format, u.week_start, u.date_format, COALESCE(u.avatar_url,''), u.is_admin, u.is_owner,
 				       COALESCE(u.notify_confirmation,1), COALESCE(u.notify_cancellation,1), COALESCE(u.notify_reschedule,1), COALESCE(u.notify_reminder,1),
 				       COALESCE(u.notify_host_booking,1), COALESCE(u.notify_host_cancel,1), COALESCE(u.notify_host_reschedule,1)
 				FROM api_keys ak JOIN users u ON u.id = ak.user_id
 				WHERE ak.key_hash = ? AND u.archived_at IS NULL`, hash).
-				Scan(&keyID, &user.ID, &user.Email, &user.Name, &user.IANATZ, &user.TimeFormat, &user.WeekStart, &user.DateFormat, &user.AvatarURL, &user.IsAdmin, &user.IsOwner,
+				Scan(&keyID, &scopesJSON, &user.ID, &user.Email, &user.Name, &user.IANATZ, &user.TimeFormat, &user.WeekStart, &user.DateFormat, &user.AvatarURL, &user.IsAdmin, &user.IsOwner,
 					&nc, &nca, &nr, &nrm, &nhb, &nhc, &nhr)
 			user.NotifyConfirmation, user.NotifyCancellation, user.NotifyReschedule, user.NotifyReminder = nc != 0, nca != 0, nr != 0, nrm != 0
 			user.NotifyHostBooking, user.NotifyHostCancel, user.NotifyHostReschedule = nhb != 0, nhc != 0, nhr != 0
 			if err != nil {
 				h.writeError(w, http.StatusUnauthorized, "invalid API key")
+				return
+			}
+			// A scoped key may only make the reads its scopes name (apiKeyAllows); every
+			// other route answers 403 whatever its owner's role.
+			if scopesJSON.Valid && !apiKeyAllows(scopesJSON.String, r) {
+				h.writeError(w, http.StatusForbidden, "this API key's scopes do not allow this request")
 				return
 			}
 			now := time.Now().UTC().Format(time.RFC3339Nano)

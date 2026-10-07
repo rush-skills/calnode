@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -155,19 +156,27 @@ func TestWorker_marksJobFailedAfterExhaustingRetries(t *testing.T) {
 	w := newWorker(t, database, svc)
 	past := time.Now().UTC().Add(-time.Second).Format(time.RFC3339)
 
-	for range 3 {
+	// Webhook deliveries get 8 attempts (a receiver can be down for most of a day).
+	for i := range 8 {
 		database.ExecContext(ctx,
 			`UPDATE jobs SET run_at = ?, status = 'pending'
 			 WHERE type = 'webhook.deliver' AND status IN ('pending','running','failed')`,
 			past)
 		w.Poll(ctx)
+		if i == 6 {
+			var st string
+			database.QueryRowContext(ctx, `SELECT status FROM jobs WHERE type = 'webhook.deliver'`).Scan(&st)
+			if st != "pending" {
+				t.Fatalf("after 7 attempts job status = %q; want pending (8 attempts allowed)", st)
+			}
+		}
 	}
 
 	var jobStatus string
 	database.QueryRowContext(ctx, `SELECT status FROM jobs WHERE type = 'webhook.deliver'`).
 		Scan(&jobStatus)
 	if jobStatus != "failed" {
-		t.Errorf("job status = %q; want failed after 3 attempts", jobStatus)
+		t.Errorf("job status = %q; want failed after 8 attempts", jobStatus)
 	}
 
 	var delivStatus string
@@ -458,5 +467,48 @@ func TestWorker_skipsJobForDeletedWebhook(t *testing.T) {
 	database.QueryRowContext(ctx, `SELECT status FROM jobs`).Scan(&jobStatus)
 	if jobStatus != "done" {
 		t.Errorf("job status = %q; want done (skipped silently)", jobStatus)
+	}
+}
+
+// PRD P0.4 and acceptance 5: a delivery verifies with HMAC-SHA256 keyed by the
+// HEX-DECODED secret, and during a rotation it carries a signature for each secret.
+func TestWorker_signsWithBothSecretsDuringRotation(t *testing.T) {
+	database, svc := setup(t)
+	ctx := context.Background()
+
+	var gotSig string
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSig = r.Header.Get("X-Calnode-Signature")
+		gotBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	wh, oldSecret, _ := svc.Create(ctx, "host-02", srv.URL, []string{"booking.created"})
+	newSecret, _, err := svc.RotateSecret(ctx, "host-02", wh.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.Enqueue(ctx, "booking.created", webhook.BookingPayload{HostID: "host-02", Status: "confirmed"})
+	newWorker(t, database, svc).Poll(ctx)
+
+	verify := func(secretHex, header string) bool {
+		key, _ := hex.DecodeString(secretHex)
+		mac := hmac.New(sha256.New, key)
+		mac.Write(gotBody)
+		want := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+		for _, part := range strings.Split(header, ",") {
+			if part == want {
+				return true
+			}
+		}
+		return false
+	}
+	if !verify(newSecret, gotSig) || !verify(oldSecret, gotSig) {
+		t.Errorf("signature %q does not verify with both the new and the old secret", gotSig)
+	}
+	if strings.Count(gotSig, "sha256=") != 2 {
+		t.Errorf("signature %q; want two values during the overlap", gotSig)
 	}
 }

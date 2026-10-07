@@ -42,6 +42,12 @@ type ListFilter struct {
 	// sorts soonest-first.
 	Order string
 
+	// UpdatedSince, when set, keeps only bookings changed at or after it (changed_at,
+	// which every change bumps) and includes cancelled ones unless Status says
+	// otherwise: a sync that polls for changes must see cancellations. Results are then
+	// ordered by changed_at, oldest first, so a poller can page forward.
+	UpdatedSince time.Time
+
 	Limit  int // 0 means unlimited - only the internal wrappers should use that
 	Offset int
 }
@@ -99,8 +105,14 @@ func (f ListFilter) where(includeWhen bool) (string, []any) {
 	if f.Status != "" {
 		conds = append(conds, "bookings.status = ?")
 		args = append(args, f.Status)
-	} else {
+	} else if f.UpdatedSince.IsZero() {
 		conds = append(conds, "bookings.status != 'cancelled'")
+	}
+	if !f.UpdatedSince.IsZero() {
+		// changed_at is written as milliseconds-and-Z by the triggers in migration 00082,
+		// so the bound value uses the same layout for the text comparison.
+		conds = append(conds, "bookings.changed_at >= ?")
+		args = append(args, f.UpdatedSince.UTC().Format("2006-01-02T15:04:05.000Z"))
 	}
 	if f.ViewerID != "" {
 		conds = append(conds, hostsBooking)
@@ -149,9 +161,13 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]Booking, error) {
 	// start_at is not unique, so a second key keeps paging stable across requests -
 	// without it two bookings at the same time can swap places between pages and one
 	// of them is never shown.
+	orderBy := "start_at " + order + ", id " + order
+	if !f.UpdatedSince.IsZero() {
+		orderBy = "changed_at ASC, id ASC"
+	}
 	q := `SELECT ` + bookingColumns + ` FROM bookings
 		` + whereSQL + `
-		ORDER BY start_at ` + order + `, id ` + order //#nosec G202 -- whereSQL is assembled from literal fragments only; every value is bound via args
+		ORDER BY ` + orderBy //#nosec G202 -- whereSQL and orderBy are assembled from literal fragments only; every value is bound via args
 
 	if f.Limit > 0 {
 		q += "\n\t\tLIMIT ? OFFSET ?"

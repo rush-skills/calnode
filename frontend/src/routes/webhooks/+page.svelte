@@ -9,6 +9,7 @@
 	import { Badge } from '$lib/components/ui/badge';
 	import * as Tooltip from '$lib/components/ui/tooltip';
 	import { currentUser } from '$lib/stores';
+	import * as Dialog from '$lib/components/ui/dialog';
 
 	let items: Webhook[] = $state([]);
 	let loading = $state(true);
@@ -19,6 +20,8 @@
 		'booking.created',
 		'booking.cancelled',
 		'booking.rescheduled',
+		'booking.reassigned',
+		'booking.updated',
 		'booking.rsvp',
 		'recording.completed',
 		'transcript.ready',
@@ -40,7 +43,12 @@
 			{ key: 'previous_start_at', label: 'Previous start (reschedule)' },
 			{ key: 'previous_end_at', label: 'Previous end (reschedule)' },
 			{ key: 'rsvp_status', label: 'RSVP answer (booking.rsvp)' },
-			{ key: 'initiated_by', label: 'Initiated by (booker / host)' },
+			{ key: 'initiated_by', label: 'Initiated by (booker / host / admin / system)' },
+			{ key: 'revision', label: 'Revision (orders events)' },
+			{ key: 'occurred_at', label: 'Occurred at' },
+			{ key: 'changed', label: 'Changed fields (booking.updated)' },
+			{ key: 'admin_url', label: 'Admin link' },
+			{ key: 'meeting', label: 'Meeting (link, calendar event, iCalUID)' },
 		] },
 		{ group: 'Payment', fields: [
 			{ key: 'payment_status', label: 'Payment status' },
@@ -55,11 +63,16 @@
 			{ key: 'host_id', label: 'Host ID' },
 			{ key: 'host_name', label: 'Host name' },
 			{ key: 'host_email', label: 'Host email', pii: true },
+			{ key: 'hosts', label: 'All hosts', pii: true },
+			{ key: 'previous_host_id', label: 'Previous host ID (reassigned)' },
+			{ key: 'previous_host_name', label: 'Previous host name (reassigned)' },
+			{ key: 'previous_host_email', label: 'Previous host email (reassigned)', pii: true },
 		] },
 		{ group: 'Attendee', pii: true, fields: [
 			{ key: 'attendee_name', label: 'Attendee name', pii: true },
 			{ key: 'attendee_email', label: 'Attendee email', pii: true },
 			{ key: 'attendee_timezone', label: 'Attendee timezone', pii: true },
+			{ key: 'attendees', label: 'All attendees (incl. phone)', pii: true },
 		] },
 		{ group: 'Intake', pii: true, fields: [
 			{ key: 'answers', label: 'Intake answers', pii: true },
@@ -69,9 +82,52 @@
 
 	// org = every booking in the workspace, not only the ones you host (admins only).
 	const blankForm = () => ({
-		url: '', events: ['booking.created', 'booking.cancelled', 'booking.rescheduled'], fields: [...allFieldKeys], org: false
+		url: '',
+		events: ['booking.created', 'booking.cancelled', 'booking.rescheduled', 'booking.reassigned', 'booking.updated'],
+		fields: [...allFieldKeys], org: false, eventTypes: [] as string[]
 	});
-	let form = $state<{ url: string; events: string[]; fields: string[]; org: boolean }>(blankForm());
+	let form = $state<{ url: string; events: string[]; fields: string[]; org: boolean; eventTypes: string[] }>(blankForm());
+
+	// Event types the filter can pick from. None ticked = every event type.
+	let eventTypeOptions = $state<{ slug: string; name: string }[]>([]);
+
+	// The signing secret is shown once: after create, and after a rotation.
+	let secretOpen = $state(false);
+	let secretValue = $state('');
+	let secretRotated = $state(false);
+	let secretCopied = $state(false);
+	function showSecret(secret: string, rotated: boolean) {
+		secretValue = secret; secretRotated = rotated; secretCopied = false; secretOpen = true;
+	}
+	function copySecret() {
+		navigator.clipboard.writeText(secretValue).then(() => (secretCopied = true)).catch(() => {});
+	}
+
+	let rotateOpen = $state(false);
+	let rotateId = $state('');
+	async function doRotate() {
+		try {
+			const res = await api.post<{ secret: string }>(`/v1/webhooks/${rotateId}/rotate-secret`);
+			showSecret(res.secret, true);
+			await load();
+		} catch (e: any) {
+			error = e.message;
+		}
+	}
+
+	let redelivering = $state<string | null>(null);
+	async function redeliver(webhookId: string, deliveryId: string) {
+		redelivering = deliveryId;
+		try {
+			await api.post(`/v1/webhooks/${webhookId}/deliveries/${deliveryId}/redeliver`);
+			const res = await api.get<{ items: WebhookDelivery[] }>(`/v1/webhooks/${webhookId}/deliveries`);
+			deliveries = res.items ?? [];
+		} catch (e: any) {
+			error = e.message;
+		} finally {
+			redelivering = null;
+		}
+	}
 
 	// Delivery log (lazy-loaded per webhook).
 	let openDeliveries = $state<string | null>(null);
@@ -93,7 +149,12 @@
 		}
 	}
 
-	onMount(load);
+	onMount(() => {
+		load();
+		api.get<{ items: { slug: string; name: string }[] }>('/v1/event-types')
+			.then((r) => (eventTypeOptions = r.items ?? []))
+			.catch(() => {});
+	});
 
 	async function create() {
 		createError = '';
@@ -102,10 +163,12 @@
 		if (form.events.length === 0) { createError = 'Select at least one event.'; return; }
 		creating = true;
 		try {
-			await api.post('/v1/webhooks', {
-				url: form.url, events: form.events, fields: form.fields, scope: form.org ? 'org' : 'user'
+			const res = await api.post<{ secret: string }>('/v1/webhooks', {
+				url: form.url, events: form.events, fields: form.fields, scope: form.org ? 'org' : 'user',
+				event_types: form.eventTypes
 			});
 			form = blankForm();
+			showSecret(res.secret, false);
 			showCreate = false;
 			await load();
 		} catch (e: any) {
@@ -172,6 +235,36 @@
 	onConfirm={doDelete}
 />
 
+<ConfirmDialog
+	bind:open={rotateOpen}
+	title="Rotate the signing secret?"
+	description="You get a new secret, shown once. For the next 24 hours every delivery is signed with both the new and the old secret, so you can update your receiver without rejecting anything."
+	confirmText="Rotate secret"
+	onConfirm={doRotate}
+/>
+
+<Dialog.Root bind:open={secretOpen}>
+	<Dialog.Content class="sm:max-w-lg">
+		<Dialog.Header>
+			<Dialog.Title>{secretRotated ? 'New signing secret' : 'Webhook created'}</Dialog.Title>
+			<Dialog.Description>
+				Copy the signing secret now. You will not see it again.
+				{#if secretRotated}The old secret keeps signing alongside it for 24 hours.{/if}
+			</Dialog.Description>
+		</Dialog.Header>
+		<div class="rounded-md border bg-muted/40 px-3 py-2 font-mono text-xs break-all">{secretValue}</div>
+		<p class="text-xs text-muted-foreground">
+			Verify <span class="font-mono">X-Calnode-Signature</span> as HMAC-SHA256 of the raw request body, keyed by
+			the <strong>hex-decoded</strong> secret (32 bytes), not the text above. During a rotation the header holds
+			two values, comma-separated; accept the delivery if either matches.
+		</p>
+		<Dialog.Footer>
+			<Button variant="outline" onclick={copySecret}>{secretCopied ? 'Copied' : 'Copy secret'}</Button>
+			<Button onclick={() => (secretOpen = false)}>Done</Button>
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>
+
 <svelte:head><title>Webhooks — Calnode</title></svelte:head>
 
 <div class="mb-8 flex items-center justify-between">
@@ -225,6 +318,21 @@
 				</label>
 			{/each}
 		</div>
+
+		{#if eventTypeOptions.length > 0}
+			<div class="mb-4 space-y-2">
+				<p class="text-sm font-medium">Event types <span class="font-normal text-muted-foreground">— none ticked sends every event type</span></p>
+				<div class="grid grid-cols-2 gap-x-4 gap-y-1">
+					{#each eventTypeOptions as et}
+						<label class="flex cursor-pointer items-center gap-2 text-sm">
+							<Checkbox checked={form.eventTypes.includes(et.slug)}
+								onCheckedChange={(v) => (form.eventTypes = v === true ? [...form.eventTypes, et.slug] : form.eventTypes.filter((x) => x !== et.slug))} />
+							<span>{et.name} <span class="font-mono text-xs text-muted-foreground">{et.slug}</span></span>
+						</label>
+					{/each}
+				</div>
+			</div>
+		{/if}
 
 		<div class="mb-4 space-y-3">
 			<p class="text-sm font-medium">Data to send <span class="font-normal text-muted-foreground">— untick anything you don't want delivered</span></p>
@@ -280,7 +388,15 @@
 							<td class="max-w-xs overflow-hidden text-ellipsis whitespace-nowrap px-4 py-3 font-mono text-xs">
 								{#if wh.scope === 'org'}<Badge variant="secondary" class="mr-1.5 font-sans">Workspace</Badge>{/if}{wh.url}
 							</td>
-							<td class="px-4 py-3 text-xs text-muted-foreground">{(wh.events ?? []).join(', ')}</td>
+							<td class="px-4 py-3 text-xs text-muted-foreground">
+								{(wh.events ?? []).join(', ')}
+								{#if wh.event_types && wh.event_types.length > 0}
+									<span class="mt-1 block">Only: <span class="font-mono">{wh.event_types.join(', ')}</span></span>
+								{/if}
+								{#if wh.previous_secret_valid_until}
+									<span class="mt-1 block text-amber-700 dark:text-amber-300">Old secret valid until {new Date(wh.previous_secret_valid_until).toLocaleString()}</span>
+								{/if}
+							</td>
 							<td class="px-4 py-3 text-xs text-muted-foreground">{(wh.fields ?? []).length} fields</td>
 							<td class="px-4 py-3">
 								{#if wh.is_active}
@@ -296,6 +412,12 @@
 										<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
 									</Tooltip.Trigger>
 									<Tooltip.Content>{openDeliveries === wh.id ? 'Hide deliveries' : 'Recent deliveries'}</Tooltip.Content>
+								</Tooltip.Root>
+								<Tooltip.Root>
+									<Tooltip.Trigger class={buttonVariants({ variant: 'ghost', size: 'icon' })} onclick={() => { rotateId = wh.id; rotateOpen = true; }}>
+										<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+									</Tooltip.Trigger>
+									<Tooltip.Content>Rotate signing secret</Tooltip.Content>
 								</Tooltip.Root>
 								<Tooltip.Root>
 									<Tooltip.Trigger class={buttonVariants({ variant: 'ghost', size: 'icon' })} onclick={() => del(wh.id)}>
@@ -320,7 +442,8 @@
 													<th class="py-1 pr-4 font-medium">Status</th>
 													<th class="py-1 pr-4 font-medium">HTTP</th>
 													<th class="py-1 pr-4 font-medium">Attempts</th>
-													<th class="py-1 font-medium">Last attempt</th>
+													<th class="py-1 pr-4 font-medium">Last attempt</th>
+													<th class="py-1"></th>
 												</tr>
 											</thead>
 											<tbody class="divide-y divide-border/50">
@@ -328,11 +451,17 @@
 													<tr>
 														<td class="py-1 pr-4 font-mono">{d.event}</td>
 														<td class="py-1 pr-4">
-															<span class={d.status === 'delivered' ? 'text-green-700' : d.status === 'failed' ? 'text-destructive' : 'text-muted-foreground'}>{d.status}</span>
+															<span class={d.status === 'success' || d.status === 'delivered' ? 'text-green-700' : d.status === 'failed' ? 'text-destructive' : 'text-muted-foreground'}>{d.status}</span>
 														</td>
 														<td class="py-1 pr-4">{d.response_status ?? '—'}</td>
 														<td class="py-1 pr-4">{d.attempt_count}</td>
-														<td class="py-1 text-muted-foreground">{d.last_attempted_at ? new Date(d.last_attempted_at).toLocaleString() : '—'}</td>
+														<td class="py-1 pr-4 text-muted-foreground">{d.last_attempted_at ? new Date(d.last_attempted_at).toLocaleString() : '—'}</td>
+														<td class="py-1 text-right">
+															<Button variant="ghost" size="sm" class="h-7 text-xs" disabled={redelivering === d.id}
+																onclick={() => redeliver(wh.id, d.id)}>
+																{redelivering === d.id ? 'Queuing…' : 'Redeliver'}
+															</Button>
+														</td>
 													</tr>
 												{/each}
 											</tbody>

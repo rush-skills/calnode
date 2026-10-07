@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/calnode/calnode/internal/webhook"
 	"strings"
 	"time"
 
@@ -464,6 +463,7 @@ func (h *Handler) mcpRescheduleBooking(ctx context.Context, _ *mcp.CallToolReque
 	}
 
 	previousStart, previousEnd := b.StartAt, b.EndAt
+	initiatedBy := h.mcpInitiator(ctx, b.ID)
 	updated, err := h.bookingSvc.Reschedule(ctx, b.ID, newStart, newEnd)
 	if err != nil {
 		switch {
@@ -479,7 +479,7 @@ func (h *Handler) mcpRescheduleBooking(ctx context.Context, _ *mcp.CallToolReque
 	}
 	out := toBookingJSON(updated)
 	out.EventTypeSlug = h.slugForEventTypeID(ctx, updated.EventTypeID)
-	go h.rescheduleSideEffects(*updated, b.EventTypeID, previousStart, previousEnd) // #nosec G118 -- deliberately its own context.Background(); see rescheduleSideEffects' doc comment
+	go h.rescheduleSideEffects(*updated, b.EventTypeID, previousStart, previousEnd, initiatedBy) // #nosec G118 -- deliberately its own context.Background(); see rescheduleSideEffects' doc comment
 	return nil, out, nil
 }
 
@@ -520,7 +520,7 @@ func (h *Handler) mcpCancelBooking(ctx context.Context, _ *mcp.CallToolRequest, 
 	}
 	out := toBookingJSON(b)
 	out.EventTypeSlug = h.slugForEventTypeID(ctx, b.EventTypeID)
-	go h.cancelSideEffects(*b, webhook.InitiatedByHost) // #nosec G118 -- deliberately its own context.Background(); see cancelSideEffects' doc comment
+	go h.cancelSideEffects(*b, h.mcpInitiator(ctx, b.ID)) // #nosec G118 -- deliberately its own context.Background(); see cancelSideEffects' doc comment
 	return nil, out, nil
 }
 

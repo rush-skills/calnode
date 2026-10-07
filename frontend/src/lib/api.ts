@@ -129,6 +129,7 @@ export type APIKey = {
 	name: string;
 	created_at: string;
 	last_used_at?: string;
+	scopes?: string[] | null; // null = full key with the owner's role
 };
 
 /** One active member on the team calendar, with the stable palette colour the server assigned. */
@@ -189,6 +190,8 @@ export type Webhook = {
 	events: string[];
 	fields?: string[];
 	scope?: 'user' | 'org'; // org = fires for every booking in the workspace (admins)
+	event_types?: string[]; // event type slugs; empty = every event type
+	previous_secret_valid_until?: string; // set while a rotated-out secret still signs
 	is_active: boolean;
 	created_at: string;
 };

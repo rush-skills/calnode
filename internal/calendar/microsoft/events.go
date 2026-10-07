@@ -55,6 +55,7 @@ type graphItemBody struct {
 
 type graphEventResp struct {
 	ID            string `json:"id"`
+	ICalUID       string `json:"iCalUId"`
 	OnlineMeeting *struct {
 		JoinURL string `json:"joinUrl"`
 	} `json:"onlineMeeting"`
@@ -140,6 +141,9 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 	join := ""
 	if evResp.OnlineMeeting != nil {
 		join = evResp.OnlineMeeting.JoinURL
+	}
+	if p.ICalUID != nil {
+		*p.ICalUID = evResp.ICalUID
 	}
 	return evResp.ID, join, destCal, nil
 }

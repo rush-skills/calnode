@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"github.com/calnode/calnode/internal/webhook"
 	"net/url"
 	"time"
 
@@ -259,6 +260,7 @@ func (h *Handler) reconcileCreations(ctx context.Context, gc *calendar.Service) 
 			h.logger.Error("reconcile: load answers for calendar event", "error", aerr, "booking_id", m.bookingID)
 		}
 		descPlain, descRich := calendarDescription(loc, h.withOrgCalendarMessage(ctx, m.calMsg), answers, h.calendarManageLinks(ctx, m.bookingID), m.bookingID)
+		var icalUID string
 		eventID, link, calID, provider, err := gc.CreateEvent(ctx, m.userID, calendar.CreateEventParams{
 			Summary:         loc.Tf("calendar_event_summary", m.etName, m.orgName),
 			Description:     descPlain,
@@ -270,6 +272,7 @@ func (h *Handler) reconcileCreations(ctx context.Context, gc *calendar.Service) 
 			OrganizerEmail:  calendarInvitee(m.inviteMode, m.orgEmail),
 			AddMeet:         autoGenMeet,
 			ExtraAttendees:  extra,
+			ICalUID:         &icalUID,
 		})
 		if err != nil {
 			h.logger.Error("reconcile: create missing event", "error", err, "booking_id", m.bookingID, "host", m.userID)
@@ -280,9 +283,9 @@ func (h *Handler) reconcileCreations(ctx context.Context, gc *calendar.Service) 
 		}
 		if _, err := h.db.ExecContext(ctx,
 			`UPDATE booking_hosts SET external_event_id = ?, external_calendar_id = ?,
-			 external_provider = ?
+			 external_provider = ?, external_ical_uid = ?
 			 WHERE booking_id = ? AND user_id = ?`,
-			eventID, calID, provider, m.bookingID, m.userID); err != nil {
+			eventID, calID, provider, icalUID, m.bookingID, m.userID); err != nil {
 			h.logger.Error("reconcile: save healed event id", "error", err, "booking_id", m.bookingID)
 		}
 		if m.isPrimary {
@@ -290,12 +293,19 @@ func (h *Handler) reconcileCreations(ctx context.Context, gc *calendar.Service) 
 				`UPDATE bookings SET external_event_id = ? WHERE id = ?`, eventID, m.bookingID); err != nil {
 				h.logger.Error("reconcile: save healed booking event id", "error", err, "booking_id", m.bookingID)
 			}
+			// The primary host's event is new: the meeting object (calendar event id,
+			// iCalUID) changed, and so did the join link if the calendar minted one now.
+			// Tell webhook receivers, which otherwise hold no link or a stale one.
+			changed := []string{"meeting"}
 			if link != "" {
 				if _, err := h.db.ExecContext(ctx,
 					`UPDATE bookings SET location_value = ? WHERE id = ?`, link, m.bookingID); err != nil {
 					h.logger.Error("reconcile: save healed meet link", "error", err, "booking_id", m.bookingID)
+				} else if link != m.bookingLoc {
+					changed = append(changed, "location_value")
 				}
 			}
+			h.enqueueBookingUpdated(ctx, m.bookingID, changed, webhook.InitiatedBySystem)
 		}
 	}
 }

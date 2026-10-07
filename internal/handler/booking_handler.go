@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/calnode/calnode/internal/bookingsnap"
 	"io"
 	"log/slog"
 	"net/http"
@@ -599,6 +600,12 @@ func (h *Handler) createBookingForSlug(ctx context.Context, slug string, startAt
 type attendeeJSON struct {
 	Name  string `json:"name"`
 	Email string `json:"email"`
+	// Set with include=attendees (and on a single-booking read); see bookingsnap.Attendee.
+	Timezone   string `json:"timezone,omitempty"`
+	Phone      string `json:"phone,omitempty"`
+	Locale     string `json:"locale,omitempty"`
+	RSVPStatus string `json:"rsvp_status,omitempty"`
+	Organizer  *bool  `json:"organizer,omitempty"`
 }
 
 type bookingJSON struct {
@@ -626,6 +633,15 @@ type bookingJSON struct {
 	RSVPStatus string         `json:"rsvp_status,omitempty"`
 	Attendees  []attendeeJSON `json:"attendees,omitempty"`
 	Hosts      []hostBrief    `json:"hosts,omitempty"` // assigned host(s) for display; set on the public create response
+
+	// The full shape, shared with webhook payloads (bookingsnap). Set on a
+	// single-booking read and, on the list, by include=hosts,attendees,answers,meeting.
+	EventTypeName string               `json:"event_type_name,omitempty"`
+	Revision      int                  `json:"revision,omitempty"`
+	ChangedAt     string               `json:"changed_at,omitempty"`
+	Meeting       *bookingsnap.Meeting `json:"meeting,omitempty"`
+	Answers       []bookingsnap.Answer `json:"answers,omitempty"`
+	AdminURL      string               `json:"admin_url,omitempty"`
 }
 
 // hostBrief is an assigned host's identity for the booking-confirmation screen.
@@ -633,6 +649,10 @@ type hostBrief struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	AvatarURL string `json:"avatar_url,omitempty"`
+	// Email and Role are set only on authenticated full-shape reads, never on the public
+	// create response.
+	Email string `json:"email,omitempty"`
+	Role  string `json:"role,omitempty"`
 }
 
 func toBookingJSON(b *booking.Booking) bookingJSON {
@@ -1197,11 +1217,13 @@ func hostEventLocation(meetURL, livekitHostURL, attendeeLocationValue string) st
 // successfully-created Google Meet/Teams link is captured into meetURL/bData.LocationValue —
 // the only place such a link becomes available, since minting it is a side effect of the
 // calendar API call itself (see mintMeetingLink's doc comment). Returns the primary host's
-// notification prefs, for the caller's single attendee-confirmation send.
-func (h *Handler) createHostEventsAndNotify(ctx context.Context, b *booking.Booking, in bookingConfirmationInput, bData *mailer.BookingData, hosts []assignedHost, meetURL string, autoGenMeet bool, livekitHostURL string) (hostPrefs, bool) {
+// notification prefs, for the caller's single attendee-confirmation send, and the host
+// confirmation emails, unsent: the caller queues the booking.created webhook first, so
+// the webhook (which carries that Meet link) never waits on an email's retries.
+func (h *Handler) createHostEventsAndNotify(ctx context.Context, b *booking.Booking, in bookingConfirmationInput, bData *mailer.BookingData, hosts []assignedHost, meetURL string, autoGenMeet bool, livekitHostURL string) (hostPrefs, []func() error) {
 	gc := h.getCal()
 	primaryPrefs := allOnPrefs
-	confirmFailed := false
+	var hostEmails []func() error
 	answers, err := h.loadAnswerLines(ctx, b.ID)
 	if err != nil {
 		h.logger.Error("booking confirmation: load answers for calendar event", "error", err, "booking_id", b.ID)
@@ -1223,6 +1245,7 @@ func (h *Handler) createHostEventsAndNotify(ctx context.Context, b *booking.Book
 		// the per-host event ID so it can be cancelled later. The primary's id
 		// also lives on the booking row for back-compat.
 		if gc != nil {
+			var icalUID string
 			eventID, link, calID, provider, err := gc.CreateEvent(ctx, host.UserID, calendar.CreateEventParams{
 				// The attendee is added as a calendar invitee below, so this text reaches
 				// them via the provider's own native invite (Google/Outlook/CalDAV) —
@@ -1237,6 +1260,7 @@ func (h *Handler) createHostEventsAndNotify(ctx context.Context, b *booking.Book
 				OrganizerEmail:  calendarInvitee(b.InviteDelivery, in.OrganizerEmail),
 				AddMeet:         autoGenMeet && host.IsPrimary,
 				ExtraAttendees:  extra,
+				ICalUID:         &icalUID,
 			})
 			if err != nil {
 				h.logger.Error("create gcal event", "error", err, "booking_id", b.ID, "host", host.UserID)
@@ -1247,9 +1271,9 @@ func (h *Handler) createHostEventsAndNotify(ctx context.Context, b *booking.Book
 				// this event (see migration 00055).
 				if _, err := h.db.ExecContext(ctx,
 					`UPDATE booking_hosts SET external_event_id = ?, external_calendar_id = ?,
-					 external_provider = ?
+					 external_provider = ?, external_ical_uid = ?
 					 WHERE booking_id = ? AND user_id = ?`,
-					eventID, calID, provider, b.ID, host.UserID); err != nil {
+					eventID, calID, provider, icalUID, b.ID, host.UserID); err != nil {
 					h.logger.Error("save host gcal event id", "error", err, "booking_id", b.ID)
 				}
 				if host.IsPrimary {
@@ -1281,14 +1305,15 @@ func (h *Handler) createHostEventsAndNotify(ctx context.Context, b *booking.Book
 			if livekitHostURL != "" {
 				hd.LocationValue = livekitHostURL // host email gets the controls-enabled link
 			}
-			if err := sendWithRetry(ctx, h.logger, b.ID, "host/"+host.UserID, func() error {
-				return mailer.SendConfirmationToHost(ctx, h.mailer, hd)
-			}); err != nil {
-				confirmFailed = true
-			}
+			who := "host/" + host.UserID
+			hostEmails = append(hostEmails, func() error {
+				return sendWithRetry(ctx, h.logger, b.ID, who, func() error {
+					return mailer.SendConfirmationToHost(ctx, h.mailer, hd)
+				})
+			})
 		}
 	}
-	return primaryPrefs, confirmFailed
+	return primaryPrefs, hostEmails
 }
 
 // sendWithRetry delivers one confirmation email with a single retry: transient
@@ -1367,7 +1392,20 @@ func (h *Handler) dispatchBookingConfirmation(b *booking.Booking, in bookingConf
 	}
 
 	meetURL, autoGenMeet, livekitHostURL := h.mintMeetingLink(ctx, b, in, &bData, hosts)
-	primaryPrefs, hostFailed := h.createHostEventsAndNotify(ctx, b, in, &bData, hosts, meetURL, autoGenMeet, livekitHostURL)
+	primaryPrefs, hostEmails := h.createHostEventsAndNotify(ctx, b, in, &bData, hosts, meetURL, autoGenMeet, livekitHostURL)
+
+	// booking.created goes out as soon as the calendar has produced the meeting link,
+	// before any email and its retries, on a context of its own: on the shared 30s one a
+	// slow SMTP send could run it out and lose the event (PRD P0.6). The payload's
+	// location comes from the stored row, which holds the minted Meet/Teams link.
+	h.enqueueBookingCreated(b, in.EventTypeSlug, bData.LocationValue)
+
+	hostFailed := false
+	for _, send := range hostEmails {
+		if err := send(); err != nil {
+			hostFailed = true
+		}
+	}
 
 	// Attendee confirmation, once. "With:" names the primary host; gated on the
 	// primary host's notification preference (matches prior behaviour).
@@ -1390,42 +1428,35 @@ func (h *Handler) dispatchBookingConfirmation(b *booking.Booking, in bookingConf
 			h.logger.Error("booking confirmation: flag failure", "error", err, "booking_id", b.ID)
 		}
 	}
-	if h.webhookSvc != nil {
-		if err := h.webhookSvc.Enqueue(ctx, "booking.created", webhook.BookingPayload{
-			ID:                 b.ID,
-			EventTypeSlug:      in.EventTypeSlug,
-			HostID:             b.HostID,
-			StartAt:            b.StartAt.UTC().Format(time.RFC3339),
-			EndAt:              b.EndAt.UTC().Format(time.RFC3339),
-			Status:             b.Status,
-			LocationValue:      b.LocationValue,
-			CreatedAt:          b.CreatedAt.UTC().Format(time.RFC3339),
-			PaymentStatus:      paymentStatusForWebhook(b.PaymentStatus),
-			AmountPaidCents:    b.AmountPaidCents,
-			AmountPaidCurrency: b.AmountPaidCurrency,
-		}); err != nil {
-			h.logger.Error("enqueue booking.created webhook", "error", err, "booking_id", b.ID)
-		}
-	}
 	if err := h.enqueueBookingReminders(ctx, b.EventTypeID, b.ID, b.StartAt); err != nil {
 		h.logger.Error("enqueue reminders", "error", err, "booking_id", b.ID)
 	}
 }
 
-// GetBooking handles GET /v1/bookings/{id} (public — accessible with just the booking ID).
-func (h *Handler) GetBooking(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	b, err := h.bookingSvc.Get(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, booking.ErrNotFound) {
-			h.writeError(w, http.StatusNotFound, "booking not found")
-			return
-		}
-		h.logger.ErrorContext(r.Context(), "get booking", "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal error")
+// enqueueBookingCreated queues the booking.created webhook on its own short context.
+// locationValue is the link the confirmation settled on (a minted Meet/Teams/Zoom link);
+// the webhook service re-reads the stored row anyway, so the two agree.
+func (h *Handler) enqueueBookingCreated(b *booking.Booking, slug, locationValue string) {
+	if h.webhookSvc == nil {
 		return
 	}
-	h.writeJSON(w, http.StatusOK, toBookingJSON(b))
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := h.webhookSvc.Enqueue(ctx, webhook.EventBookingCreated, webhook.BookingPayload{
+		ID:                 b.ID,
+		EventTypeSlug:      slug,
+		HostID:             b.HostID,
+		StartAt:            b.StartAt.UTC().Format(time.RFC3339),
+		EndAt:              b.EndAt.UTC().Format(time.RFC3339),
+		Status:             b.Status,
+		LocationValue:      locationValue,
+		CreatedAt:          b.CreatedAt.UTC().Format(time.RFC3339),
+		PaymentStatus:      paymentStatusForWebhook(b.PaymentStatus),
+		AmountPaidCents:    b.AmountPaidCents,
+		AmountPaidCurrency: b.AmountPaidCurrency,
+	}); err != nil {
+		h.logger.Error("enqueue booking.created webhook", "error", err, "booking_id", b.ID)
+	}
 }
 
 // Bookings are paginated. The list used to be unbounded: it loaded every booking the
@@ -1482,6 +1513,9 @@ func (h *Handler) parseBookingListFilter(ctx context.Context, q url.Values, user
 	if f.To, err = parseDayStart(q.Get("to")); err != nil {
 		return f, fmt.Errorf("to must be YYYY-MM-DD")
 	}
+	if f.UpdatedSince, err = parseUpdatedSince(q.Get("updated_since")); err != nil {
+		return f, err
+	}
 	if !f.To.IsZero() {
 		f.To = f.To.AddDate(0, 0, 1) // "to" names a day, and the whole of it is included
 	}
@@ -1531,6 +1565,11 @@ func parseDayStart(s string) (time.Time, error) {
 // in SQL by booking.List; see parseBookingListFilter for the visibility rule.
 func (h *Handler) ListBookings(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
+	inc, err := parseIncludes(r.URL.Query().Get("include"))
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	f, err := h.parseBookingListFilter(r.Context(), r.URL.Query(), user)
 	switch {
@@ -1568,6 +1607,17 @@ func (h *Handler) ListBookings(w http.ResponseWriter, r *http.Request) {
 		h.logger.ErrorContext(r.Context(), "list bookings: enrich", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	if inc.any() || !f.UpdatedSince.IsZero() {
+		// A sync poll (updated_since) always gets revision and changed_at, so it can
+		// order what it reads against the webhooks it already applied.
+		for i := range items {
+			if err := h.applySnapshot(r.Context(), &items[i], inc); err != nil {
+				h.logger.ErrorContext(r.Context(), "list bookings: snapshot", "error", err, "booking_id", items[i].ID)
+				h.writeError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
+		}
 	}
 
 	h.writeJSON(w, http.StatusOK, map[string]any{
@@ -1759,7 +1809,7 @@ func (h *Handler) CancelBooking(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, toBookingJSON(b))
 
 	// Cancel calendar events and send cancellation emails in the background.
-	go h.cancelSideEffects(*b, webhook.InitiatedByHost) // #nosec G118 -- deliberately its own context.Background(); see cancelSideEffects' doc comment
+	go h.cancelSideEffects(*b, h.initiatorFromContext(r.Context(), b.ID)) // #nosec G118 -- deliberately its own context.Background(); see cancelSideEffects' doc comment
 }
 
 // cancelSideEffects removes every assigned host's calendar event, notifies each

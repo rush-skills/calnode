@@ -36,6 +36,12 @@ type CreateEventParams struct {
 	// the booker's .ics never lists them. The caller is responsible for dedupe against the
 	// organizer and host addresses - providers append what they are given.
 	ExtraAttendees []string
+	// ICalUID, when non-nil, receives the created event's iCalendar UID from providers that
+	// report it (Google iCalUID, Graph iCalUId, CalDAV's own UID). Note takers identify a
+	// meeting by it, so Calnode stores it as the join key to the booking's transcript. An
+	// out-parameter rather than a fifth return value so the many Provider implementations
+	// that have no use for it are untouched.
+	ICalUID *string
 }
 
 // ExternalEvent is one event read back from a member's connected calendar, for the

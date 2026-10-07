@@ -368,7 +368,7 @@ func TestInviteDelivery_rescheduleSendsWorkspaceInvite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reschedule: %v", err)
 	}
-	f.h.rescheduleSideEffects(*updated, etID, b.StartAt, b.EndAt)
+	f.h.rescheduleSideEffects(*updated, etID, b.StartAt, b.EndAt, webhook.InitiatedByHost)
 
 	ics := icsOf(f.waitFor(t, inviteBookerEmail, 2))
 	assertWorkspaceInvite(t, "reschedule", ics, "REQUEST", inviteHostEmail)

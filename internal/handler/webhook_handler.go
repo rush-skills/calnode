@@ -15,7 +15,8 @@ import (
 )
 
 var validWebhookEvents = []string{
-	"booking.created", "booking.cancelled", "booking.rescheduled", "booking.rsvp",
+	"booking.created", "booking.cancelled", "booking.rescheduled", "booking.reassigned",
+	"booking.updated", "booking.rsvp",
 	"recording.completed", "transcript.ready", "notes.ready",
 }
 
@@ -30,6 +31,9 @@ func (h *Handler) CreateWebhook(w http.ResponseWriter, r *http.Request) {
 		// Scope is "user" (default: bookings the creator hosts) or "org" (every booking in
 		// the workspace). Only an admin may create an org webhook.
 		Scope string `json:"scope"`
+		// EventTypes limits the webhook to bookings of these event type slugs; empty or
+		// omitted means every event type.
+		EventTypes []string `json:"event_types"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -86,6 +90,15 @@ func (h *Handler) CreateWebhook(w http.ResponseWriter, r *http.Request) {
 			wh.Fields = webhook.ValidFields(req.Fields)
 		}
 	}
+	if len(req.EventTypes) > 0 {
+		if err := h.webhookSvc.SetEventTypes(r.Context(), user.ID, wh.ID, req.EventTypes); err != nil {
+			_ = h.webhookSvc.Delete(r.Context(), user.ID, wh.ID)
+			h.logger.ErrorContext(r.Context(), "create webhook: set event types", "error", err)
+			h.writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		wh.EventTypes = req.EventTypes
+	}
 	if req.Scope == webhook.ScopeOrg {
 		if err := h.webhookSvc.SetScope(r.Context(), user.ID, wh.ID, webhook.ScopeOrg); err != nil {
 			// Never leave behind a user-scoped hook the admin did not ask for.
@@ -98,14 +111,16 @@ func (h *Handler) CreateWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeJSON(w, http.StatusCreated, map[string]any{
-		"id":         wh.ID,
-		"url":        wh.URL,
-		"events":     wh.Events,
-		"fields":     wh.Fields,
-		"scope":      wh.Scope,
-		"secret":     secret,
-		"is_active":  wh.IsActive,
-		"created_at": wh.CreatedAt.UTC().Format(time.RFC3339),
+		"id":          wh.ID,
+		"url":         wh.URL,
+		"events":      wh.Events,
+		"fields":      wh.Fields,
+		"scope":       wh.Scope,
+		"event_types": nonNilStrings(wh.EventTypes),
+		"secret":      secret,
+		"secret_note": webhookSecretNote,
+		"is_active":   wh.IsActive,
+		"created_at":  wh.CreatedAt.UTC().Format(time.RFC3339),
 	})
 }
 
@@ -117,8 +132,9 @@ func (h *Handler) PatchWebhook(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
 
 	var req struct {
-		Events *[]string `json:"events"`
-		Fields *[]string `json:"fields"`
+		Events     *[]string `json:"events"`
+		Fields     *[]string `json:"fields"`
+		EventTypes *[]string `json:"event_types"` // [] clears the filter
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -136,7 +152,19 @@ func (h *Handler) PatchWebhook(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if err := h.webhookSvc.Update(r.Context(), h.webhookOwner(r.Context(), user, id), id, req.Events, req.Fields); err != nil {
+	owner := h.webhookOwner(r.Context(), user, id)
+	if req.EventTypes != nil {
+		if err := h.webhookSvc.SetEventTypes(r.Context(), owner, id, *req.EventTypes); err != nil {
+			if errors.Is(err, webhook.ErrNotFound) {
+				h.writeError(w, http.StatusNotFound, "webhook not found")
+				return
+			}
+			h.logger.ErrorContext(r.Context(), "update webhook: event types", "error", err)
+			h.writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+	if err := h.webhookSvc.Update(r.Context(), owner, id, req.Events, req.Fields); err != nil {
 		if errors.Is(err, webhook.ErrNotFound) {
 			h.writeError(w, http.StatusNotFound, "webhook not found")
 			return
@@ -174,14 +202,21 @@ func (h *Handler) ListWebhooks(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]map[string]any, len(webhooks))
 	for i, wh := range webhooks {
+		prev := ""
+		if wh.PreviousSecretUntil != nil {
+			prev = wh.PreviousSecretUntil.UTC().Format(time.RFC3339)
+		}
 		items[i] = map[string]any{
-			"id":         wh.ID,
-			"url":        wh.URL,
-			"events":     wh.Events,
-			"fields":     wh.Fields,
-			"scope":      wh.Scope,
-			"is_active":  wh.IsActive,
-			"created_at": wh.CreatedAt.UTC().Format(time.RFC3339),
+			"id":          wh.ID,
+			"url":         wh.URL,
+			"events":      wh.Events,
+			"fields":      wh.Fields,
+			"scope":       wh.Scope,
+			"event_types": nonNilStrings(wh.EventTypes),
+			"is_active":   wh.IsActive,
+			// Set while a rotated-out secret still signs deliveries alongside the new one.
+			"previous_secret_valid_until": prev,
+			"created_at":                  wh.CreatedAt.UTC().Format(time.RFC3339),
 		}
 	}
 	h.writeJSON(w, http.StatusOK, map[string]any{"items": items})
@@ -264,4 +299,57 @@ func (h *Handler) webhookOwner(ctx context.Context, user AuthUser, id string) st
 		}
 	}
 	return user.ID
+}
+
+// webhookSecretNote tells an integrator how to use the secret, because the obvious
+// reading (HMAC keyed by the hex string) is wrong and fails every verification.
+const webhookSecretNote = "Shown once. Verify X-Calnode-Signature as HMAC-SHA256 of the raw request body, " +
+	"keyed by the hex-DECODED secret (32 bytes), not the hex string. See docs/webhooks.md."
+
+func nonNilStrings(v []string) []string {
+	if v == nil {
+		return []string{}
+	}
+	return v
+}
+
+// RotateWebhookSecret handles POST /v1/webhooks/{id}/rotate-secret: a new signing secret,
+// returned once. The old one keeps signing alongside it for 24 hours, so deliveries in
+// that window carry both signatures and the receiver can switch without dropping any.
+func (h *Handler) RotateWebhookSecret(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	id := r.PathValue("id")
+	secret, until, err := h.webhookSvc.RotateSecret(r.Context(), h.webhookOwner(r.Context(), user, id), id)
+	if err != nil {
+		if errors.Is(err, webhook.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, "webhook not found")
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "rotate webhook secret", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	h.writeJSON(w, http.StatusOK, map[string]any{
+		"id":                          id,
+		"secret":                      secret,
+		"secret_note":                 webhookSecretNote,
+		"previous_secret_valid_until": until.Format(time.RFC3339),
+	})
+}
+
+// RedeliverWebhookDelivery handles POST /v1/webhooks/{id}/deliveries/{delivery_id}/redeliver:
+// send a delivery again now, with a fresh set of attempts. Same delivery id and payload.
+func (h *Handler) RedeliverWebhookDelivery(w http.ResponseWriter, r *http.Request) {
+	user, _ := userFromContext(r.Context())
+	id, deliveryID := r.PathValue("id"), r.PathValue("delivery_id")
+	if err := h.webhookSvc.Redeliver(r.Context(), h.webhookOwner(r.Context(), user, id), id, deliveryID); err != nil {
+		if errors.Is(err, webhook.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, "delivery not found")
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "redeliver webhook", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
 }

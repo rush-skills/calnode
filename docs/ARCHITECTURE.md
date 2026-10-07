@@ -831,12 +831,17 @@ as the desired state:
   booking (`Enqueue` matches `user_id = host OR scope = 'org'`). Any admin can list,
   edit, read deliveries of and delete any org webhook; the handler acts on it as its
   creator (`webhookOwner`), so the service keeps its owner-only queries.
-- **`initiated_by`** on `booking.cancelled` / `booking.rescheduled`: `booker` when the
-  action came through a manage link (`CancelByToken` / `RescheduleByToken`, whether the
-  link was in an email or a calendar invite), `host` for a signed-in member, admin, API
-  key or reassignment. A manage link is a bearer link, so "booker" means "whoever held
-  the booker's link", which on a calendar invite includes the hosts and default
-  participants.
+- **CRM sync (migration 00082, docs/webhooks.md).** The payload is built from
+  `bookingsnap.Load` at enqueue time, which also overrides the caller's status, times,
+  location, host and slug, so a payload's state always matches its `revision`
+  (`bookings.revision`/`changed_at`, bumped by triggers on bookings, booking_hosts and
+  booking_attendees). `booking.created` is queued right after the calendar step on its
+  own context, before host and attendee emails. `initiated_by` is booker / host / admin /
+  system (`initiatorFor`, computed before the change). Webhook jobs get 8 attempts
+  (`webhookBackoff`); secrets rotate with a 24 h overlap (`SignatureHeader` signs with
+  both). `event_types` filters by slug. iCalUIDs come back from providers through
+  `CreateEventParams.ICalUID` into `booking_hosts.external_ical_uid`. API key `scopes`
+  are enforced in `RequireAuth` against the mux pattern (`apiKeyScopeRoutes`).
 
 ---
 

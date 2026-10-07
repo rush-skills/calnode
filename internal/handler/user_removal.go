@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/calnode/calnode/internal/webhook"
 	"net/http"
 	"strings"
 	"time"
@@ -555,6 +556,9 @@ func (h *Handler) transferUpcomingMeetings(ctx context.Context, targetID, to str
 	for _, s := range seats {
 		if s.isPrimary {
 			rb, err := h.reassignBookingRow(ctx, s.bookingID, to)
+			if rb != nil {
+				rb.initiatedBy = webhook.InitiatedByAdmin // an admin removed the member
+			}
 			if errors.Is(err, booking.ErrDoubleBooked) {
 				return errRemovalConflict(fmt.Sprintf(
 					"the member to transfer to already has a meeting at %s, so \"%s\" (booking %s) cannot move to them; pick someone else or cancel that meeting first",
@@ -626,6 +630,7 @@ func (h *Handler) moveSecondarySeat(ctx context.Context, s upcomingSeat, targetI
 		h.logger.ErrorContext(ctx, "remove user: load answers for calendar event", "error", aerr, "booking_id", s.bookingID)
 	}
 	descPlain, descRich := calendarDescription(loc, h.withOrgCalendarMessage(ctx, calMsg), answers, h.calendarManageLinks(ctx, s.bookingID), s.bookingID)
+	var icalUID string
 	eventID, _, calID, provider, err := gc.CreateEvent(ctx, to, calendar.CreateEventParams{
 		Summary:         loc.Tf("calendar_event_summary", s.etName, orgName),
 		Description:     descPlain,
@@ -636,6 +641,7 @@ func (h *Handler) moveSecondarySeat(ctx context.Context, s upcomingSeat, targetI
 		OrganizerName:   orgName,
 		OrganizerEmail:  orgEmail,
 		ExtraAttendees:  extra,
+		ICalUID:         &icalUID,
 	})
 	if err != nil {
 		h.logger.ErrorContext(ctx, "remove user: create receiver's calendar event", "error", err, "booking_id", s.bookingID)
@@ -644,8 +650,8 @@ func (h *Handler) moveSecondarySeat(ctx context.Context, s upcomingSeat, targetI
 	}
 	if eventID != "" {
 		if _, err := h.db.ExecContext(ctx, `
-			UPDATE booking_hosts SET external_event_id = ?, external_calendar_id = ?, external_provider = ? WHERE id = ?`,
-			eventID, calID, provider, s.seatID); err != nil {
+			UPDATE booking_hosts SET external_event_id = ?, external_calendar_id = ?, external_provider = ?, external_ical_uid = ? WHERE id = ?`,
+			eventID, calID, provider, icalUID, s.seatID); err != nil {
 			h.logger.ErrorContext(ctx, "remove user: persist receiver's event id", "error", err, "booking_id", s.bookingID)
 		}
 	}

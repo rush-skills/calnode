@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { base } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { api, type Booking } from '$lib/api';
 	import { currentUser } from '$lib/stores';
@@ -418,7 +419,7 @@
 					<tr class="transition-colors hover:bg-muted/30">
 						<td class="px-4 py-3">
 							{#if b.attendees && b.attendees.length > 0}
-								<div class="font-medium">{b.attendees[0].name}</div>
+								<a href="{base}/bookings/{b.id}" class="font-medium hover:underline">{b.attendees[0].name}</a>
 								<div class="text-xs text-muted-foreground">{b.attendees[0].email}</div>
 							{:else}
 								<span class="text-muted-foreground">—</span>

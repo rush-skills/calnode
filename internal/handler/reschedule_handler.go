@@ -95,6 +95,7 @@ func (h *Handler) RescheduleBooking(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	initiatedBy := h.initiatorFor(r.Context(), user, id)
 	updated, err := h.bookingSvc.Reschedule(r.Context(), id, newStart, newEnd)
 	if errors.Is(err, booking.ErrDoubleBooked) {
 		h.writeError(w, http.StatusConflict, "that time slot is no longer available")
@@ -120,7 +121,7 @@ func (h *Handler) RescheduleBooking(w http.ResponseWriter, r *http.Request) {
 	// with the manage-token reschedule flow — see rescheduleSideEffects in
 	// manage_handler.go. etSlug is unused here now; it's re-derived inside the helper
 	// via loadCancellationData's own join, which is equivalent.
-	go h.rescheduleSideEffects(*updated, etID, previousStart, previousEnd) // #nosec G118 -- deliberately its own context.Background(); see rescheduleSideEffects' doc comment
+	go h.rescheduleSideEffects(*updated, etID, previousStart, previousEnd, initiatedBy) // #nosec G118 -- deliberately its own context.Background(); see rescheduleSideEffects' doc comment
 }
 
 // canActOnBooking says whether user may reschedule or cancel this booking: admins and

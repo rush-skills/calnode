@@ -78,6 +78,9 @@ type reassignedBooking struct {
 	extEventID, extProvider              string
 	etName, orgName, orgEmail, orgLocale string
 	calMsg                               string
+	// initiatedBy is the webhook initiated_by, set by the caller (initiatorFor before the
+	// move; "admin" when a member's removal hands their bookings on).
+	initiatedBy string
 }
 
 // reassignBookingRow is the deterministic half of a reassign: the new host is checked
@@ -164,6 +167,7 @@ func (h *Handler) reassignSideEffects(ctx context.Context, rb *reassignedBooking
 			h.logger.Error("reassign: load answers for calendar event", "error", aerr, "booking_id", bCopy.ID)
 		}
 		descPlain, descRich := calendarDescription(loc, h.withOrgCalendarMessage(ctx, rb.calMsg), answers, h.calendarManageLinks(ctx, bCopy.ID), bCopy.ID)
+		var icalUID string
 		newEventID, _, newCalID, newProvider, err := gc.CreateEvent(ctx, newHostID, calendar.CreateEventParams{
 			Summary:         loc.Tf("calendar_event_summary", rb.etName, rb.orgName),
 			Description:     descPlain,
@@ -174,6 +178,7 @@ func (h *Handler) reassignSideEffects(ctx context.Context, rb *reassignedBooking
 			OrganizerName:   rb.orgName,
 			OrganizerEmail:  calendarInvitee(inviteMode, rb.orgEmail),
 			ExtraAttendees:  extra,
+			ICalUID:         &icalUID,
 		})
 		if err != nil {
 			h.logger.Error("reassign: create new calendar event", "error", err, "booking_id", bCopy.ID)
@@ -184,9 +189,9 @@ func (h *Handler) reassignSideEffects(ctx context.Context, rb *reassignedBooking
 			}
 			if _, err := h.db.ExecContext(ctx,
 				`UPDATE booking_hosts SET external_event_id = ?, external_calendar_id = ?,
-				 external_provider = ?
+				 external_provider = ?, external_ical_uid = ?
 				 WHERE booking_id = ? AND is_primary = 1`,
-				newEventID, newCalID, newProvider, bCopy.ID); err != nil {
+				newEventID, newCalID, newProvider, icalUID, bCopy.ID); err != nil {
 				h.logger.Error("reassign: persist host event id", "error", err, "booking_id", bCopy.ID)
 			}
 		}
@@ -228,16 +233,19 @@ func (h *Handler) reassignSideEffects(ctx context.Context, rb *reassignedBooking
 	}
 
 	if h.webhookSvc != nil {
-		if err := h.webhookSvc.Enqueue(ctx, "booking.rescheduled", webhook.BookingPayload{
-			ID:            bCopy.ID,
-			EventTypeSlug: d.EventTypeSlug,
-			HostID:        newHostID,
-			StartAt:       bCopy.StartAt.UTC().Format(time.RFC3339),
-			EndAt:         bCopy.EndAt.UTC().Format(time.RFC3339),
-			Status:        bCopy.Status,
-			LocationValue: bCopy.LocationValue,
-			CreatedAt:     bCopy.CreatedAt.UTC().Format(time.RFC3339),
-			InitiatedBy:   webhook.InitiatedByHost,
+		// Its own event: a reassignment keeps the time and changes the host, and a receiver
+		// that treated it as a reschedule had no way to tell what moved or from whom.
+		if err := h.webhookSvc.Enqueue(ctx, webhook.EventBookingReassigned, webhook.BookingPayload{
+			ID:             bCopy.ID,
+			EventTypeSlug:  d.EventTypeSlug,
+			HostID:         newHostID,
+			StartAt:        bCopy.StartAt.UTC().Format(time.RFC3339),
+			EndAt:          bCopy.EndAt.UTC().Format(time.RFC3339),
+			Status:         bCopy.Status,
+			LocationValue:  bCopy.LocationValue,
+			CreatedAt:      bCopy.CreatedAt.UTC().Format(time.RFC3339),
+			InitiatedBy:    rb.initiatedBy,
+			PreviousHostID: rb.oldHostID,
 		}); err != nil {
 			h.logger.Error("reassign: enqueue webhook", "error", err, "booking_id", bCopy.ID)
 		}
@@ -264,7 +272,11 @@ func (h *Handler) ReassignBooking(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	initiatedBy := h.initiatorFor(r.Context(), actor, id) // before the move: it reads the host
 	rb, err := h.reassignBookingRow(r.Context(), id, req.HostID)
+	if rb != nil {
+		rb.initiatedBy = initiatedBy
+	}
 	switch {
 	case errors.Is(err, errReassignHostUnavailable):
 		h.writeError(w, http.StatusBadRequest, "new host not found or archived")

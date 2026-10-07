@@ -36,6 +36,9 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 	// The event id is already the absolute resource URL, so it carries its own location and
 	// Update/Cancel need nothing extra. Report the collection anyway for symmetry with the
 	// other providers and so the stored value is meaningful if it is ever inspected.
+	if p.ICalUID != nil {
+		*p.ICalUID = id + "@calnode" // the UID buildICS writes
+	}
 	return resourceURL, "", cn.calURL, nil
 }
 

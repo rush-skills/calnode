@@ -12,6 +12,13 @@ exact tag (`ghcr.io/calnode/calnode:0.1.0`) if you need stability between upgrad
 ## [Unreleased]
 
 ### Fixed
+- **`booking.created` carries the Meet/Teams link.** It used to carry the event type's
+  static location, because the link the calendar minted was never copied into the payload.
+- **A host's or admin's reschedule reported `initiated_by: booker`.** It now names them.
+- **`booking.created` could be lost** when the confirmation emails ran out its 30-second
+  window; it is now queued as soon as the calendar step finishes, on its own context.
+- **The delivery log never showed a delivery as successful** (it looked for a status
+  name the worker does not write).
 - **Manage links no longer expire before the meeting.** A link was valid for 60 days from
   issue, so a booking made further ahead could not be changed by the time it mattered.
   Links now last until a week after the meeting, or 60 days, whichever is later.
@@ -29,6 +36,11 @@ exact tag (`ghcr.io/calnode/calnode:0.1.0`) if you need stability between upgrad
   stay admin-only).
 
 ### Changed
+- **`GET /v1/bookings/{id}` needs credentials or the manage token.** It was public, and
+  the booking id is on every calendar invite, so anyone the invite reached could read the
+  join link and the cancellation reason.
+- **A host reassignment sends `booking.reassigned`, not `booking.rescheduled`.** Subscribe
+  to the new event to keep hearing about them.
 - **Removing a member is a guided, permanent delete.** Members → Remove shows what will be
   lost, then either transfers their event types, upcoming meetings (moved through the
   reassign flow, so invites move calendars), past bookings and live events to another
@@ -44,6 +56,18 @@ exact tag (`ghcr.io/calnode/calnode:0.1.0`) if you need stability between upgrad
   archiving them, so admins cannot demote each other.
 
 ### Added
+- **Webhooks and API for keeping an external system in sync** (docs/webhooks.md). Every
+  booking payload can carry a `meeting` object (provider, join link, calendar event id,
+  iCalUID), all `hosts` and `attendees` (with phone and RSVP), answers keyed by question
+  id, a `revision` that orders events, `occurred_at` and an `admin_url`. New events
+  `booking.reassigned` (with the previous host) and `booking.updated` (e.g. the Meet link
+  minted later). `initiated_by` is now `booker`, `host`, `admin` or `system`. Webhooks can
+  be limited to event types. Deliveries get 8 attempts over about 21 hours, can be
+  redelivered from the log, and secrets can be rotated with a 24-hour overlap in which
+  both sign. The secret is now shown once in the admin UI.
+- **Read-only API keys** (`bookings:read`, `webhooks:read`) and
+  `GET /v1/bookings?updated_since=…&include=…` for reconciliation.
+- **A booking page in the admin** at `/admin/bookings/<id>`, linked from the bookings list.
 - **Reschedule and cancel links in the calendar invite.** Every booking's calendar event
   now ends with "Need to make a change?" and a reschedule link and a cancel link to the
   booking's manage page, which open straight into the picker or the cancel confirmation.

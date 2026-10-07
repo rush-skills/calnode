@@ -5,6 +5,8 @@
 	import { ConfirmDialog } from '$lib/components/ui/confirm-dialog';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
+	import { Checkbox } from '$lib/components/ui/checkbox';
+	import { Badge } from '$lib/components/ui/badge';
 	import * as Tooltip from '$lib/components/ui/tooltip';
 
 	let items: APIKey[] = $state([]);
@@ -15,6 +17,12 @@
 	let creating = $state(false);
 	let createError = $state('');
 	let newKey = $state('');
+	// Read-only scopes. None ticked = a full key that acts with your role.
+	const SCOPES = [
+		{ key: 'bookings:read', label: 'Read bookings', help: 'GET /v1/bookings and /v1/bookings/{id}' },
+		{ key: 'webhooks:read', label: 'Read webhooks', help: 'GET /v1/webhooks and their delivery log' },
+	];
+	let newScopes = $state<string[]>([]);
 	let revokeOpen = $state(false);
 	let revokeTarget = $state<{ id: string; name: string } | null>(null);
 
@@ -36,9 +44,12 @@
 		if (!newName.trim()) { createError = 'Name is required.'; return; }
 		creating = true;
 		try {
-			const res = await api.post<{ key: string }>('/v1/api-keys', { name: newName.trim() });
+			const body: { name: string; scopes?: string[] } = { name: newName.trim() };
+			if (newScopes.length > 0) body.scopes = newScopes;
+			const res = await api.post<{ key: string }>('/v1/api-keys', body);
 			newKey = res.key;
 			newName = '';
+			newScopes = [];
 			showCreate = false;
 			await load();
 		} catch (e: any) {
@@ -115,6 +126,22 @@
 				placeholder="e.g. CI/CD pipeline"
 			/>
 		</div>
+		<div class="mb-4 space-y-1.5">
+			<p class="text-sm font-medium">Limit to read-only access <span class="font-normal text-muted-foreground">(optional)</span></p>
+			{#each SCOPES as sc}
+				<label class="flex cursor-pointer items-start gap-2 text-sm">
+					<Checkbox class="mt-0.5" checked={newScopes.includes(sc.key)}
+						onCheckedChange={(v) => (newScopes = v === true ? [...newScopes, sc.key] : newScopes.filter((x) => x !== sc.key))} />
+					<span>{sc.label} <span class="font-mono text-xs text-muted-foreground">{sc.key}</span>
+						<span class="block text-xs text-muted-foreground">{sc.help}</span></span>
+				</label>
+			{/each}
+			<p class="text-xs text-muted-foreground">
+				{newScopes.length > 0
+					? 'This key can only make those reads, and nothing else, whatever your role. Made by an admin, it reads every booking in the workspace.'
+					: 'With nothing ticked the key can do everything you can.'}
+			</p>
+		</div>
 		<Button onclick={create} disabled={creating}>
 			{creating ? 'Creating…' : 'Create key'}
 		</Button>
@@ -145,7 +172,14 @@
 				<Tooltip.Provider>
 					{#each items as k}
 						<tr class="transition-colors hover:bg-muted/30">
-							<td class="px-4 py-3 font-medium">{k.name}</td>
+							<td class="px-4 py-3 font-medium">
+								{k.name}
+								{#if k.scopes && k.scopes.length > 0}
+									{#each k.scopes as sc}<Badge variant="secondary" class="ml-1.5 font-mono text-[10px]">{sc}</Badge>{/each}
+								{:else}
+									<Badge variant="outline" class="ml-1.5 text-[10px]">Full access</Badge>
+								{/if}
+							</td>
 							<td class="px-4 py-3 text-muted-foreground">{fmtDate(k.created_at)}</td>
 							<td class="px-4 py-3 text-muted-foreground">
 								{#if k.last_used_at}{fmtDate(k.last_used_at)}{:else}Never{/if}

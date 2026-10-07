@@ -691,32 +691,49 @@ func TestCreateBooking_doubleBooked(t *testing.T) {
 	}
 }
 
-func TestGetBooking_public(t *testing.T) {
-	h, key, _ := setupWorkspace(t)
+// GET /v1/bookings/{id} used to need no credentials, and the id is printed on every
+// calendar invite. It now takes the booking's manage token or an authorised caller.
+func TestGetBooking_needsTokenOrAuth(t *testing.T) {
+	h, db, key, _ := setupWorkspaceWithDB(t)
 	slug, _ := seedEventTypeHTTP(t, h, key)
+	bookingID := createBookingViaHTTP(t, h, slug, "2026-06-15T10:00:00Z")
 
-	// Create.
-	body := fmt.Sprintf(`{"event_type_slug":%q,"start_at":"2026-06-15T10:00:00Z","name":"Bob","email":"bob@example.com"}`, slug)
-	req := httptest.NewRequest(http.MethodPost, "/v1/bookings", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	h.CreateBooking(rec, req)
-	created := mustCreated(t, rec, "create booking")
-	bookingID := mustString(t, created, "id", "create booking")
-
-	// Get without auth key.
-	req2 := httptest.NewRequest(http.MethodGet, "/v1/bookings/"+bookingID, nil)
-	req2.SetPathValue("id", bookingID)
-	rec2 := httptest.NewRecorder()
-	h.GetBooking(rec2, req2)
-
-	if rec2.Code != http.StatusOK {
-		t.Fatalf("get booking: %d — %s", rec2.Code, rec2.Body.String())
+	get := func(url, apiKey string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, url, nil)
+		req.SetPathValue("id", bookingID)
+		if apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+		rec := httptest.NewRecorder()
+		h.GetBooking(rec, req)
+		return rec
 	}
-	var b map[string]any
-	json.Unmarshal(rec2.Body.Bytes(), &b)
-	if b["id"] != bookingID {
-		t.Errorf("id = %v; want %s", b["id"], bookingID)
+
+	if rec := get("/v1/bookings/"+bookingID, ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no credentials: %d; want 401", rec.Code)
+	}
+	if rec := get("/v1/bookings/"+bookingID+"?token=nope", ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("bad token: %d; want 404", rec.Code)
+	}
+	tok := issueTestToken(t, db, bookingID)
+	for name, rec := range map[string]*httptest.ResponseRecorder{
+		"manage token": get("/v1/bookings/"+bookingID+"?token="+tok, ""),
+		"api key":      get("/v1/bookings/"+bookingID, key),
+	} {
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: %d — %s", name, rec.Code, rec.Body)
+		}
+		var b map[string]any
+		json.Unmarshal(rec.Body.Bytes(), &b)
+		if b["id"] != bookingID || b["meeting"] == nil || b["revision"] == nil {
+			t.Errorf("%s: want the full shape with meeting and revision, got %v", name, b)
+		}
+	}
+
+	// Another member who does not host it gets the same 404 as a missing id.
+	memberKey := seedMemberKey(t, db, "m9", "m9@example.com")
+	if rec := get("/v1/bookings/"+bookingID, memberKey); rec.Code != http.StatusNotFound {
+		t.Fatalf("non-host member: %d; want 404", rec.Code)
 	}
 }
 

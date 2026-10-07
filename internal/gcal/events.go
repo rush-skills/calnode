@@ -52,6 +52,7 @@ type calEntryPoint struct {
 
 type calEventResp struct {
 	ID             string `json:"id"`
+	ICalUID        string `json:"iCalUID"`
 	HangoutLink    string `json:"hangoutLink"`
 	ConferenceData *struct {
 		EntryPoints []calEntryPoint `json:"entryPoints"`
@@ -141,6 +142,9 @@ func (c *Client) CreateEvent(ctx context.Context, userID string, p calendar.Crea
 	var evResp calEventResp
 	if err := json.NewDecoder(resp.Body).Decode(&evResp); err != nil {
 		return "", "", "", fmt.Errorf("gcal: create event decode: %w", err)
+	}
+	if p.ICalUID != nil {
+		*p.ICalUID = evResp.ICalUID
 	}
 	return evResp.ID, evResp.meetLink(), calID, nil
 }

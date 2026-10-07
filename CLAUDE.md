@@ -80,6 +80,15 @@ path that deletes one must call `dropCalendarManageLinks` first (Google's cancel
 email quotes the description, links included). Detail:
 `docs/features/calendar-manage-links.md`.
 
+## Webhooks are a contract (docs/webhooks.md)
+
+An external CRM syncs from the webhooks and `GET /v1/bookings?updated_since=`. Keep:
+payloads built from `bookingsnap` (never from the caller's stale copy), `revision`
+bumped by the DB triggers on every change, `initiated_by` computed **before** the change,
+a new event that changes a carried field emitted as `booking.updated` with `changed`, and
+the manage link out of every payload. New booking-event creation sites pass
+`ICalUID: &uid` and store it.
+
 ## Conversational booking assistant (optional LLM layer)
 
 The "Book by chat" assistant lives on **two** of those surfaces — `book.html` (floating
