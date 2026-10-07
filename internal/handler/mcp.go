@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/calnode/calnode/internal/webhook"
 	"strings"
 	"time"
 
@@ -519,7 +520,7 @@ func (h *Handler) mcpCancelBooking(ctx context.Context, _ *mcp.CallToolRequest, 
 	}
 	out := toBookingJSON(b)
 	out.EventTypeSlug = h.slugForEventTypeID(ctx, b.EventTypeID)
-	go h.cancelSideEffects(*b) // #nosec G118 -- deliberately its own context.Background(); see cancelSideEffects' doc comment
+	go h.cancelSideEffects(*b, webhook.InitiatedByHost) // #nosec G118 -- deliberately its own context.Background(); see cancelSideEffects' doc comment
 	return nil, out, nil
 }
 

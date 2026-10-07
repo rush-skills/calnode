@@ -624,7 +624,7 @@ func (h *Handler) moveSecondarySeat(ctx context.Context, s upcomingSeat, targetI
 	if aerr != nil {
 		h.logger.ErrorContext(ctx, "remove user: load answers for calendar event", "error", aerr, "booking_id", s.bookingID)
 	}
-	descPlain, descRich := calendarDescription(loc, h.withOrgCalendarMessage(ctx, calMsg), answers, s.bookingID)
+	descPlain, descRich := calendarDescription(loc, h.withOrgCalendarMessage(ctx, calMsg), answers, h.calendarManageLinks(ctx, s.bookingID), s.bookingID)
 	eventID, _, calID, provider, err := gc.CreateEvent(ctx, to, calendar.CreateEventParams{
 		Summary:         loc.Tf("calendar_event_summary", s.etName, orgName),
 		Description:     descPlain,

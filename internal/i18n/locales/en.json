@@ -155,6 +155,9 @@
   "email_manage_this_booking": "Manage this booking:",
   "calendar_event_summary": "%s with %s",
   "calendar_event_booking_id": "Booking ID: %s",
+  "calendar_event_manage_intro": "Need to make a change?",
+  "calendar_event_reschedule_line": "Reschedule: %s",
+  "calendar_event_cancel_line": "Cancel: %s",
 
   "err_booking_limit": "You already have the maximum number of upcoming bookings for this event. Please cancel an existing booking or wait until one has passed before booking again.",
   "err_email_throttled": "Too many bookings from this email address recently. Please try again later.",

@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"github.com/calnode/calnode/internal/webhook"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -220,7 +221,7 @@ func TestRSVP_organizerStaysFixedForTheBookingsLifetime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.h.cancelSideEffects(*b)
+	f.h.cancelSideEffects(*b, webhook.InitiatedByHost)
 
 	cancelICS := icsOf(f.waitFor(t, inviteBookerEmail, 2))
 	m := organizerLine.FindStringSubmatch(cancelICS)

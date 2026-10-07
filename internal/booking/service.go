@@ -376,17 +376,56 @@ func (s *Service) ListAll(ctx context.Context) ([]Booking, error) {
 // booking, stores its SHA-256 hash in booking_manage_tokens, and returns the
 // raw hex token (shown once, embedded in emails). Tokens expire in 60 days.
 func (s *Service) IssueManageToken(ctx context.Context, bookingID string) (string, error) {
-	rawHex, hash, expiresAt, err := generateManageToken()
+	return s.issueManageToken(ctx, bookingID, ManageTokenEmail)
+}
+
+// IssueCalendarManageToken issues a manage token for the links written into the
+// booking's calendar event. It survives RotateManageToken (see ManageTokenCalendar).
+func (s *Service) IssueCalendarManageToken(ctx context.Context, bookingID string) (string, error) {
+	return s.issueManageToken(ctx, bookingID, ManageTokenCalendar)
+}
+
+func (s *Service) issueManageToken(ctx context.Context, bookingID, purpose string) (string, error) {
+	rawHex, hash, err := generateManageToken()
 	if err != nil {
 		return "", err
 	}
 	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO booking_manage_tokens (token_hash, booking_id, expires_at)
-		VALUES (?, ?, ?)`, hash, bookingID, expiresAt); err != nil {
+		INSERT INTO booking_manage_tokens (token_hash, booking_id, expires_at, purpose)
+		VALUES (?, ?, ?, ?)`, hash, bookingID, s.manageTokenExpiry(ctx, bookingID), purpose); err != nil {
 		return "", fmt.Errorf("booking: insert manage token: %w", err)
 	}
 	return rawHex, nil
 }
+
+// Manage token purposes. An 'email' token is the link in a confirmation email and is
+// rotated on reschedule. A 'calendar' token is the link written into the calendar
+// event's description, which is not rewritten on reschedule, so it is never rotated:
+// rotating it would strand a dead link on the invite the booker actually has.
+const (
+	ManageTokenEmail    = "email"
+	ManageTokenCalendar = "calendar"
+)
+
+// manageTokenExpiry is when a token issued now for bookingID expires: manageTokenTTL
+// from now, or a week after the booking ends if that is later. A flat TTL alone broke
+// the link for any booking made more than manageTokenTTL ahead, before the meeting
+// it manages had even happened.
+func (s *Service) manageTokenExpiry(ctx context.Context, bookingID string) string {
+	exp := time.Now().UTC().Add(manageTokenTTL)
+	var endStr string
+	if err := s.db.QueryRowContext(ctx, `SELECT end_at FROM bookings WHERE id = ?`, bookingID).Scan(&endStr); err == nil {
+		if end, err := time.Parse(time.RFC3339, endStr); err == nil {
+			if after := end.UTC().Add(manageTokenGrace); after.After(exp) {
+				exp = after
+			}
+		}
+	}
+	return exp.Format(time.RFC3339)
+}
+
+// manageTokenGrace keeps a manage link working for a while after the meeting ends.
+const manageTokenGrace = 7 * 24 * time.Hour
 
 // manageTokenTTL is how long an issued/rotated manage-link token stays valid.
 const manageTokenTTL = 60 * 24 * time.Hour
@@ -397,16 +436,15 @@ const manageTokenTTL = 60 * 24 * time.Hour
 // side-effect-free — callers do their own DB write with the returned values, so
 // IssueManageToken and RotateManageToken share exactly one implementation of the
 // token format/TTL instead of two.
-func generateManageToken() (rawHex, hash, expiresAt string, err error) {
+func generateManageToken() (rawHex, hash string, err error) {
 	raw := make([]byte, 32)
 	if _, err := io.ReadFull(rand.Reader, raw); err != nil {
-		return "", "", "", fmt.Errorf("booking: generate token: %w", err)
+		return "", "", fmt.Errorf("booking: generate token: %w", err)
 	}
 	rawHex = hex.EncodeToString(raw)
 	sum := sha256.Sum256([]byte(rawHex))
 	hash = hex.EncodeToString(sum[:])
-	expiresAt = time.Now().UTC().Add(manageTokenTTL).Format(time.RFC3339)
-	return rawHex, hash, expiresAt, nil
+	return rawHex, hash, nil
 }
 
 // ValidateManageToken looks up a manage token by its hash and returns the
@@ -650,10 +688,12 @@ func (s *Service) CancelByToken(ctx context.Context, rawToken, reason string) (*
 // issues a fresh one atomically. Called after a reschedule so that the original
 // confirmation-email link cannot be reused or undo the new time.
 func (s *Service) RotateManageToken(ctx context.Context, bookingID string) (string, error) {
-	rawHex, hash, expiresAt, err := generateManageToken()
+	rawHex, hash, err := generateManageToken()
 	if err != nil {
 		return "", err
 	}
+	// Computed after the reschedule committed, so it follows the booking's NEW end.
+	expiresAt := s.manageTokenExpiry(ctx, bookingID)
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -661,13 +701,21 @@ func (s *Service) RotateManageToken(ctx context.Context, bookingID string) (stri
 	}
 	defer tx.Rollback() //nolint:errcheck
 
+	// Only the email links rotate. The calendar links stay valid (see
+	// ManageTokenCalendar) and are pushed out to cover a later meeting time.
 	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM booking_manage_tokens WHERE booking_id = ?`, bookingID); err != nil {
+		`DELETE FROM booking_manage_tokens WHERE booking_id = ? AND purpose = ?`, bookingID, ManageTokenEmail); err != nil {
 		return "", fmt.Errorf("booking: delete old tokens: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO booking_manage_tokens (token_hash, booking_id, expires_at)
-		VALUES (?, ?, ?)`, hash, bookingID, expiresAt); err != nil {
+		UPDATE booking_manage_tokens SET expires_at = ?
+		WHERE booking_id = ? AND purpose = ? AND expires_at < ?`,
+		expiresAt, bookingID, ManageTokenCalendar, expiresAt); err != nil {
+		return "", fmt.Errorf("booking: extend calendar tokens: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO booking_manage_tokens (token_hash, booking_id, expires_at, purpose)
+		VALUES (?, ?, ?, ?)`, hash, bookingID, expiresAt, ManageTokenEmail); err != nil {
 		return "", fmt.Errorf("booking: insert rotated token: %w", err)
 	}
 	return rawHex, tx.Commit()

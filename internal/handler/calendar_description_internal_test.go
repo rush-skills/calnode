@@ -12,7 +12,7 @@ import (
 )
 
 func TestCalendarDescription_noMessageIsJustTheBookingIDLine(t *testing.T) {
-	plain, rich := calendarDescription(nil, "", nil, "bk-1")
+	plain, rich := calendarDescription(nil, "", nil, manageLinks{}, "bk-1")
 	if plain != "Booking ID: bk-1" {
 		t.Errorf("plain = %q", plain)
 	}
@@ -20,7 +20,7 @@ func TestCalendarDescription_noMessageIsJustTheBookingIDLine(t *testing.T) {
 		t.Errorf("rich = %q; want empty so providers fall back to plain", rich)
 	}
 	// Markup that sanitizes to nothing counts as no message.
-	plain, rich = calendarDescription(nil, "<script>x()</script><p></p>", nil, "bk-1")
+	plain, rich = calendarDescription(nil, "<script>x()</script><p></p>", nil, manageLinks{}, "bk-1")
 	if plain != "Booking ID: bk-1" || rich != "" {
 		t.Errorf("structural-only message: plain=%q rich=%q", plain, rich)
 	}
@@ -28,7 +28,7 @@ func TestCalendarDescription_noMessageIsJustTheBookingIDLine(t *testing.T) {
 
 func TestCalendarDescription_messageFirstBookingIDLast(t *testing.T) {
 	msg := `<h2>Agenda</h2><p>Bring <b>questions</b>.<br>See <a href="https://x.io/p">prep</a>.</p><ul><li>One</li></ul><img src=x onerror=alert(1)>`
-	plain, rich := calendarDescription(i18n.Default(), msg, nil, "bk-<1>")
+	plain, rich := calendarDescription(i18n.Default(), msg, nil, manageLinks{}, "bk-<1>")
 
 	wantPlain := "Agenda\n\nBring questions.\nSee prep (https://x.io/p).\n\n- One\n\nBooking ID: bk-<1>"
 	if plain != wantPlain {
@@ -47,7 +47,7 @@ func TestCalendarDescription_bookingIDLineIsTranslated(t *testing.T) {
 	if es == nil {
 		t.Skip("es locale not shipped")
 	}
-	plain, rich := calendarDescription(es, "<p>Hola</p>", nil, "bk-2")
+	plain, rich := calendarDescription(es, "<p>Hola</p>", nil, manageLinks{}, "bk-2")
 	want := es.Tf("calendar_event_booking_id", "bk-2")
 	if !strings.HasSuffix(plain, "\n\n"+want) || !strings.HasSuffix(rich, "<p>"+want+"</p>") {
 		t.Errorf("plain=%q rich=%q; want both to end with %q", plain, rich, want)
@@ -65,7 +65,7 @@ func TestCalendarMessageText_plainTextWithoutBookingID(t *testing.T) {
 
 func TestCalendarDescription_answersBetweenMessageAndBookingID(t *testing.T) {
 	answers := []answerLine{{"Company", "Acme <Ltd>"}, {"Agree to terms", "yes"}}
-	plain, rich := calendarDescription(nil, "<p>Agenda</p>", answers, "bk-3")
+	plain, rich := calendarDescription(nil, "<p>Agenda</p>", answers, manageLinks{}, "bk-3")
 	if plain != "Agenda\n\nCompany: Acme <Ltd>\nAgree to terms: yes\n\nBooking ID: bk-3" {
 		t.Errorf("plain = %q", plain)
 	}
@@ -74,7 +74,7 @@ func TestCalendarDescription_answersBetweenMessageAndBookingID(t *testing.T) {
 	}
 
 	// Answers without a message still produce both forms.
-	plain, rich = calendarDescription(nil, "", answers[:1], "bk-4")
+	plain, rich = calendarDescription(nil, "", answers[:1], manageLinks{}, "bk-4")
 	if plain != "Company: Acme <Ltd>\n\nBooking ID: bk-4" || rich != "<p><strong>Company:</strong> Acme &lt;Ltd&gt;</p><p>Booking ID: bk-4</p>" {
 		t.Errorf("answers only: plain=%q rich=%q", plain, rich)
 	}
@@ -130,5 +130,24 @@ func TestLoadAnswerLines_errorsSurface(t *testing.T) {
 	}
 	if _, err := h.loadAnswerLines(context.Background(), "b"); err == nil {
 		t.Error("query against a missing table should error")
+	}
+}
+
+// The manage links sit between the answers and the Booking ID, which stays last, and
+// are escaped into the HTML form.
+func TestCalendarDescription_manageLinks(t *testing.T) {
+	links := manageLinks{Reschedule: "https://b.example/manage/t?action=reschedule", Cancel: "https://b.example/manage/t?action=cancel&x=\"y\""}
+	plain, rich := calendarDescription(nil, "", nil, links, "bk-9")
+	want := "Need to make a change?\nReschedule: " + links.Reschedule + "\nCancel: " + links.Cancel + "\n\nBooking ID: bk-9"
+	if plain != want {
+		t.Errorf("plain = %q; want %q", plain, want)
+	}
+	if !strings.Contains(rich, `<a href="https://b.example/manage/t?action=cancel&amp;x=&#34;y&#34;">Cancel booking</a>`) ||
+		!strings.HasSuffix(rich, "<p>Booking ID: bk-9</p>") {
+		t.Errorf("rich = %q", rich)
+	}
+	// Half a pair is no pair: nothing is written.
+	if plain, _ := calendarDescription(nil, "", nil, manageLinks{Reschedule: "x"}, "bk-9"); plain != "Booking ID: bk-9" {
+		t.Errorf("partial links: plain = %q", plain)
 	}
 }

@@ -188,6 +188,7 @@ export type Webhook = {
 	url: string;
 	events: string[];
 	fields?: string[];
+	scope?: 'user' | 'org'; // org = fires for every booking in the workspace (admins)
 	is_active: boolean;
 	created_at: string;
 };

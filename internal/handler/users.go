@@ -44,22 +44,22 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		Name string `json:"name"`
 	}
 	type userRow struct {
-		ID             string    `json:"id"`
-		Email          string    `json:"email"`
-		Name           string    `json:"name"`
-		Handle         string    `json:"handle,omitempty"`
-		Timezone       string    `json:"timezone"`
-		IsAdmin        bool      `json:"is_admin"`
-		IsOwner        bool      `json:"is_owner"`
-		Role           string    `json:"role"` // "owner" | "admin" | "member"
-		EmailLogin     bool      `json:"email_login"`
-		Provider       string    `json:"provider,omitempty"`
-		AvatarURL      string    `json:"avatar_url,omitempty"`
-		CreatedAt      string    `json:"created_at"`
-		Archived       bool      `json:"archived"`
-		ArchivedAt     string    `json:"archived_at,omitempty"`
-		ArchivedBy     string    `json:"archived_by,omitempty"`
-		ArchivedByName string    `json:"archived_by_name,omitempty"`
+		ID             string `json:"id"`
+		Email          string `json:"email"`
+		Name           string `json:"name"`
+		Handle         string `json:"handle,omitempty"`
+		Timezone       string `json:"timezone"`
+		IsAdmin        bool   `json:"is_admin"`
+		IsOwner        bool   `json:"is_owner"`
+		Role           string `json:"role"` // "owner" | "admin" | "member"
+		EmailLogin     bool   `json:"email_login"`
+		Provider       string `json:"provider,omitempty"`
+		AvatarURL      string `json:"avatar_url,omitempty"`
+		CreatedAt      string `json:"created_at"`
+		Archived       bool   `json:"archived"`
+		ArchivedAt     string `json:"archived_at,omitempty"`
+		ArchivedBy     string `json:"archived_by,omitempty"`
+		ArchivedByName string `json:"archived_by_name,omitempty"`
 		// HasCalendar is false when the member has no connected calendar at all. A
 		// host in that state sends no invites for their bookings, silently: the
 		// editor's Hosts tab and the members page warn on it.

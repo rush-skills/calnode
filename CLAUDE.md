@@ -68,6 +68,16 @@ behaviour or markup must usually be made in all three, or they drift:
   booked. Never feed them to MCP or the assistant - `computeSlots(..., includeTaken)`
   makes each caller say. See ARCHITECTURE §8.
 
+## Calendar invite carries the manage links
+
+Every booking's calendar event ends with reschedule and cancel links
+(`calendarManageLinks` → `calendarDescription`), because when Calnode sends no email the
+invite is the booker's only message. They use a manage token with `purpose = 'calendar'`.
+**`RotateManageToken` must keep rotating only `email` tokens**: the event description is
+not rewritten on reschedule, so rotating the calendar token strands a dead link on the
+invite. Any new path that creates a booking's calendar event must pass links too. Detail:
+`docs/features/calendar-manage-links.md`.
+
 ## Conversational booking assistant (optional LLM layer)
 
 The "Book by chat" assistant lives on **two** of those surfaces — `book.html` (floating

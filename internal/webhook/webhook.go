@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -23,11 +24,14 @@ import (
 var ErrNotFound = errors.New("webhook: not found")
 
 type Webhook struct {
-	ID        string
-	UserID    string
-	URL       string
-	Events    []string
-	Fields    []string // payload field keys; nil means the default set
+	ID     string
+	UserID string
+	URL    string
+	Events []string
+	Fields []string // payload field keys; nil means the default set
+	// Scope is ScopeUser (fires for bookings UserID hosts) or ScopeOrg (fires for every
+	// booking in the workspace; created and managed by admins).
+	Scope     string
 	IsActive  bool
 	CreatedAt time.Time
 }
@@ -56,6 +60,10 @@ const (
 	FieldAmountPaid      = "amount_paid_cents"
 	FieldCurrency        = "amount_paid_currency"
 	FieldRSVPStatus      = "rsvp_status"
+	// FieldInitiatedBy says who caused a cancel or reschedule: InitiatedByBooker (through
+	// the booking's manage link, from the confirmation email or the calendar invite) or
+	// InitiatedByHost (a signed-in member, an admin, or an API key).
+	FieldInitiatedBy = "initiated_by"
 )
 
 // AllFields is every selectable field, in payload order. Used to validate config
@@ -66,8 +74,20 @@ var AllFields = []string{
 	FieldEventTypeSlug, FieldEventTypeName,
 	FieldHostID, FieldHostName, FieldHostEmail,
 	FieldAttendeeName, FieldAttendeeEmail, FieldAttendeeTZ, FieldAnswers,
-	FieldPaymentStatus, FieldAmountPaid, FieldCurrency, FieldRSVPStatus,
+	FieldPaymentStatus, FieldAmountPaid, FieldCurrency, FieldRSVPStatus, FieldInitiatedBy,
 }
+
+// Webhook scopes.
+const (
+	ScopeUser = "user"
+	ScopeOrg  = "org"
+)
+
+// InitiatedBy values (FieldInitiatedBy).
+const (
+	InitiatedByBooker = "booker"
+	InitiatedByHost   = "host"
+)
 
 // defaultFields reproduces the original payload (no PII, no answers) so a webhook with no
 // field config (fields IS NULL) keeps its historical shape. Payment fields are included but
@@ -76,7 +96,7 @@ var defaultFields = []string{
 	FieldID, FieldEventTypeSlug, FieldHostID, FieldStartAt, FieldEndAt,
 	FieldStatus, FieldLocation, FieldCancelReason, FieldCreatedAt,
 	FieldPreviousStartAt, FieldPreviousEndAt,
-	FieldPaymentStatus, FieldAmountPaid, FieldCurrency, FieldRSVPStatus,
+	FieldPaymentStatus, FieldAmountPaid, FieldCurrency, FieldRSVPStatus, FieldInitiatedBy,
 }
 
 var validField = func() map[string]bool {
@@ -129,6 +149,9 @@ type BookingPayload struct {
 	// RSVPStatus is the booker's answer to a Calnode-sent invite (accepted, declined,
 	// tentative); set on booking.rsvp only.
 	RSVPStatus string `json:"rsvp_status,omitempty"`
+	// InitiatedBy is who caused a booking.cancelled or booking.rescheduled
+	// (InitiatedByBooker / InitiatedByHost); empty on other events.
+	InitiatedBy string `json:"initiated_by,omitempty"`
 }
 
 type Service struct {
@@ -186,6 +209,7 @@ func (s *Service) Create(ctx context.Context, userID, url string, events []strin
 
 	wh := &Webhook{
 		ID:        id,
+		Scope:     ScopeUser,
 		UserID:    userID,
 		URL:       url,
 		Events:    events,
@@ -228,7 +252,7 @@ func (s *Service) Update(ctx context.Context, userID, id string, events, fields 
 // List returns all webhooks for a user, most recent first.
 func (s *Service) List(ctx context.Context, userID string) ([]Webhook, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, url, events, fields, is_active, created_at
+		SELECT id, user_id, url, events, fields, scope, is_active, created_at
 		FROM webhooks WHERE user_id = ? ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("webhook: list: %w", err)
@@ -242,10 +266,9 @@ func (s *Service) List(ctx context.Context, userID string) ([]Webhook, error) {
 		var fieldsJSON sql.NullString
 		var isActive int
 		var createdAt string
-		if err := rows.Scan(&wh.ID, &wh.URL, &eventsJSON, &fieldsJSON, &isActive, &createdAt); err != nil {
+		if err := rows.Scan(&wh.ID, &wh.UserID, &wh.URL, &eventsJSON, &fieldsJSON, &wh.Scope, &isActive, &createdAt); err != nil {
 			return nil, fmt.Errorf("webhook: scan: %w", err)
 		}
-		wh.UserID = userID
 		wh.IsActive = isActive == 1
 		_ = json.Unmarshal([]byte(eventsJSON), &wh.Events)
 		if fieldsJSON.Valid && fieldsJSON.String != "" {
@@ -259,6 +282,64 @@ func (s *Service) List(ctx context.Context, userID string) ([]Webhook, error) {
 		out = append(out, wh)
 	}
 	return out, rows.Err()
+}
+
+// SetScope sets the scope of a webhook owned by userID (ScopeUser or ScopeOrg). The
+// caller decides who may choose ScopeOrg; the service only stores it.
+func (s *Service) SetScope(ctx context.Context, userID, id, scope string) error {
+	if scope != ScopeUser && scope != ScopeOrg {
+		return fmt.Errorf("webhook: invalid scope %q", scope)
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE webhooks SET scope = ? WHERE id = ? AND user_id = ?`, scope, id, userID)
+	if err != nil {
+		return fmt.Errorf("webhook: set scope: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// OrgOwner returns the creator of webhook id when it is organisation-scoped. An admin
+// manages any org webhook, so the handler acts on it as its owner.
+func (s *Service) OrgOwner(ctx context.Context, id string) (string, bool) {
+	var owner string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT user_id FROM webhooks WHERE id = ? AND scope = 'org'`, id).Scan(&owner)
+	return owner, err == nil
+}
+
+// ListOrg returns every organisation-scoped webhook, most recent first.
+func (s *Service) ListOrg(ctx context.Context) ([]Webhook, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT user_id FROM webhooks WHERE scope = 'org'`)
+	if err != nil {
+		return nil, fmt.Errorf("webhook: list org owners: %w", err)
+	}
+	var owners []string
+	for rows.Next() {
+		var o string
+		if err := rows.Scan(&o); err != nil {
+			rows.Close() // #nosec G104 -- already returning the scan error
+			return nil, fmt.Errorf("webhook: scan org owner: %w", err)
+		}
+		owners = append(owners, o)
+	}
+	rows.Close() // #nosec G104 -- drained; the next query needs the single connection
+	var out []Webhook
+	for _, o := range owners {
+		list, err := s.List(ctx, o)
+		if err != nil {
+			return nil, err
+		}
+		for _, wh := range list {
+			if wh.Scope == ScopeOrg {
+				out = append(out, wh)
+			}
+		}
+	}
+	slices.SortFunc(out, func(a, b Webhook) int { return b.CreatedAt.Compare(a.CreatedAt) })
+	return out, nil
 }
 
 // Delete removes a webhook owned by userID. Returns ErrNotFound if it doesn't exist.
@@ -351,6 +432,7 @@ func buildData(bd enrichedBooking, fields []string) map[string]any {
 		FieldPaymentStatus:   bd.core.PaymentStatus,
 		FieldCurrency:        bd.core.AmountPaidCurrency,
 		FieldRSVPStatus:      bd.core.RSVPStatus,
+		FieldInitiatedBy:     bd.core.InitiatedBy,
 	}
 	out := make(map[string]any, len(fields))
 	for _, f := range fields {
@@ -371,7 +453,7 @@ func buildData(bd enrichedBooking, fields []string) map[string]any {
 func (s *Service) Enqueue(ctx context.Context, event string, p BookingPayload) error {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, events, fields FROM webhooks
-		WHERE user_id = ? AND is_active = 1`, p.HostID)
+		WHERE is_active = 1 AND (user_id = ? OR scope = 'org')`, p.HostID)
 	if err != nil {
 		return fmt.Errorf("webhook: list for enqueue: %w", err)
 	}

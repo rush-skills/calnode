@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"strings"
 	"testing"
 
 	"github.com/calnode/calnode/internal/db"
@@ -381,5 +382,44 @@ func TestDecryptSecret_roundTrip(t *testing.T) {
 	}
 	if hex.EncodeToString(decrypted) != plainSecret {
 		t.Error("decrypted secret does not match the plain secret shown at creation")
+	}
+}
+
+// An organisation-wide webhook fires for every host's bookings, not only its creator's,
+// and carries initiated_by in the default payload.
+func TestEnqueue_orgScopeFiresForEveryHost(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+
+	wh, _, err := e.svc.Create(ctx, testUserID, "https://example.com/hook", []string{"booking.cancelled"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.SetScope(ctx, otherUser, wh.ID, webhook.ScopeOrg); err == nil {
+		t.Fatal("SetScope by a non-owner should fail")
+	}
+	if err := e.svc.SetScope(ctx, testUserID, wh.ID, webhook.ScopeOrg); err != nil {
+		t.Fatalf("SetScope: %v", err)
+	}
+	if owner, ok := e.svc.OrgOwner(ctx, wh.ID); !ok || owner != testUserID {
+		t.Fatalf("OrgOwner = %q, %v; want %q, true", owner, ok, testUserID)
+	}
+
+	if err := e.svc.Enqueue(ctx, "booking.cancelled", webhook.BookingPayload{
+		HostID: otherUser, Status: "cancelled", InitiatedBy: webhook.InitiatedByBooker,
+	}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	var payload string
+	if err := e.db.QueryRowContext(ctx, `SELECT payload FROM webhook_deliveries`).Scan(&payload); err != nil {
+		t.Fatalf("org webhook did not fire for another host's booking: %v", err)
+	}
+	if !strings.Contains(payload, `"initiated_by":"booker"`) {
+		t.Errorf("payload %s; want initiated_by booker", payload)
+	}
+
+	org, err := e.svc.ListOrg(ctx)
+	if err != nil || len(org) != 1 || org[0].Scope != webhook.ScopeOrg || org[0].UserID != testUserID {
+		t.Errorf("ListOrg = %+v, %v; want the one org webhook", org, err)
 	}
 }

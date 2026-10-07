@@ -162,7 +162,7 @@ func (h *Handler) reassignSideEffects(ctx context.Context, rb *reassignedBooking
 		if aerr != nil {
 			h.logger.Error("reassign: load answers for calendar event", "error", aerr, "booking_id", bCopy.ID)
 		}
-		descPlain, descRich := calendarDescription(loc, h.withOrgCalendarMessage(ctx, rb.calMsg), answers, bCopy.ID)
+		descPlain, descRich := calendarDescription(loc, h.withOrgCalendarMessage(ctx, rb.calMsg), answers, h.calendarManageLinks(ctx, bCopy.ID), bCopy.ID)
 		newEventID, _, newCalID, newProvider, err := gc.CreateEvent(ctx, newHostID, calendar.CreateEventParams{
 			Summary:         loc.Tf("calendar_event_summary", rb.etName, rb.orgName),
 			Description:     descPlain,
@@ -236,6 +236,7 @@ func (h *Handler) reassignSideEffects(ctx context.Context, rb *reassignedBooking
 			Status:        bCopy.Status,
 			LocationValue: bCopy.LocationValue,
 			CreatedAt:     bCopy.CreatedAt.UTC().Format(time.RFC3339),
+			InitiatedBy:   webhook.InitiatedByHost,
 		}); err != nil {
 			h.logger.Error("reassign: enqueue webhook", "error", err, "booking_id", bCopy.ID)
 		}

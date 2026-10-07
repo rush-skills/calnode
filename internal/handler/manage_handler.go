@@ -374,6 +374,7 @@ func (h *Handler) rescheduleSideEffects(bCopy booking.Booking, capturedEtID stri
 			CreatedAt:       bCopy.CreatedAt.UTC().Format(time.RFC3339),
 			PreviousStartAt: previousStart.UTC().Format(time.RFC3339),
 			PreviousEndAt:   previousEnd.UTC().Format(time.RFC3339),
+			InitiatedBy:     webhook.InitiatedByBooker,
 		}); err != nil {
 			h.logger.Error("enqueue booking.rescheduled webhook", "error", err, "booking_id", bCopy.ID)
 		}
@@ -414,5 +415,5 @@ func (h *Handler) CancelByToken(w http.ResponseWriter, r *http.Request) {
 
 	// Same multi-host fan-out as the admin cancel path (Group bookings remove the
 	// event from every assigned host's calendar and notify each).
-	go h.cancelSideEffects(*b) // #nosec G118 -- deliberately its own context.Background(); see cancelSideEffects' doc comment
+	go h.cancelSideEffects(*b, webhook.InitiatedByBooker) // #nosec G118 -- deliberately its own context.Background(); see cancelSideEffects' doc comment
 }

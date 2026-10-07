@@ -27,6 +27,9 @@ func (h *Handler) CreateWebhook(w http.ResponseWriter, r *http.Request) {
 		URL    string   `json:"url"`
 		Events []string `json:"events"`
 		Fields []string `json:"fields"` // optional payload field selection; nil = default set
+		// Scope is "user" (default: bookings the creator hosts) or "org" (every booking in
+		// the workspace). Only an admin may create an org webhook.
+		Scope string `json:"scope"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -47,6 +50,18 @@ func (h *Handler) CreateWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.Events) == 0 {
 		h.writeError(w, http.StatusBadRequest, "events must not be empty")
+		return
+	}
+	switch req.Scope {
+	case "", webhook.ScopeUser:
+		req.Scope = webhook.ScopeUser
+	case webhook.ScopeOrg:
+		if !user.IsAdmin {
+			h.writeError(w, http.StatusForbidden, "only an admin can create an organisation-wide webhook")
+			return
+		}
+	default:
+		h.writeError(w, http.StatusBadRequest, "scope must be 'user' or 'org'")
 		return
 	}
 	for _, e := range req.Events {
@@ -71,12 +86,23 @@ func (h *Handler) CreateWebhook(w http.ResponseWriter, r *http.Request) {
 			wh.Fields = webhook.ValidFields(req.Fields)
 		}
 	}
+	if req.Scope == webhook.ScopeOrg {
+		if err := h.webhookSvc.SetScope(r.Context(), user.ID, wh.ID, webhook.ScopeOrg); err != nil {
+			// Never leave behind a user-scoped hook the admin did not ask for.
+			_ = h.webhookSvc.Delete(r.Context(), user.ID, wh.ID)
+			h.logger.ErrorContext(r.Context(), "create webhook: set scope", "error", err)
+			h.writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		wh.Scope = webhook.ScopeOrg
+	}
 
 	h.writeJSON(w, http.StatusCreated, map[string]any{
 		"id":         wh.ID,
 		"url":        wh.URL,
 		"events":     wh.Events,
 		"fields":     wh.Fields,
+		"scope":      wh.Scope,
 		"secret":     secret,
 		"is_active":  wh.IsActive,
 		"created_at": wh.CreatedAt.UTC().Format(time.RFC3339),
@@ -110,7 +136,7 @@ func (h *Handler) PatchWebhook(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if err := h.webhookSvc.Update(r.Context(), user.ID, id, req.Events, req.Fields); err != nil {
+	if err := h.webhookSvc.Update(r.Context(), h.webhookOwner(r.Context(), user, id), id, req.Events, req.Fields); err != nil {
 		if errors.Is(err, webhook.ErrNotFound) {
 			h.writeError(w, http.StatusNotFound, "webhook not found")
 			return
@@ -131,6 +157,20 @@ func (h *Handler) ListWebhooks(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	// Admins also see, and manage, the organisation-wide webhooks other admins made.
+	if user.IsAdmin {
+		org, err := h.webhookSvc.ListOrg(r.Context())
+		if err != nil {
+			h.logger.ErrorContext(r.Context(), "list org webhooks", "error", err)
+			h.writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		for _, wh := range org {
+			if wh.UserID != user.ID {
+				webhooks = append(webhooks, wh)
+			}
+		}
+	}
 
 	items := make([]map[string]any, len(webhooks))
 	for i, wh := range webhooks {
@@ -139,6 +179,7 @@ func (h *Handler) ListWebhooks(w http.ResponseWriter, r *http.Request) {
 			"url":        wh.URL,
 			"events":     wh.Events,
 			"fields":     wh.Fields,
+			"scope":      wh.Scope,
 			"is_active":  wh.IsActive,
 			"created_at": wh.CreatedAt.UTC().Format(time.RFC3339),
 		}
@@ -150,7 +191,7 @@ func (h *Handler) DeleteWebhook(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
 	id := r.PathValue("id")
 
-	if err := h.webhookSvc.Delete(r.Context(), user.ID, id); err != nil {
+	if err := h.webhookSvc.Delete(r.Context(), h.webhookOwner(r.Context(), user, id), id); err != nil {
 		if errors.Is(err, webhook.ErrNotFound) {
 			h.writeError(w, http.StatusNotFound, "webhook not found")
 			return
@@ -166,7 +207,7 @@ func (h *Handler) ListWebhookDeliveries(w http.ResponseWriter, r *http.Request) 
 	user, _ := userFromContext(r.Context())
 	webhookID := r.PathValue("id")
 
-	deliveries, err := h.webhookSvc.ListDeliveries(r.Context(), user.ID, webhookID)
+	deliveries, err := h.webhookSvc.ListDeliveries(r.Context(), h.webhookOwner(r.Context(), user, webhookID), webhookID)
 	if err != nil {
 		if errors.Is(err, webhook.ErrNotFound) {
 			h.writeError(w, http.StatusNotFound, "webhook not found")
@@ -211,4 +252,16 @@ func validateWebhookURL(ctx context.Context, u *url.URL) error {
 		return fmt.Errorf("webhook URL must not resolve to a private or loopback address: %w", err)
 	}
 	return nil
+}
+
+// webhookOwner is the user ID to act on webhook id as. Normally the caller: the service
+// only touches a webhook its owner names. An admin acting on an organisation-wide
+// webhook acts as that webhook's creator, so any admin can manage any org webhook.
+func (h *Handler) webhookOwner(ctx context.Context, user AuthUser, id string) string {
+	if user.IsAdmin {
+		if owner, ok := h.webhookSvc.OrgOwner(ctx, id); ok {
+			return owner
+		}
+	}
+	return user.ID
 }

@@ -8,6 +8,7 @@
 	import { Checkbox } from '$lib/components/ui/checkbox';
 	import { Badge } from '$lib/components/ui/badge';
 	import * as Tooltip from '$lib/components/ui/tooltip';
+	import { currentUser } from '$lib/stores';
 
 	let items: Webhook[] = $state([]);
 	let loading = $state(true);
@@ -39,6 +40,7 @@
 			{ key: 'previous_start_at', label: 'Previous start (reschedule)' },
 			{ key: 'previous_end_at', label: 'Previous end (reschedule)' },
 			{ key: 'rsvp_status', label: 'RSVP answer (booking.rsvp)' },
+			{ key: 'initiated_by', label: 'Initiated by (booker / host)' },
 		] },
 		{ group: 'Payment', fields: [
 			{ key: 'payment_status', label: 'Payment status' },
@@ -65,9 +67,11 @@
 	];
 	const allFieldKeys = fieldGroups.flatMap((g) => g.fields.map((f) => f.key));
 
-	let form = $state<{ url: string; events: string[]; fields: string[] }>({
-		url: '', events: ['booking.created', 'booking.cancelled'], fields: [...allFieldKeys]
+	// org = every booking in the workspace, not only the ones you host (admins only).
+	const blankForm = () => ({
+		url: '', events: ['booking.created', 'booking.cancelled', 'booking.rescheduled'], fields: [...allFieldKeys], org: false
 	});
+	let form = $state<{ url: string; events: string[]; fields: string[]; org: boolean }>(blankForm());
 
 	// Delivery log (lazy-loaded per webhook).
 	let openDeliveries = $state<string | null>(null);
@@ -98,8 +102,10 @@
 		if (form.events.length === 0) { createError = 'Select at least one event.'; return; }
 		creating = true;
 		try {
-			await api.post('/v1/webhooks', { url: form.url, events: form.events, fields: form.fields });
-			form = { url: '', events: ['booking.created', 'booking.cancelled'], fields: [...allFieldKeys] };
+			await api.post('/v1/webhooks', {
+				url: form.url, events: form.events, fields: form.fields, scope: form.org ? 'org' : 'user'
+			});
+			form = blankForm();
 			showCreate = false;
 			await load();
 		} catch (e: any) {
@@ -193,6 +199,20 @@
 			/>
 		</div>
 
+		{#if $currentUser?.is_admin}
+			<div class="mb-4 space-y-1">
+				<label class="flex cursor-pointer items-center gap-2 text-sm font-medium">
+					<Checkbox checked={form.org} onCheckedChange={(v) => (form.org = v === true)} />
+					Every booking in the workspace
+				</label>
+				<p class="pl-6 text-xs text-muted-foreground">
+					{form.org
+						? 'Organisation-wide: fires for every member\'s bookings. Any admin can see and remove it.'
+						: 'Only bookings you host. Tick this for an integration that should hear about the whole team.'}
+				</p>
+			</div>
+		{/if}
+
 		<div class="mb-4 space-y-2">
 			<p class="text-sm font-medium">Events to send</p>
 			{#each allEvents as ev}
@@ -257,7 +277,9 @@
 				<Tooltip.Provider>
 					{#each items as wh}
 						<tr class="transition-colors hover:bg-muted/30">
-							<td class="max-w-xs overflow-hidden text-ellipsis whitespace-nowrap px-4 py-3 font-mono text-xs">{wh.url}</td>
+							<td class="max-w-xs overflow-hidden text-ellipsis whitespace-nowrap px-4 py-3 font-mono text-xs">
+								{#if wh.scope === 'org'}<Badge variant="secondary" class="mr-1.5 font-sans">Workspace</Badge>{/if}{wh.url}
+							</td>
 							<td class="px-4 py-3 text-xs text-muted-foreground">{(wh.events ?? []).join(', ')}</td>
 							<td class="px-4 py-3 text-xs text-muted-foreground">{(wh.fields ?? []).length} fields</td>
 							<td class="px-4 py-3">

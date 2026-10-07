@@ -673,6 +673,17 @@ body {
     }
   });
 
+  // ── Deep links from the calendar invite: ?action=reschedule | cancel ────────
+  // Opens the matching view, nothing more. A GET never cancels: mail and calendar
+  // link scanners prefetch these URLs, so the booker still confirms on the page.
+  // The parameter is dropped from the address bar so a reload lands on the summary.
+  try {
+    const action = new URLSearchParams(location.search).get('action');
+    if (action === 'reschedule') $('reschedule-btn').click();
+    else if (action === 'cancel') $('cancel-btn').click();
+    if (action) history.replaceState(null, '', location.pathname);
+  } catch { /* old browser: the summary view is a fine fallback */ }
+
 }());
 </script>
 {{end}}{{end}}

@@ -12,6 +12,9 @@ exact tag (`ghcr.io/calnode/calnode:0.1.0`) if you need stability between upgrad
 ## [Unreleased]
 
 ### Fixed
+- **Manage links no longer expire before the meeting.** A link was valid for 60 days from
+  issue, so a booking made further ahead could not be changed by the time it mattered.
+  Links now last until a week after the meeting, or 60 days, whichever is later.
 - **The timezone picker now lists every IANA zone**, not a hand-picked fifteen (India was
   missing, among most of the world). It reads the browser's own table and falls back to
   the short list only on very old browsers; a stored zone outside the list is kept.
@@ -41,6 +44,16 @@ exact tag (`ghcr.io/calnode/calnode:0.1.0`) if you need stability between upgrad
   archiving them, so admins cannot demote each other.
 
 ### Added
+- **Reschedule and cancel links in the calendar invite.** Every booking's calendar event
+  now ends with "Need to make a change?" and a reschedule link and a cancel link to the
+  booking's manage page, which open straight into the picker or the cancel confirmation.
+  For workspaces that send no email, the invite is the booker's only message, so this is
+  their way back. The links keep working after a reschedule. Needs `BASE_URL`.
+- **Organisation-wide webhooks.** An admin can tick *Every booking in the workspace* so a
+  webhook fires for every member's bookings, not only their own. Any admin can see and
+  remove one.
+- **`initiated_by` on cancel and reschedule webhooks**: `booker` for changes made through
+  the booking's manage link, `host` for changes made in the admin app or the API.
 - **Calendar invites can come from Calnode instead of the host's calendar.** A new
   per-event-type setting, *Calendar invite → Sent by*. The default is unchanged: the host's
   connected calendar invites the booker, from the host's own address. Choose *Calnode* and

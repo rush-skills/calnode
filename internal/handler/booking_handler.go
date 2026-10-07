@@ -1206,7 +1206,7 @@ func (h *Handler) createHostEventsAndNotify(ctx context.Context, b *booking.Book
 	if err != nil {
 		h.logger.Error("booking confirmation: load answers for calendar event", "error", err, "booking_id", b.ID)
 	}
-	descPlain, descRich := calendarDescription(bData.Locale, in.CalendarMessage, answers, b.ID)
+	descPlain, descRich := calendarDescription(bData.Locale, in.CalendarMessage, answers, h.calendarManageLinks(ctx, b.ID), b.ID)
 	// Default participants (a notetaker bot, a shared mailbox) go on every host's event -
 	// the same list for each, minus the booker and every host of the booking, who are on it
 	// already. Loaded once for the booking; a failed load logs and proceeds without them.
@@ -1759,7 +1759,7 @@ func (h *Handler) CancelBooking(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, toBookingJSON(b))
 
 	// Cancel calendar events and send cancellation emails in the background.
-	go h.cancelSideEffects(*b) // #nosec G118 -- deliberately its own context.Background(); see cancelSideEffects' doc comment
+	go h.cancelSideEffects(*b, webhook.InitiatedByHost) // #nosec G118 -- deliberately its own context.Background(); see cancelSideEffects' doc comment
 }
 
 // cancelSideEffects removes every assigned host's calendar event, notifies each
@@ -1767,7 +1767,7 @@ func (h *Handler) CancelBooking(w http.ResponseWriter, r *http.Request) {
 // in its own context so it can be launched in a goroutine after the response is
 // written. Shared by the admin (CancelBooking) and manage-link (CancelByToken)
 // cancel paths so both fan out across all hosts (Group bookings).
-func (h *Handler) cancelSideEffects(b booking.Booking) {
+func (h *Handler) cancelSideEffects(b booking.Booking, initiatedBy string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	d, err := h.loadCancellationData(ctx, &b)
@@ -1862,6 +1862,7 @@ func (h *Handler) cancelSideEffects(b booking.Booking) {
 			PaymentStatus:      paymentStatusForWebhook(payStatus),
 			AmountPaidCents:    payAmt,
 			AmountPaidCurrency: payCur,
+			InitiatedBy:        initiatedBy,
 		}); err != nil {
 			h.logger.Error("enqueue booking.cancelled webhook", "error", err, "booking_id", b.ID)
 		}

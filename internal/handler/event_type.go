@@ -43,7 +43,7 @@ type eventTypeJSON struct {
 	// ShowTakenSlots renders already-booked times greyed out on the booking page
 	// instead of omitting them. Off by default: the slots endpoint is public, so this
 	// makes the host's booked hours legible to anyone with the link (#19).
-	ShowTakenSlots bool   `json:"show_taken_slots"`
+	ShowTakenSlots bool `json:"show_taken_slots"`
 	// InviteDelivery is who sends the booker's calendar invite: "calendar" (each host's
 	// connected calendar, from the host's own address) or "calnode" (Calnode's own .ics,
 	// from the instance sender, so no host address reaches the booker). See migration 00079.

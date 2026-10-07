@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/calnode/calnode/internal/webhook"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -289,7 +290,7 @@ func TestInviteDelivery_cancelFollowsTheBookingNotTheEventType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get booking: %v", err)
 	}
-	f.h.cancelSideEffects(*b)
+	f.h.cancelSideEffects(*b, webhook.InitiatedByHost)
 
 	ics := icsOf(f.waitFor(t, inviteBookerEmail, 2))
 	if !strings.Contains(ics, "METHOD:CANCEL") {

@@ -109,7 +109,9 @@ partial unique index covers) — no TOCTOU between concurrent bookings.
   `booking_hosts` (every attending host + `is_primary` + per-host
   `external_event_id`), `booking_attendees` (organizer + invitees),
   `booking_answers`, `booking_manage_tokens` (PK is the hashed token; TTL is
-  app-level, set by `IssueManageToken`, not a schema constraint).
+  app-level, set by `IssueManageToken`, not a schema constraint: 60 days from issue or a
+  week after the booking ends, whichever is later. `purpose` is `email` or `calendar`;
+  a reschedule rotates only `email` tokens, see docs/features/calendar-manage-links.md).
   Note: `bookings.host_id` and `booking_hosts.user_id` carry **no ON DELETE
   clause** (NO ACTION), and `users.archived_by` is a bare TEXT column (no FK) —
   which is *why* member offboarding is archive, not delete.
@@ -824,6 +826,17 @@ as the desired state:
   (`buildData`) at enqueue time, so each subscriber gets its own `data`. New webhooks
   default to all fields ticked (self-hoster unticks what they don't want); a
   delivery-log view (status/HTTP/attempts) is in the admin webhooks page.
+- **Scope (migration 00081):** a `user` webhook fires for bookings its creator hosts (the
+  original behaviour); an `org` webhook, which only an admin can create, fires for every
+  booking (`Enqueue` matches `user_id = host OR scope = 'org'`). Any admin can list,
+  edit, read deliveries of and delete any org webhook; the handler acts on it as its
+  creator (`webhookOwner`), so the service keeps its owner-only queries.
+- **`initiated_by`** on `booking.cancelled` / `booking.rescheduled`: `booker` when the
+  action came through a manage link (`CancelByToken` / `RescheduleByToken`, whether the
+  link was in an email or a calendar invite), `host` for a signed-in member, admin, API
+  key or reassignment. A manage link is a bearer link, so "booker" means "whoever held
+  the booker's link", which on a calendar invite includes the hosts and default
+  participants.
 
 ---
 

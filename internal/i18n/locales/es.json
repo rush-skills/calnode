@@ -155,6 +155,9 @@
   "email_manage_this_booking": "Gestionar esta reserva:",
   "calendar_event_summary": "%s con %s",
   "calendar_event_booking_id": "ID de la reserva: %s",
+  "calendar_event_manage_intro": "¿Necesitas hacer un cambio?",
+  "calendar_event_reschedule_line": "Reprogramar: %s",
+  "calendar_event_cancel_line": "Cancelar: %s",
 
   "err_booking_limit": "Ya tienes el número máximo de reservas próximas para este evento. Cancela una reserva existente o espera a que pase alguna antes de volver a reservar.",
   "err_email_throttled": "Demasiadas reservas desde esta dirección de correo recientemente. Inténtalo de nuevo más tarde.",

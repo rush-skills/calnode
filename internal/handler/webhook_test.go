@@ -334,3 +334,59 @@ func TestCreateWebhook_ssrf_cgnat_returns400(t *testing.T) {
 		t.Errorf("status = %d; want 400 for CGNAT URL", rec.Code)
 	}
 }
+
+// Organisation-wide webhooks: only an admin may create one, and any admin may then see
+// and remove it, not only the admin who made it.
+func TestCreateWebhook_orgScope(t *testing.T) {
+	h, db, ownerKey, _ := setupWorkspaceWithDB(t)
+	memberKey := seedMemberKey(t, db, "m1", "member@example.com")
+	adminKey := seedMemberKey(t, db, "a2", "admin2@example.com")
+	if _, err := db.Exec(`UPDATE users SET is_admin = 1 WHERE id = 'a2'`); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"url":"https://example.com/hook","events":["booking.cancelled"],"scope":"org"}`
+
+	rec := httptest.NewRecorder()
+	h.RequireAuth(h.CreateWebhook)(rec, authReq(http.MethodPost, "/v1/webhooks", body, memberKey))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("member creating an org webhook: %d; want 403", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	h.RequireAuth(h.CreateWebhook)(rec, authReq(http.MethodPost, "/v1/webhooks", body, ownerKey))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("admin creating an org webhook: %d %s", rec.Code, rec.Body)
+	}
+	var created map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+	if created["scope"] != "org" {
+		t.Fatalf("scope = %v; want org", created["scope"])
+	}
+	id, _ := created["id"].(string)
+
+	rec = httptest.NewRecorder()
+	h.RequireAuth(h.ListWebhooks)(rec, authReq(http.MethodGet, "/v1/webhooks", "", adminKey))
+	if !strings.Contains(rec.Body.String(), id) {
+		t.Fatalf("another admin cannot see the org webhook: %s", rec.Body)
+	}
+	rec = httptest.NewRecorder()
+	h.RequireAuth(h.ListWebhooks)(rec, authReq(http.MethodGet, "/v1/webhooks", "", memberKey))
+	if strings.Contains(rec.Body.String(), id) {
+		t.Fatal("a member should not see org webhooks")
+	}
+
+	req := authReq(http.MethodDelete, "/v1/webhooks/"+id, "", memberKey)
+	req.SetPathValue("id", id)
+	rec = httptest.NewRecorder()
+	h.RequireAuth(h.DeleteWebhook)(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("member deleting the org webhook: %d; want 404", rec.Code)
+	}
+	req = authReq(http.MethodDelete, "/v1/webhooks/"+id, "", adminKey)
+	req.SetPathValue("id", id)
+	rec = httptest.NewRecorder()
+	h.RequireAuth(h.DeleteWebhook)(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("another admin deleting the org webhook: %d %s", rec.Code, rec.Body)
+	}
+}
