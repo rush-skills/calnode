@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/calnode/calnode/internal/booking"
 	"github.com/calnode/calnode/internal/db"
 	"github.com/calnode/calnode/internal/richtext"
 	"github.com/calnode/calnode/internal/uid"
@@ -43,6 +44,10 @@ type eventTypeJSON struct {
 	// instead of omitting them. Off by default: the slots endpoint is public, so this
 	// makes the host's booked hours legible to anyone with the link (#19).
 	ShowTakenSlots bool   `json:"show_taken_slots"`
+	// InviteDelivery is who sends the booker's calendar invite: "calendar" (each host's
+	// connected calendar, from the host's own address) or "calnode" (Calnode's own .ics,
+	// from the instance sender, so no host address reaches the booker). See migration 00079.
+	InviteDelivery string `json:"invite_delivery"`
 	IsPublic       bool   `json:"is_public"`
 	CreatedAt      string `json:"created_at"`
 	// CalendarMessage is sanitized HTML placed on every booking's calendar invite
@@ -83,6 +88,11 @@ type eventTypeJSON struct {
 	// it and who to contact for changes. Populated by list and get.
 	OwnerName  string `json:"owner_name,omitempty"`
 	OwnerEmail string `json:"owner_email,omitempty"`
+	// InviteSenderReady reports, on the single-event-type GET, whether Calnode can
+	// currently deliver the invites it is set to send. False means email was removed
+	// after the event type switched to Calnode-sent invites: bookers get no invite until
+	// Settings → Email is fixed, so the editor warns.
+	InviteSenderReady bool `json:"invite_sender_ready"`
 }
 
 // stampViewer fills the per-viewer fields (Owned, CanEdit) from the row's owner and
@@ -119,7 +129,7 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 		&isActive, &isPublic, &showTaken, &et.CreatedAt,
 		&msgConf, &msgCancel, &msgResched, &msgRemind, &msgGreeting,
 		&subjConf, &subjCancel, &subjResched, &subjRemind,
-		&et.PriceCents, &et.Currency, &calMsg,
+		&et.PriceCents, &et.Currency, &calMsg, &et.InviteDelivery,
 		&et.OwnerID, &et.Visibility,
 	}
 	dests = append(dests, trailing...)
@@ -182,7 +192,7 @@ const etColumns = `id, slug, name, description,
 	is_active, is_public, show_taken_slots, created_at,
 	msg_confirmation, msg_cancellation, msg_reschedule, msg_reminder, msg_greeting,
 	subj_confirmation, subj_cancellation, subj_reschedule, subj_reminder,
-	price_cents, currency, calendar_message,
+	price_cents, currency, calendar_message, invite_delivery,
 	user_id, visibility`
 
 // selectETCols fetches a single event type by whatever WHERE the caller appends.
@@ -255,6 +265,7 @@ func (h *Handler) CreateEventType(w http.ResponseWriter, r *http.Request) {
 		AllowPhoneCall      *bool   `json:"allow_phone_call"`
 		ShowTakenSlots      *bool   `json:"show_taken_slots"`
 		Visibility          *string `json:"visibility"`
+		InviteDelivery      *string `json:"invite_delivery"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -362,6 +373,19 @@ func (h *Handler) CreateEventType(w http.ResponseWriter, r *http.Request) {
 	if req.ShowTakenSlots != nil && *req.ShowTakenSlots {
 		showTaken = 1
 	}
+	inviteDelivery := booking.InviteByCalendar
+	if req.InviteDelivery != nil {
+		mode, ok := normalizeInviteDelivery(*req.InviteDelivery)
+		if !ok {
+			h.writeError(w, http.StatusBadRequest, "invite_delivery must be 'calendar' or 'calnode'")
+			return
+		}
+		if mode == booking.InviteByCalnode && !h.inviteSenderReady(r.Context()) {
+			h.writeError(w, http.StatusBadRequest, errInviteSenderMissing.Error())
+			return
+		}
+		inviteDelivery = mode
+	}
 
 	id := uid.New()
 	tx, err := h.db.BeginTx(r.Context(), nil)
@@ -377,12 +401,12 @@ func (h *Handler) CreateEventType(w http.ResponseWriter, r *http.Request) {
 		  (id, user_id, slug, name, description, duration_minutes,
 		   slot_interval_minutes, location_type, location_value, allow_phone_call,
 		   routing_mode, buffer_before_minutes, buffer_after_minutes,
-		   min_notice_minutes, max_future_days, max_active_bookings, show_taken_slots,
+		   min_notice_minutes, max_future_days, max_active_bookings, show_taken_slots, invite_delivery,
 		   msg_confirmation, msg_cancellation, msg_reschedule, msg_reminder, visibility)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, user.ID, slug, req.Name, req.Description,
 		req.DurationMinutes, slotInterval, locType, req.LocationValue, req.AllowPhoneCall != nil && *req.AllowPhoneCall,
-		routingMode, bufBefore, bufAfter, minNotice, maxFuture, maxActive, showTaken,
+		routingMode, bufBefore, bufAfter, minNotice, maxFuture, maxActive, showTaken, inviteDelivery,
 		defaultMsgConfirmation, defaultMsgCancellation, defaultMsgReschedule, defaultMsgReminder, visibility)
 	if err != nil {
 		if db.IsUniqueViolation(err) {
@@ -482,6 +506,7 @@ func (h *Handler) GetEventType(w http.ResponseWriter, r *http.Request) {
 	et.OwnerName, et.OwnerEmail = ownerName.String, ownerEmail.String
 	et.Archived = archived != 0
 	et.stampViewer(user)
+	et.InviteSenderReady = h.inviteSenderReady(r.Context())
 	if err := h.loadReminders(r.Context(), et.ID, et); err != nil {
 		h.logger.ErrorContext(r.Context(), "get event type: load reminders", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
@@ -515,6 +540,7 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 		IsPublic            *bool   `json:"is_public"`
 		AllowPhoneCall      *bool   `json:"allow_phone_call"`
 		ShowTakenSlots      *bool   `json:"show_taken_slots"`
+		InviteDelivery      *string `json:"invite_delivery"`
 		Archived            *bool   `json:"archived"`
 		MsgConfirmation     *string `json:"msg_confirmation"`
 		MsgCancellation     *string `json:"msg_cancellation"`
@@ -697,6 +723,15 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 			set("visibility", *req.Visibility)
 		}
 	}
+	var newInviteDelivery string
+	if req.InviteDelivery != nil {
+		mode, ok := normalizeInviteDelivery(*req.InviteDelivery)
+		if !ok {
+			h.writeError(w, http.StatusBadRequest, "invite_delivery must be 'calendar' or 'calnode'")
+			return
+		}
+		newInviteDelivery = mode
+	}
 	if req.Archived != nil {
 		if *req.Archived {
 			// strftime literal (no bound value) — matches the DB's timestamp format;
@@ -777,11 +812,11 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 		set(s.col, nullableString(strings.TrimSpace(*s.val)))
 	}
 
-	// Current location, to validate the effective online-meeting location below.
-	var curLocType, curLocVal string
+	// Current location and invite delivery, to validate the effective values below.
+	var curLocType, curLocVal, curInviteDelivery string
 	if err := h.db.QueryRowContext(r.Context(),
-		`SELECT location_type, COALESCE(location_value, '') FROM event_types WHERE id = ?`, etID).
-		Scan(&curLocType, &curLocVal); err != nil {
+		`SELECT location_type, COALESCE(location_value, ''), invite_delivery FROM event_types WHERE id = ?`, etID).
+		Scan(&curLocType, &curLocVal, &curInviteDelivery); err != nil {
 		if err == sql.ErrNoRows {
 			h.writeError(w, http.StatusNotFound, "event type not found")
 			return
@@ -824,6 +859,17 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+	}
+
+	// Same on-change rule for invite delivery: switching to Calnode-sent invites needs a
+	// working email sender (the invite IS an email), but an event type already set that
+	// way stays saveable if email is later removed - that is fixed in Settings → Email.
+	if newInviteDelivery != "" && newInviteDelivery != curInviteDelivery {
+		if newInviteDelivery == booking.InviteByCalnode && !h.inviteSenderReady(r.Context()) {
+			h.writeError(w, http.StatusBadRequest, errInviteSenderMissing.Error())
+			return
+		}
+		set("invite_delivery", newInviteDelivery)
 	}
 
 	// The slug is the public booking URL, so renaming one that is already in circulation

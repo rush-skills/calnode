@@ -41,6 +41,19 @@ exact tag (`ghcr.io/calnode/calnode:0.1.0`) if you need stability between upgrad
   archiving them, so admins cannot demote each other.
 
 ### Added
+- **Calendar invites can come from Calnode instead of the host's calendar.** A new
+  per-event-type setting, *Calendar invite → Sent by*. The default is unchanged: the host's
+  connected calendar invites the booker, from the host's own address. Choose *Calnode* and
+  the booker's invite comes from your workspace's email sender (Settings → Email) instead,
+  so no host's personal address reaches them, and a team can book under one name. Hosts
+  still get the meeting, with its Meet/Teams link, on their own calendar. Needs email set
+  up. Existing bookings keep the way they were invited.
+- **RSVP tracking for invites Calnode sends.** With Resend receiving set up (Settings →
+  Email → RSVP tracking), a booker's Yes / No / Maybe is read from their calendar reply,
+  shown on the booking, and sent as a new `booking.rsvp` webhook event. Calnode sets up the
+  Resend webhook itself (manual steps as a fallback) and needs a full-access Resend API
+  key. Each invite gets a private reply address, and an answer only counts when Resend
+  verified it came from that booking's booker.
 - **The booking and manage pages have a searchable timezone picker.** The native dropdown of
   ~420 zones is replaced by a button that opens a search box and a list with each zone's GMT
   offset, opened on the current zone. Search matches a city, an old name (Calcutta finds

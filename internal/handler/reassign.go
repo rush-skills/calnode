@@ -137,6 +137,7 @@ func (h *Handler) reassignBookingRow(ctx context.Context, bookingID, newHostID s
 func (h *Handler) reassignSideEffects(ctx context.Context, rb *reassignedBooking) {
 	bCopy := *rb.updated
 	newHostID := rb.newHostID
+	inviteMode := bCopy.InviteDelivery
 
 	// Move the Google Calendar event: remove from the old host, recreate on
 	// the new host, and persist the new event ID (clearing it if recreation
@@ -170,7 +171,7 @@ func (h *Handler) reassignSideEffects(ctx context.Context, rb *reassignedBooking
 			Start:           bCopy.StartAt,
 			End:             bCopy.EndAt,
 			OrganizerName:   rb.orgName,
-			OrganizerEmail:  rb.orgEmail,
+			OrganizerEmail:  calendarInvitee(inviteMode, rb.orgEmail),
 			ExtraAttendees:  extra,
 		})
 		if err != nil {
@@ -203,6 +204,13 @@ func (h *Handler) reassignSideEffects(ctx context.Context, rb *reassignedBooking
 		h.logger.Error("reassign: load new host", "error", err, "booking_id", bCopy.ID)
 	}
 
+	// A Calnode-sent invite is re-issued (same UID, newer SEQUENCE) so the booker's
+	// calendar entry follows the change. A calendar-sent one needs nothing here: the
+	// new host's calendar invited the booker when the event was recreated above.
+	if inviteMode == booking.InviteByCalnode {
+		h.applyInviteDelivery(ctx, &d, inviteMode, newHostID)
+		d.ICSSequence = int(time.Now().Unix())
+	}
 	prefs := h.hostPrefsOrDefault(ctx, bCopy.ID, newHostID)
 	if prefs.NotifyConfirmation {
 		if err := mailer.SendConfirmationToAttendee(ctx, h.mailer, d); err != nil {
@@ -210,7 +218,10 @@ func (h *Handler) reassignSideEffects(ctx context.Context, rb *reassignedBooking
 		}
 	}
 	if prefs.NotifyHostBooking {
-		if err := mailer.SendConfirmationToHost(ctx, h.mailer, d); err != nil {
+		hd := d
+		h.applyHostInvite(ctx, &hd, inviteMode, newHostID)
+		hd.ICSSequence = int(time.Now().Unix())
+		if err := mailer.SendConfirmationToHost(ctx, h.mailer, hd); err != nil {
 			h.logger.Error("reassign: email new host", "error", err, "booking_id", bCopy.ID)
 		}
 	}
