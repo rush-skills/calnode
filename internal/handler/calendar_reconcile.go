@@ -152,6 +152,7 @@ func (h *Handler) reconcileCancellations(ctx context.Context, gc *calendar.Servi
 	rows.Close() // #nosec G104 -- rows already fully consumed above; nothing actionable on close error
 
 	for _, o := range orphans {
+		h.dropCalendarManageLinks(ctx, gc, o.userID, o.calendarID, o.eventID, o.provider, o.bookingID)
 		if err := gc.CancelEvent(ctx, o.userID, o.calendarID, o.eventID, o.provider); err != nil {
 			if !errors.Is(err, calendar.ErrEventUnreachable) {
 				h.logger.Error("reconcile: cancel orphaned event", "error", err, "booking_id", o.bookingID, "host", o.userID)

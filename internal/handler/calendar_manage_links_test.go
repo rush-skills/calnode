@@ -152,3 +152,72 @@ func TestManageToken_expiryCoversTheMeeting(t *testing.T) {
 		t.Fatalf("found %d tokens; want both purposes", n)
 	}
 }
+
+// scrubCalendar records the description rewrite and the delete, in order.
+type scrubCalendar struct {
+	linkCalendar
+	calls chan string
+}
+
+func (p scrubCalendar) SetDescription(_ context.Context, _, _, _, plain, _ string) error {
+	p.calls <- "describe:" + plain
+	return nil
+}
+func (p scrubCalendar) CancelEvent(context.Context, string, string, string) error {
+	p.calls <- "cancel"
+	return nil
+}
+
+// Google's cancellation email quotes the event description at the moment of deletion, so
+// the links must be gone from it first, or the guest is offered to reschedule a meeting
+// the same email says is cancelled.
+func TestCancel_dropsManageLinksBeforeDeletingTheEvent(t *testing.T) {
+	h, db, key, userID := setupWorkspaceWithDB(t)
+	h.SetBaseURL("https://book.example.com")
+	slug, _ := seedEventTypeHTTP(t, h, key)
+	if _, err := db.Exec(`INSERT INTO calendar_connections (id,user_id,provider,access_token_enc,calendar_id,is_destination) VALUES ('conn',?,'google','test','primary',1)`, userID); err != nil {
+		t.Fatal(err)
+	}
+	p := scrubCalendar{linkCalendar{telephoneCalendar{events: make(chan calendar.CreateEventParams, 2)}}, make(chan string, 4)}
+	svc := calendar.NewService(db)
+	svc.Register(p)
+	h.SetCalendar(svc)
+
+	bookingID := createBookingViaHTTP(t, h, slug, "2026-06-20T09:00:00Z")
+	var ev calendar.CreateEventParams
+	select {
+	case ev = <-p.events:
+	case <-time.After(5 * time.Second):
+		t.Fatal("calendar event was never created")
+	}
+	tok := manageLinkRE.FindStringSubmatch(ev.Description)[1]
+
+	req := httptest.NewRequest(http.MethodPost, "/manage/"+tok+"/cancel", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("token", tok)
+	rec := httptest.NewRecorder()
+	h.CancelByToken(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cancel through the calendar link: %d %s", rec.Code, rec.Body)
+	}
+
+	next := func() string {
+		select {
+		case c := <-p.calls:
+			return c
+		case <-time.After(5 * time.Second):
+			t.Fatal("calendar was never updated")
+			return ""
+		}
+	}
+	first, second := next(), next()
+	if !strings.HasPrefix(first, "describe:") || second != "cancel" {
+		t.Fatalf("calls = %q, %q; want the description rewrite, then the delete", first, second)
+	}
+	if strings.Contains(first, "/manage/") || strings.Contains(first, "Reschedule") {
+		t.Errorf("rewritten description still offers the links: %q", first)
+	}
+	if !strings.HasSuffix(first, "Booking ID: "+bookingID) {
+		t.Errorf("rewritten description lost the Booking ID: %q", first)
+	}
+}

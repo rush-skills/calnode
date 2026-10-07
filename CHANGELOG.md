@@ -48,7 +48,9 @@ exact tag (`ghcr.io/calnode/calnode:0.1.0`) if you need stability between upgrad
   now ends with "Need to make a change?" and a reschedule link and a cancel link to the
   booking's manage page, which open straight into the picker or the cancel confirmation.
   For workspaces that send no email, the invite is the booker's only message, so this is
-  their way back. The links keep working after a reschedule. Needs `BASE_URL`.
+  their way back. The links keep working after a reschedule, and are taken off the event
+  (silently) before it is deleted, so Google's cancellation email does not offer them.
+  Needs `BASE_URL`.
 - **Organisation-wide webhooks.** An admin can tick *Every booking in the workspace* so a
   webhook fires for every member's bookings, not only their own. Any admin can see and
   remove one.

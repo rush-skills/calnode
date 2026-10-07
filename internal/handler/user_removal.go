@@ -589,6 +589,7 @@ func (h *Handler) transferUpcomingMeetings(ctx context.Context, targetID, to str
 func (h *Handler) moveSecondarySeat(ctx context.Context, s upcomingSeat, targetID, to string) error {
 	gc := h.getCal()
 	if gc != nil && s.extEventID != "" {
+		h.dropCalendarManageLinks(ctx, gc, targetID, s.extCalendarID, s.extEventID, s.extProvider, s.bookingID)
 		if err := gc.CancelEvent(ctx, targetID, s.extCalendarID, s.extEventID, s.extProvider); err != nil {
 			h.logger.ErrorContext(ctx, "remove user: cancel leaver's calendar event", "error", err, "booking_id", s.bookingID, "user_id", targetID)
 		}

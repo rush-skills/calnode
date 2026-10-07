@@ -1803,6 +1803,7 @@ func (h *Handler) cancelSideEffects(b booking.Booking, initiatedBy string) {
 	}
 	for _, host := range hosts {
 		if gc != nil && host.ExternalEventID != "" {
+			h.dropCalendarManageLinks(ctx, gc, host.UserID, host.ExternalCalendarID, host.ExternalEventID, host.ExternalProvider, b.ID)
 			if err := gc.CancelEvent(ctx, host.UserID, host.ExternalCalendarID, host.ExternalEventID, host.ExternalProvider); err != nil {
 				h.logger.Error("cancel gcal event", "error", err, "booking_id", b.ID, "host", host.UserID)
 				h.nudgeCalendarReconcile() // event still on the calendar — heal on a later sweep

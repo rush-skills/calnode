@@ -146,6 +146,7 @@ func (h *Handler) reassignSideEffects(ctx context.Context, rb *reassignedBooking
 		if rb.extEventID != "" {
 			// Reassignment cancels on the OLD host's calendar. Their stamped provider
 			// routes it ("" falls back to id recognition, then their destination).
+			h.dropCalendarManageLinks(ctx, gc, rb.oldHostID, "", rb.extEventID, rb.extProvider, bCopy.ID)
 			if err := gc.CancelEvent(ctx, rb.oldHostID, "", rb.extEventID, rb.extProvider); err != nil {
 				h.logger.Error("reassign: delete old calendar event", "error", err, "booking_id", bCopy.ID)
 			}

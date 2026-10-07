@@ -200,6 +200,46 @@ func (c *Client) UpdateEvent(ctx context.Context, userID, calendarID, eventID st
 	return nil
 }
 
+// SetDescription replaces the event's description with sendUpdates=none, so no guest is
+// emailed about it (calendar.DescriptionSetter). rich wins when set, as on create.
+func (c *Client) SetDescription(ctx context.Context, userID, calendarID, eventID, plain, rich string) error {
+	if eventID == "" {
+		return nil
+	}
+	hc, calID, err := c.DestinationClient(ctx, userID)
+	if err != nil || hc == nil {
+		return err
+	}
+	if calendarID != "" {
+		calID = calendarID
+	}
+	desc := plain
+	if rich != "" {
+		desc = rich
+	}
+	body, err := json.Marshal(struct {
+		Description string `json:"description"`
+	}{desc})
+	if err != nil {
+		return fmt.Errorf("gcal: set description marshal: %w", err)
+	}
+	apiURL := c.apiBase + "/calendars/" + url.PathEscape(calID) + "/events/" + url.PathEscape(eventID) + "?sendUpdates=none"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, apiURL, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("gcal: set description request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("gcal: set description call: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("gcal: set description status %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // CancelEvent deletes a Google Calendar event by its event ID.
 // Returns nil if eventID is empty or the user has no connection.
 func (c *Client) CancelEvent(ctx context.Context, userID, calendarID, eventID string) error {

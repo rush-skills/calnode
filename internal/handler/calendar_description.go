@@ -5,6 +5,7 @@ import (
 	"html"
 	"strings"
 
+	"github.com/calnode/calnode/internal/calendar"
 	"github.com/calnode/calnode/internal/i18n"
 	"github.com/calnode/calnode/internal/richtext"
 )
@@ -135,4 +136,38 @@ func (h *Handler) calendarManageLinks(ctx context.Context, bookingID string) man
 	}
 	link := base + "/manage/" + tok
 	return manageLinks{Reschedule: link + "?action=reschedule", Cancel: link + "?action=cancel"}
+}
+
+// dropCalendarManageLinks rewrites a booking's calendar event without the reschedule and
+// cancel links, silently, and is called just before that event is deleted. Google's
+// cancellation email quotes the description as it stands at deletion, so without this
+// the guest is told the meeting is cancelled and, in the same email, offered links to
+// reschedule or cancel it. The rest of the description is rebuilt exactly as on create
+// (message, answers, Booking ID), so only the links disappear.
+//
+// Best-effort: a failure is logged and the delete goes ahead, since leaving a cancelled
+// meeting on the calendar would be worse than a stale link. Providers that cannot edit
+// silently (calendar.DescriptionSetter) are skipped.
+func (h *Handler) dropCalendarManageLinks(ctx context.Context, gc *calendar.Service, userID, calendarID, eventID, provider, bookingID string) {
+	if gc == nil || eventID == "" {
+		return
+	}
+	var locale, calMsg string
+	if err := h.db.QueryRowContext(ctx, `
+		SELECT COALESCE(a.locale, ''), COALESCE(et.calendar_message, '')
+		FROM bookings b
+		JOIN event_types et ON et.id = b.event_type_id
+		LEFT JOIN booking_attendees a ON a.booking_id = b.id AND a.is_organizer = 1
+		WHERE b.id = ?`, bookingID).Scan(&locale, &calMsg); err != nil {
+		h.logger.ErrorContext(ctx, "drop calendar manage links: load booking", "error", err, "booking_id", bookingID)
+		return
+	}
+	answers, err := h.loadAnswerLines(ctx, bookingID)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "drop calendar manage links: load answers", "error", err, "booking_id", bookingID)
+	}
+	plain, rich := calendarDescription(i18n.Get(locale), h.withOrgCalendarMessage(ctx, calMsg), answers, manageLinks{}, bookingID)
+	if err := gc.SetDescription(ctx, userID, calendarID, eventID, provider, plain, rich); err != nil {
+		h.logger.ErrorContext(ctx, "drop calendar manage links", "error", err, "booking_id", bookingID, "user_id", userID)
+	}
 }

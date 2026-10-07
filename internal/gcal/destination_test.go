@@ -2,6 +2,8 @@ package gcal
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -185,5 +187,32 @@ func TestListCalendars_followsNextPageToken(t *testing.T) {
 	}
 	if len(tokens) != 2 || tokens[0] != "" || tokens[1] != "page2" {
 		t.Errorf("pageToken sequence = %v, want [\"\" page2]", tokens)
+	}
+}
+
+// SetDescription must not email anyone: it runs just before a cancel, and a second
+// "updated" email ahead of the cancellation would be noise.
+func TestSetDescription_patchesSilently(t *testing.T) {
+	var method, rawURL, body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		method, rawURL, body = r.Method, r.URL.String(), string(b)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"evt-1"}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := newTestClient(t)
+	c.apiBase = srv.URL
+	saveDestinationConnection(t, c, "user-1", "primary")
+
+	if err := c.SetDescription(context.Background(), "user-1", "work@company.com", "evt-1", "plain", "<p>rich</p>"); err != nil {
+		t.Fatalf("SetDescription: %v", err)
+	}
+	if method != http.MethodPatch || !strings.Contains(rawURL, "sendUpdates=none") || !strings.Contains(rawURL, "work@company.com") {
+		t.Errorf("request = %s %s; want a PATCH on the stored calendar with sendUpdates=none", method, rawURL)
+	}
+	var got map[string]string
+	if err := json.Unmarshal([]byte(body), &got); err != nil || len(got) != 1 || got["description"] != "<p>rich</p>" {
+		t.Errorf("body = %s; want only the rich description", body)
 	}
 }

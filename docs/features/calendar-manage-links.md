@@ -35,6 +35,19 @@ Google and Microsoft get the HTML form (two named links); CalDAV gets the text a
   nothing is written, and no token is minted, unless `BASE_URL` is an absolute
   `http(s)://` URL.
 
+## Cancelled meetings drop the links
+
+Google's cancellation email quotes the event's description as it stands when the event
+is deleted. So before any booking event is deleted (a cancel, the reconcile sweep, a
+reassignment, a member's removal), `dropCalendarManageLinks` rewrites the description
+without the links, with `sendUpdates=none` so that rewrite emails nobody. The
+cancellation email then shows the message, answers and Booking ID, but no links.
+
+This runs on Google only (`calendar.DescriptionSetter`). Microsoft Graph emails
+attendees about an organizer's edit, which would add a second email before the
+cancellation, so Microsoft and CalDAV events are deleted as they are. A link followed
+after cancellation lands on the manage page's "cancelled" state, which offers nothing.
+
 ## Who can use the links
 
 Everyone the calendar event is shared with: the booker, every host on the booking, and

@@ -75,7 +75,9 @@ Every booking's calendar event ends with reschedule and cancel links
 invite is the booker's only message. They use a manage token with `purpose = 'calendar'`.
 **`RotateManageToken` must keep rotating only `email` tokens**: the event description is
 not rewritten on reschedule, so rotating the calendar token strands a dead link on the
-invite. Any new path that creates a booking's calendar event must pass links too. Detail:
+invite. Any new path that creates a booking's calendar event must pass links too, and any
+path that deletes one must call `dropCalendarManageLinks` first (Google's cancellation
+email quotes the description, links included). Detail:
 `docs/features/calendar-manage-links.md`.
 
 ## Conversational booking assistant (optional LLM layer)

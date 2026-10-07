@@ -534,6 +534,30 @@ func (s *Service) UpdateEvent(ctx context.Context, userID, calendarID, eventID, 
 	return nil
 }
 
+// DescriptionSetter is implemented by providers that can rewrite an event's
+// description WITHOUT notifying its guests. It exists for one job: taking the
+// reschedule and cancel links off a booking's event just before it is deleted, because
+// Google's cancellation email quotes the event's description at that moment, and links
+// to manage a meeting that has just been cancelled only confuse the guest.
+//
+// Optional: Microsoft Graph sends attendees an update for an organizer's edit, which
+// would be a second, noisier email, and CalDAV invites are best-effort anyway.
+type DescriptionSetter interface {
+	SetDescription(ctx context.Context, userID, calendarID, eventID, plain, rich string) error
+}
+
+// SetDescription rewrites an event's description silently, when the provider that owns
+// the event supports it (DescriptionSetter); otherwise it does nothing.
+func (s *Service) SetDescription(ctx context.Context, userID, calendarID, eventID, provider, plain, rich string) error {
+	if eventID == "" {
+		return nil
+	}
+	if ds, ok := s.providerForEvent(ctx, userID, eventID, provider).(DescriptionSetter); ok {
+		return ds.SetDescription(ctx, userID, calendarID, eventID, plain, rich)
+	}
+	return nil
+}
+
 // CancelEvent deletes an event. calendarID and provider are the ones recorded at
 // creation; provider "" falls back as for UpdateEvent.
 func (s *Service) CancelEvent(ctx context.Context, userID, calendarID, eventID, provider string) error {
