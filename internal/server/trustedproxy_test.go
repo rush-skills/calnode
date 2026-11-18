@@ -205,3 +205,65 @@ func TestParseTrustedProxies_reportsBadEntriesAndKeepsTheRest(t *testing.T) {
 		t.Errorf("parsed %d entries; want the 1 good one kept", len(nets))
 	}
 }
+
+// serveThroughTrustHeader is serveThroughTrust with an operator-named client-IP header
+// (CLIENT_IP_HEADER). Headers are added line by line so a test can send one twice.
+func serveThroughTrustHeader(t *testing.T, cidrs []string, header, peer string, headers [][2]string) string {
+	t.Helper()
+	trusted, err := ParseTrustedProxies(cidrs)
+	if err != nil {
+		t.Fatalf("ParseTrustedProxies(%v): %v", cidrs, err)
+	}
+	var got string
+	h := TrustClientIPWithHeader(trusted, header)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got = remoteIP(r)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = peer
+	for _, kv := range headers {
+		req.Header.Add(kv[0], kv[1])
+	}
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	return got
+}
+
+// Fly.io: the edge overwrites Fly-Client-IP on every request and reaches the app through
+// two proxy hops, so X-Forwarded-For can end on an edge address shared by many visitors.
+// With the header named, a trusted peer's Fly-Client-IP is the answer.
+func TestTrustClientIP_namedHeaderFromTrustedPeerWins(t *testing.T) {
+	got := serveThroughTrustHeader(t, []string{"172.16.0.0/12"}, "Fly-Client-IP", "172.19.30.17:5000", [][2]string{
+		{"Fly-Client-IP", "198.51.100.7"},
+		{"X-Forwarded-For", "198.51.100.7, 66.241.125.1"},
+	})
+	if got != "198.51.100.7" {
+		t.Errorf("client IP = %q; want 198.51.100.7 from Fly-Client-IP", got)
+	}
+}
+
+// The named header is never read from an untrusted peer: a direct connection that sends
+// one still keys on the address it connected from.
+func TestTrustClientIP_namedHeaderFromUntrustedPeerIgnored(t *testing.T) {
+	got := serveThroughTrustHeader(t, []string{"172.16.0.0/12"}, "Fly-Client-IP", "203.0.113.9:5000",
+		[][2]string{{"Fly-Client-IP", "1.2.3.4"}})
+	if got != "203.0.113.9" {
+		t.Errorf("client IP = %q; want the peer 203.0.113.9", got)
+	}
+}
+
+// Anything but exactly one parseable address (repeated, a list, garbage) is not believed;
+// the X-Forwarded-For walk decides as if the header were unset.
+func TestTrustClientIP_namedHeaderMalformedFallsBackToWalk(t *testing.T) {
+	for name, hdrs := range map[string][][2]string{
+		"repeated": {{"Fly-Client-IP", "1.2.3.4"}, {"Fly-Client-IP", "5.6.7.8"}},
+		"list":     {{"Fly-Client-IP", "1.2.3.4, 5.6.7.8"}},
+		"garbage":  {{"Fly-Client-IP", "nope"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := serveThroughTrustHeader(t, []string{"10.0.0.0/8"}, "Fly-Client-IP", "10.0.0.5:1",
+				append(hdrs, [2]string{"X-Forwarded-For", "198.51.100.7"}))
+			if got != "198.51.100.7" {
+				t.Errorf("client IP = %q; want 198.51.100.7 from the X-Forwarded-For walk", got)
+			}
+		})
+	}
+}

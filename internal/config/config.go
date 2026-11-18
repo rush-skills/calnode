@@ -71,6 +71,13 @@ type Config struct {
 	// walk steps over its edge address and lands on the visitor.
 	TrustedProxyCIDRs []string
 
+	// ClientIPHeader names a single-value header carrying the visitor's address that the
+	// platform's edge sets on every request, overwriting any client-sent copy (Fly.io:
+	// Fly-Client-IP). Read only from a TrustedProxyCIDRs peer, before X-Forwarded-For.
+	// Empty (the default) ⇒ only X-Forwarded-For is used. Never name a header your proxy
+	// passes through from the client.
+	ClientIPHeader string
+
 	// FrameAncestors lists the origins allowed to embed the admin SPA in a frame, as a
 	// Content-Security-Policy frame-ancestors source list. Space-separated, matching the
 	// CSP syntax it becomes. Empty (the default) ⇒ nothing is sent and /admin/ behaves
@@ -134,6 +141,7 @@ func Load() *Config {
 		EmbedAllowedOrigins: splitCSV(getEnv("EMBED_ALLOWED_ORIGINS", "")),
 		DataDir:             getEnv("DATA_DIR", "data"),
 		TrustedProxyCIDRs:   splitCSV(getEnv("TRUSTED_PROXY_CIDRS", "")),
+		ClientIPHeader:      strings.TrimSpace(getEnv("CLIENT_IP_HEADER", "")),
 		// Space-separated, not comma: the value goes into a CSP source list verbatim, so
 		// it reads the same in the env var as it does in the header.
 		FrameAncestors: strings.Fields(getEnv("FRAME_ANCESTORS", "")),

@@ -51,6 +51,9 @@ func Logging(logger *slog.Logger, next http.Handler) http.Handler {
 			"status", rw.status,
 			"duration_ms", time.Since(start).Milliseconds(),
 			"remote_addr", r.RemoteAddr,
+			// The address per-IP limits key on (the resolved client behind a trusted
+			// proxy, else the peer), so an operator can check their proxy settings.
+			"client_ip", remoteIP(r),
 			"request_id", reqID,
 		)
 	})
@@ -388,12 +391,19 @@ func ParseTrustedProxies(entries []string) ([]*net.IPNet, error) {
 // one server instance: a mutable global would leak between instances in a test binary
 // and would make "which requests are affected" unanswerable from the wiring.
 func TrustClientIP(trusted []*net.IPNet) func(http.Handler) http.Handler {
+	return TrustClientIPWithHeader(trusted, "")
+}
+
+// TrustClientIPWithHeader is TrustClientIP plus the operator-named client-IP header
+// (CLIENT_IP_HEADER, e.g. Fly-Client-IP), believed only from a trusted peer. See
+// resolveClientIPWithHeader.
+func TrustClientIPWithHeader(trusted []*net.IPNet, header string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		if len(trusted) == 0 {
 			return next
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx := context.WithValue(r.Context(), clientIPKey, resolveClientIP(r, trusted))
+			ctx := context.WithValue(r.Context(), clientIPKey, resolveClientIPWithHeader(r, trusted, header))
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -430,9 +440,29 @@ func TrustClientIP(trusted []*net.IPNet) func(http.Handler) http.Handler {
 // "ip:port" (rather than a bare address) reads as malformed and lands on the peer, which
 // is the safe direction to be wrong in.
 func resolveClientIP(r *http.Request, trusted []*net.IPNet) string {
+	return resolveClientIPWithHeader(r, trusted, "")
+}
+
+// resolveClientIPWithHeader is resolveClientIP with an operator-named client-IP header
+// (CLIENT_IP_HEADER) consulted first, still only for a trusted peer. This is the opt-in
+// exception to the rule above: the operator names a header their platform's edge
+// OVERWRITES on every request (Fly.io's Fly-Client-IP, for one), which is the one fact
+// the code could not otherwise know. Fly's edge reaches the app through two proxy hops,
+// so the X-Forwarded-For walk alone can stop on an edge address that many visitors
+// share. The header must hold exactly one parseable address; anything else (absent,
+// repeated, a list, garbage) falls through to the X-Forwarded-For walk, never to a guess.
+func resolveClientIPWithHeader(r *http.Request, trusted []*net.IPNet, header string) string {
 	peer := peerIP(r)
 	if !ipInAny(peer, trusted) {
 		return peer
+	}
+
+	if header != "" {
+		if vals := r.Header.Values(header); len(vals) == 1 {
+			if ip := net.ParseIP(strings.TrimSpace(vals[0])); ip != nil {
+				return ip.String()
+			}
+		}
 	}
 
 	// ⛔ Values, not Get. A header may arrive as several field lines, and Get returns

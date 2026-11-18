@@ -689,7 +689,10 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 		logger.Info("trusting forwarded headers from proxies", "cidrs", cfg.TrustedProxyCIDRs)
 	}
 
-	return TrustClientIP(trustedProxies)(RequestID(Logging(logger, Recover(logger, SameOriginCheck(mux))))), drain
+	if cfg.ClientIPHeader != "" && len(trustedProxies) > 0 {
+		logger.Info("reading the client IP from a proxy header", "header", cfg.ClientIPHeader)
+	}
+	return TrustClientIPWithHeader(trustedProxies, cfg.ClientIPHeader)(RequestID(Logging(logger, Recover(logger, SameOriginCheck(mux))))), drain
 }
 
 // seedSMTPToDB writes env-var SMTP settings into the DB on first boot so they
