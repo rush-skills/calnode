@@ -19,10 +19,10 @@
 	let createError = $state('');
 	let newKey = $state('');
 	// Read-only scopes. None ticked = a full key that acts with your role.
-	const SCOPES = [
-		{ key: 'bookings:read', label: 'Read bookings', help: 'GET /v1/bookings and /v1/bookings/{id}' },
-		{ key: 'webhooks:read', label: 'Read webhooks', help: 'GET /v1/webhooks and their delivery log' },
-	];
+	const SCOPES = $derived([
+		{ key: 'bookings:read', label: $t('apiKeys.scopes.bookingsRead.label'), help: $t('apiKeys.scopes.bookingsRead.help', { list: '/v1/bookings', item: '/v1/bookings/{id}' }) },
+		{ key: 'webhooks:read', label: $t('apiKeys.scopes.webhooksRead.label'), help: $t('apiKeys.scopes.webhooksRead.help', { path: '/v1/webhooks' }) },
+	]);
 	let newScopes = $state<string[]>([]);
 	let revokeOpen = $state(false);
 	let revokeTarget = $state<{ id: string; name: string } | null>(null);
@@ -128,7 +128,7 @@
 			/>
 		</div>
 		<div class="mb-4 space-y-1.5">
-			<p class="text-sm font-medium">Limit to read-only access <span class="font-normal text-muted-foreground">(optional)</span></p>
+			<p class="text-sm font-medium">{$t('apiKeys.scopes.title')} <span class="font-normal text-muted-foreground">{$t('common.optional')}</span></p>
 			{#each SCOPES as sc}
 				<label class="flex cursor-pointer items-start gap-2 text-sm">
 					<Checkbox class="mt-0.5" checked={newScopes.includes(sc.key)}
@@ -138,9 +138,7 @@
 				</label>
 			{/each}
 			<p class="text-xs text-muted-foreground">
-				{newScopes.length > 0
-					? 'This key can only make those reads, and nothing else, whatever your role. Made by an admin, it reads every booking in the workspace.'
-					: 'With nothing ticked the key can do everything you can.'}
+				{newScopes.length > 0 ? $t('apiKeys.scopes.limitedHint') : $t('apiKeys.scopes.fullHint')}
 			</p>
 		</div>
 		<Button onclick={create} disabled={creating}>
@@ -178,7 +176,7 @@
 								{#if k.scopes && k.scopes.length > 0}
 									{#each k.scopes as sc}<Badge variant="secondary" class="ml-1.5 font-mono text-[10px]">{sc}</Badge>{/each}
 								{:else}
-									<Badge variant="outline" class="ml-1.5 text-[10px]">Full access</Badge>
+									<Badge variant="outline" class="ml-1.5 text-[10px]">{$t('apiKeys.badge.fullAccess')}</Badge>
 								{/if}
 							</td>
 							<td class="px-4 py-3 text-muted-foreground">{fmtDate(k.created_at)}</td>

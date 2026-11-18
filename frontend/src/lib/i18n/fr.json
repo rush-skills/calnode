@@ -52,7 +52,19 @@
 		"undo": "Défaire",
 		"uploading": "Téléversement…",
 		"sending": "Envoi…",
-		"testing": "Test…"
+		"testing": "Test…",
+		"richText": {
+			"formatting": "Mise en forme",
+			"bold": "Gras",
+			"italic": "Italique",
+			"heading": "Titre",
+			"bulletList": "Liste à puces",
+			"numberedList": "Liste numérotée",
+			"link": "Lien",
+			"linkUrl": "URL du lien",
+			"apply": "Appliquer",
+			"removeLink": "Supprimer le lien"
+		}
 	},
 	"layout": {
 		"loading": "Chargement…",
@@ -77,7 +89,9 @@
 			"webhooks": "Webhooks",
 			"settings": "Paramètres",
 			"teamCalendar": "Agenda de l'équipe",
-			"liveEvents": "Événements en direct"
+			"liveEvents": "Événements en direct",
+			"open": "Ouvrir la navigation",
+			"close": "Fermer la navigation"
 		},
 		"reportDialog": {
 			"title": "Signaler un problème",
@@ -519,6 +533,75 @@
 		},
 		"validation": {
 			"password": "Le mot de passe est obligatoire."
+		},
+		"remove": {
+			"title": "Retirer {name} ?",
+			"description": "Cela supprime définitivement son compte. C'est irréversible — archivez plutôt cette personne si vous pourriez en avoir besoin plus tard.",
+			"lost": {
+				"title": "Perdu avec le compte",
+				"signIn": "Sa connexion et ses sessions",
+				"signInWithKeys": {
+					"one": "Sa connexion, ses sessions et {count} clé d'API",
+					"other": "Sa connexion, ses sessions et {count} clés d'API"
+				},
+				"settings": "Ses disponibilités, son profil et ses paramètres de notification",
+				"calendars": {
+					"one": "{count} agenda connecté",
+					"other": "{count} agendas connectés"
+				},
+				"hostSeats": "Ses places d'hôte sur les types de rendez-vous des autres"
+			},
+			"modeLabel": "Ses types de rendez-vous et son historique",
+			"mode": {
+				"transfer": "Transférer à un autre membre",
+				"delete": "Les supprimer"
+			},
+			"eventTypes": {
+				"one": "{count} type de rendez-vous",
+				"other": "{count} types de rendez-vous"
+			},
+			"eventTypesNamed": {
+				"one": "{count} type de rendez-vous ({names})",
+				"other": "{count} types de rendez-vous ({names})"
+			},
+			"pastHosted": {
+				"one": "{count} réservation passée qu'il ou elle a animée",
+				"other": "{count} réservations passées qu'il ou elle a animées"
+			},
+			"transfer": {
+				"upcoming": {
+					"one": "{count} réunion à venir (l'invitation passe dans l'agenda du nouvel hôte ; les participants sont prévenus)",
+					"other": "{count} réunions à venir (les invitations passent dans l'agenda du nouvel hôte ; les participants sont prévenus)"
+				},
+				"liveEvents": {
+					"one": "{count} événement en direct",
+					"other": "{count} événements en direct"
+				},
+				"summary": "{eventTypes}, {pastHosted} et {liveEvents} sont transférés à :",
+				"summaryWithUpcoming": "{eventTypes}, {upcoming}, {pastHosted} et {liveEvents} sont transférés à :"
+			},
+			"transferTo": "Transférer à",
+			"chooseMember": "Choisir un membre",
+			"delete": {
+				"pastOnTheirs": {
+					"one": "{count} réservation passée de ces types de rendez-vous",
+					"other": "{count} réservations passées de ces types de rendez-vous"
+				},
+				"summary": "Supprime {eventTypes} et leurs liens de réservation, {pastOnTheirs}, ainsi que {pastHosted}.",
+				"liveEvents": "Les sessions qu'il ou elle anime, programmées ou en cours, sont annulées ; les autres événements en direct qu'il ou elle a créés sont conservés et vous sont attribués."
+			},
+			"validation": {
+				"transferTo": "Choisissez qui reçoit ses types de rendez-vous et son historique."
+			},
+			"removing": "Retrait…",
+			"confirm": "Retirer le membre",
+			"toast": {
+				"removed": "Membre retiré : {name}",
+				"errors": {
+					"prepare": "Impossible de préparer le retrait",
+					"remove": "Impossible de retirer le membre"
+				}
+			}
 		}
 	},
 	"teams": {
@@ -624,7 +707,8 @@
 			"restore": "Restaurer",
 			"archive": "Archiver",
 			"delete": "Supprimer",
-			"viewReadOnly": "Voir les paramètres (lecture seule)"
+			"viewReadOnly": "Voir les paramètres (lecture seule)",
+			"copyLink": "Copier le lien de réservation"
 		},
 		"confirm": {
 			"delete": {
@@ -647,7 +731,10 @@
 			},
 			"nameDurationRequired": "Le nom et la durée sont obligatoires.",
 			"slugNoAlnum": "L'identifiant doit contenir au moins une lettre ou un chiffre.",
-			"slugUnderivable": "Impossible de créer un lien de réservation à partir de ce nom — ajoutez un identifiant avec des lettres ou des chiffres."
+			"slugUnderivable": "Impossible de créer un lien de réservation à partir de ce nom — ajoutez un identifiant avec des lettres ou des chiffres.",
+			"created": "Créé — le lien de réservation est {path}",
+			"linkCopied": "Lien de réservation copié",
+			"copyFailed": "Impossible de copier — {url}"
 		}
 	},
 	"recordings": {
@@ -761,7 +848,12 @@
 			"fieldsPii": "· données personnelles",
 			"piiBadge": "PII",
 			"creating": "Création…",
-			"create": "Créer le webhook"
+			"create": "Créer le webhook",
+			"orgLabel": "Toutes les réservations de l'espace de travail",
+			"orgHintOn": "À l'échelle de l'organisation : se déclenche pour les réservations de tous les membres. Tout administrateur peut le voir et le supprimer.",
+			"orgHintOff": "Uniquement les réservations que vous animez. Cochez cette case pour une intégration qui doit suivre toute l'équipe.",
+			"eventTypesTitle": "Types de rendez-vous",
+			"eventTypesHint": "— aucune case cochée : tous les types de rendez-vous sont envoyés"
 		},
 		"empty": {
 			"title": "Aucun webhook",
@@ -780,7 +872,8 @@
 		"tooltip": {
 			"deliveries": "Envois récents",
 			"hideDeliveries": "Masquer les envois",
-			"delete": "Supprimer le webhook"
+			"delete": "Supprimer le webhook",
+			"rotate": "Renouveler le secret de signature"
 		},
 		"deliveries": {
 			"loading": "Chargement des envois…",
@@ -943,6 +1036,22 @@
 		},
 		"validation": {
 			"name": "Le nom est obligatoire."
+		},
+		"scopes": {
+			"title": "Limiter à un accès en lecture seule",
+			"bookingsRead": {
+				"label": "Lire les réservations",
+				"help": "GET {list} et {item}"
+			},
+			"webhooksRead": {
+				"label": "Lire les webhooks",
+				"help": "GET {path} et leur journal d'envois"
+			},
+			"limitedHint": "Cette clé ne peut faire que ces lectures, rien d'autre, quel que soit votre rôle. Créée par un administrateur, elle lit toutes les réservations de l'espace de travail.",
+			"fullHint": "Si rien n'est coché, la clé peut faire tout ce que vous pouvez faire."
+		},
+		"badge": {
+			"fullAccess": "Accès complet"
 		}
 	},
 	"auth": {
@@ -1362,6 +1471,21 @@
 			"error": {
 				"load": "Impossible de charger les paramètres Google",
 				"save": "Impossible d'enregistrer les paramètres Google"
+			},
+			"signin": {
+				"title": "Qui peut se connecter",
+				"description": "Par défaut, seules les personnes invitées peuvent se connecter. Indiquez les domaines e-mail de votre organisation : toute personne qui se connecte avec un compte Google ou Microsoft vérifié sur l'un d'eux devient automatiquement membre, avec ses propres liens de réservation. Les nouveaux membres ne sont jamais administrateurs.",
+				"label": "Domaines de connexion autorisés",
+				"hint": "Un par ligne. Correspondance exacte avec la partie après le @ — indiquez chaque sous-domaine que vous utilisez.",
+				"inviteOnly": "Actuellement sur invitation uniquement.",
+				"save": "Enregistrer les domaines",
+				"toast": {
+					"saved": "Domaines autorisés enregistrés",
+					"off": "Connexion par domaine désactivée"
+				},
+				"error": {
+					"save": "Impossible d'enregistrer les domaines autorisés"
+				}
 			}
 		},
 		"zoom": {
@@ -1926,7 +2050,8 @@
 			"slotInterval": "L'intervalle des créneaux doit être d'au moins 1 minute.",
 			"maxActive": "Le nombre maximal de réservations actives ne peut pas être négatif (0 = illimité).",
 			"rotation": "Ajoutez au moins une personne à la rotation",
-			"collective": "Ajoutez au moins un hôte obligatoire (quelqu'un qui participe toujours)"
+			"collective": "Ajoutez au moins un hôte obligatoire (quelqu'un qui participe toujours)",
+			"mixed": "Ajoutez au moins une personne qui assiste toujours, ou passez à « {rotate} »"
 		},
 		"questions": {
 			"title": "Questions du formulaire",
@@ -1984,7 +2109,9 @@
 			"buttonText": "Réserver un appel",
 			"form": {
 				"label": "Dans votre formulaire",
-				"hint": "Un sélecteur de créneau compact, envoyé avec votre propre formulaire de contact."
+				"hint": "Un sélecteur de créneau compact, envoyé avec votre propre formulaire de contact.",
+				"submitText": "Envoyer",
+				"explain": "Choisir un créneau ne réserve pas. Le formulaire envoie {meeting} (début, UTC), {meetingEnd} et {meetingTz} ; réservez depuis votre gestionnaire d'envoi avec {bookCall}, ou depuis votre backend via {endpoint}. Voir {docs}."
 			}
 		},
 		"reminders": {

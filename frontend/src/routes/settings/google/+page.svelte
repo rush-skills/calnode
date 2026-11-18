@@ -34,8 +34,8 @@
 			});
 			domainsStored = res.allowed_signin_domains;
 			domainsText = res.allowed_signin_domains.join('\n');
-			toast.success(res.allowed_signin_domains.length ? 'Allowed domains saved' : 'Domain sign-in turned off');
-		}, 'Could not save allowed domains');
+			toast.success(res.allowed_signin_domains.length ? tr('settings.google.signin.toast.saved') : tr('settings.google.signin.toast.off'));
+		}, tr('settings.google.signin.error.save'));
 	}
 
 	// Host the server builds its OAuth redirect URIs from. Prefer the server's
@@ -214,24 +214,22 @@
 
 		<div class="rounded-lg border bg-card p-6">
 			<div class="mb-4">
-				<h2 class="text-sm font-semibold">Who can sign in</h2>
+				<h2 class="text-sm font-semibold">{$t('settings.google.signin.title')}</h2>
 				<p class="mt-0.5 text-xs text-muted-foreground">
-					By default only invited people can sign in. List your organisation's email domains and anyone
-					who signs in with a verified Google or Microsoft account under one of them becomes a member
-					automatically, with their own booking links. New members are never admins.
+					{$t('settings.google.signin.description')}
 				</p>
 			</div>
 			<div class="space-y-1.5">
-				<Label for="signin-domains">Allowed sign-in domains</Label>
+				<Label for="signin-domains">{$t('settings.google.signin.label')}</Label>
 				<Textarea id="signin-domains" bind:value={domainsText} rows={3} placeholder="acme.com&#10;acme.co.uk" class="font-mono text-sm" />
 				<p class="text-xs text-muted-foreground">
-					One per line. Exact match on the part after the @ — list each subdomain you use.
-					{#if domainsStored.length === 0}Currently invite-only.{/if}
+					{$t('settings.google.signin.hint')}
+					{#if domainsStored.length === 0}{$t('settings.google.signin.inviteOnly')}{/if}
 				</p>
 			</div>
 			<div class="mt-4">
 				<Button onclick={saveDomains} disabled={domainsSaving.active}>
-					{domainsSaving.active ? 'Saving…' : 'Save domains'}
+					{domainsSaving.active ? $t('common.saving') : $t('settings.google.signin.save')}
 				</Button>
 			</div>
 		</div>

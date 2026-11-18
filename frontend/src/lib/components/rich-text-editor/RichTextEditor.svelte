@@ -20,6 +20,7 @@
 	import LinkIcon from '@lucide/svelte/icons/link';
 	import UnlinkIcon from '@lucide/svelte/icons/unlink';
 	import { cn } from '$lib/utils.js';
+	import { t } from '$lib/i18n';
 
 	let {
 		value = $bindable(''),
@@ -177,12 +178,12 @@
 	)}
 >
 	<Tooltip.Provider>
-		<div class="flex flex-wrap items-center gap-0.5 border-b px-1.5 py-1" role="toolbar" aria-label="Formatting">
-			{@render tool('Bold', isActive('bold'), () => editor?.chain().focus().toggleBold().run(), BoldIcon)}
-			{@render tool('Italic', isActive('italic'), () => editor?.chain().focus().toggleItalic().run(), ItalicIcon)}
-			{@render tool('Heading', isActive('heading', { level: 2 }), () => editor?.chain().focus().toggleHeading({ level: 2 }).run(), Heading2Icon)}
-			{@render tool('Bullet list', isActive('bulletList'), () => editor?.chain().focus().toggleBulletList().run(), ListIcon)}
-			{@render tool('Numbered list', isActive('orderedList'), () => editor?.chain().focus().toggleOrderedList().run(), ListOrderedIcon)}
+		<div class="flex flex-wrap items-center gap-0.5 border-b px-1.5 py-1" role="toolbar" aria-label={$t('common.richText.formatting')}>
+			{@render tool($t('common.richText.bold'), isActive('bold'), () => editor?.chain().focus().toggleBold().run(), BoldIcon)}
+			{@render tool($t('common.richText.italic'), isActive('italic'), () => editor?.chain().focus().toggleItalic().run(), ItalicIcon)}
+			{@render tool($t('common.richText.heading'), isActive('heading', { level: 2 }), () => editor?.chain().focus().toggleHeading({ level: 2 }).run(), Heading2Icon)}
+			{@render tool($t('common.richText.bulletList'), isActive('bulletList'), () => editor?.chain().focus().toggleBulletList().run(), ListIcon)}
+			{@render tool($t('common.richText.numberedList'), isActive('orderedList'), () => editor?.chain().focus().toggleOrderedList().run(), ListOrderedIcon)}
 			<Popover.Root bind:open={linkOpen}>
 				<Popover.Trigger>
 					{#snippet child({ props })}
@@ -192,7 +193,7 @@
 							variant={isActive('link') ? 'secondary' : 'ghost'}
 							size="icon"
 							class="size-7"
-							aria-label="Link"
+							aria-label={$t('common.richText.link')}
 							aria-pressed={isActive('link')}
 							disabled={!editable}
 							onclick={openLink}
@@ -202,21 +203,21 @@
 					{/snippet}
 				</Popover.Trigger>
 				<Popover.Content class="w-80 space-y-2" align="start">
-					<p class="text-xs font-medium">Link URL</p>
+					<p class="text-xs font-medium">{$t('common.richText.linkUrl')}</p>
 					<Input
 						bind:value={linkUrl}
 						placeholder="https://…"
-						aria-label="Link URL"
+						aria-label={$t('common.richText.linkUrl')}
 						onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); applyLink(); } }}
 					/>
 					<div class="flex justify-end gap-2">
-						<Button type="button" variant="ghost" size="sm" onclick={() => (linkOpen = false)}>Cancel</Button>
-						<Button type="button" size="sm" onclick={applyLink}>Apply</Button>
+						<Button type="button" variant="ghost" size="sm" onclick={() => (linkOpen = false)}>{$t('common.cancel')}</Button>
+						<Button type="button" size="sm" onclick={applyLink}>{$t('common.richText.apply')}</Button>
 					</div>
 				</Popover.Content>
 			</Popover.Root>
 			{#if isActive('link')}
-				{@render tool('Remove link', false, removeLink, UnlinkIcon)}
+				{@render tool($t('common.richText.removeLink'), false, removeLink, UnlinkIcon)}
 			{/if}
 		</div>
 	</Tooltip.Provider>

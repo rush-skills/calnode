@@ -197,12 +197,12 @@
 			removeTo = '';
 			removeError = '';
 			removeOpen = true;
-		} catch (e: any) { toast.error(e.message || 'Could not prepare removal'); }
+		} catch (e: any) { toast.error(e.message || tr('members.remove.toast.errors.prepare')); }
 	}
 
 	async function doRemove() {
 		if (!removeMember) return;
-		if (removeMode === 'transfer' && !removeTo) { removeError = 'Choose who receives their event types and history.'; return; }
+		if (removeMode === 'transfer' && !removeTo) { removeError = tr('members.remove.validation.transferTo'); return; }
 		removeBusy = true; removeError = '';
 		try {
 			// In transfer mode the server moves every upcoming meeting they host (calendar
@@ -210,11 +210,11 @@
 			// when the receiver is busy at one of those times - nothing has moved by then.
 			await api.del(`/v1/users/${removeMember.id}`,
 				removeMode === 'transfer' ? { mode: 'transfer', transfer_to: removeTo } : { mode: 'delete' });
-			toast.success(`${removeMember.name} removed`);
+			toast.success(tr('members.remove.toast.removed', { name: removeMember.name }));
 			removeOpen = false;
 			removeMember = null;
 			await load();
-		} catch (e: any) { removeError = e.message || 'Could not remove member'; }
+		} catch (e: any) { removeError = e.message || tr('members.remove.toast.errors.remove'); }
 		finally { removeBusy = false; }
 	}
 
@@ -372,48 +372,65 @@
 <Dialog.Root bind:open={removeOpen}>
 	<Dialog.Content class="max-w-lg">
 		<Dialog.Header>
-			<Dialog.Title>Remove {removeMember?.name}?</Dialog.Title>
+			<Dialog.Title>{$t('members.remove.title', { name: removeMember?.name ?? '' })}</Dialog.Title>
 			<Dialog.Description>
-				This permanently deletes their account. It can't be undone — archive them instead if you may need them back.
+				{$t('members.remove.description')}
 			</Dialog.Description>
 		</Dialog.Header>
 		{#if removePreview}
 			{@const p = removePreview}
+			{@const etText = p.event_types.length
+				? $t('members.remove.eventTypesNamed', { count: p.event_types.length, names: p.event_types.join(', ') })
+				: $t('members.remove.eventTypes', { count: p.event_types.length })}
+			{@const pastHostedText = $t('members.remove.pastHosted', { count: p.past_hosted })}
 			<div class="space-y-4 text-sm">
 				<div class="rounded-md border border-destructive/30 bg-destructive/5 p-3">
-					<p class="font-medium">Lost with the account</p>
+					<p class="font-medium">{$t('members.remove.lost.title')}</p>
 					<ul class="mt-1 list-disc space-y-0.5 pl-5 text-muted-foreground">
-						<li>Their sign-in, sessions{p.api_keys ? ` and ${p.api_keys} API key${p.api_keys === 1 ? '' : 's'}` : ''}</li>
-						<li>Availability, profile and notification settings</li>
-						{#if p.calendar_connections}<li>{p.calendar_connections} connected calendar{p.calendar_connections === 1 ? '' : 's'}</li>{/if}
-						<li>Their seats as a host on other people's event types</li>
+						<li>{p.api_keys ? $t('members.remove.lost.signInWithKeys', { count: p.api_keys }) : $t('members.remove.lost.signIn')}</li>
+						<li>{$t('members.remove.lost.settings')}</li>
+						{#if p.calendar_connections}<li>{$t('members.remove.lost.calendars', { count: p.calendar_connections })}</li>{/if}
+						<li>{$t('members.remove.lost.hostSeats')}</li>
 					</ul>
 				</div>
 				<div class="space-y-1.5">
-					<Label for="remove-mode">Their event types and history</Label>
+					<Label for="remove-mode">{$t('members.remove.modeLabel')}</Label>
 					<Select.Root type="single" value={removeMode} onValueChange={(v) => { if (v) removeMode = v as 'transfer' | 'delete'; }}>
-						<Select.Trigger id="remove-mode" class="w-full">{removeMode === 'transfer' ? 'Transfer to another member' : 'Delete them'}</Select.Trigger>
+						<Select.Trigger id="remove-mode" class="w-full">{removeMode === 'transfer' ? $t('members.remove.mode.transfer') : $t('members.remove.mode.delete')}</Select.Trigger>
 						<Select.Content>
-							<Select.Item value="transfer" label="Transfer to another member">Transfer to another member</Select.Item>
-							<Select.Item value="delete" label="Delete them" disabled={!p.can_delete}>Delete them</Select.Item>
+							<Select.Item value="transfer" label={$t('members.remove.mode.transfer')}>{$t('members.remove.mode.transfer')}</Select.Item>
+							<Select.Item value="delete" label={$t('members.remove.mode.delete')} disabled={!p.can_delete}>{$t('members.remove.mode.delete')}</Select.Item>
 						</Select.Content>
 					</Select.Root>
 					{#if removeMode === 'transfer'}
 						<p class="text-xs text-muted-foreground">
-							{p.event_types.length} event type{p.event_types.length === 1 ? '' : 's'}{p.event_types.length ? ` (${p.event_types.join(', ')})` : ''},
-							{p.upcoming_hosted ? `${p.upcoming_hosted} upcoming meeting${p.upcoming_hosted === 1 ? '' : 's'} (invites move to the new host's calendar; attendees are told), ` : ''}{p.past_hosted} past booking{p.past_hosted === 1 ? '' : 's'} they hosted and {p.live_events} live event{p.live_events === 1 ? '' : 's'} move to:
+							{p.upcoming_hosted
+								? $t('members.remove.transfer.summaryWithUpcoming', {
+									eventTypes: etText,
+									upcoming: $t('members.remove.transfer.upcoming', { count: p.upcoming_hosted }),
+									pastHosted: pastHostedText,
+									liveEvents: $t('members.remove.transfer.liveEvents', { count: p.live_events })
+								})
+								: $t('members.remove.transfer.summary', {
+									eventTypes: etText,
+									pastHosted: pastHostedText,
+									liveEvents: $t('members.remove.transfer.liveEvents', { count: p.live_events })
+								})}
 						</p>
 						<Select.Root type="single" value={removeTo} onValueChange={(v) => (removeTo = v ?? '')}>
-							<Select.Trigger class="w-full" aria-label="Transfer to">{removeTargets.find((m) => m.id === removeTo)?.name ?? 'Choose a member'}</Select.Trigger>
+							<Select.Trigger class="w-full" aria-label={$t('members.remove.transferTo')}>{removeTargets.find((m) => m.id === removeTo)?.name ?? $t('members.remove.chooseMember')}</Select.Trigger>
 							<Select.Content>
-								{#each removeTargets as t (t.id)}<Select.Item value={t.id} label={t.name}>{t.name}</Select.Item>{/each}
+								{#each removeTargets as tm (tm.id)}<Select.Item value={tm.id} label={tm.name}>{tm.name}</Select.Item>{/each}
 							</Select.Content>
 						</Select.Root>
 					{:else}
 						<p class="text-xs text-destructive">
-							Deletes {p.event_types.length} event type{p.event_types.length === 1 ? '' : 's'}{p.event_types.length ? ` (${p.event_types.join(', ')})` : ''}
-							and their booking links, {p.past_on_their_event_types} past booking{p.past_on_their_event_types === 1 ? '' : 's'} of those event types,
-							and {p.past_hosted} past booking{p.past_hosted === 1 ? '' : 's'} they hosted. Sessions they host that are scheduled or live are cancelled; other live events they created stay, credited to you.
+							{$t('members.remove.delete.summary', {
+								eventTypes: etText,
+								pastOnTheirs: $t('members.remove.delete.pastOnTheirs', { count: p.past_on_their_event_types }),
+								pastHosted: pastHostedText
+							})}
+							{$t('members.remove.delete.liveEvents')}
 						</p>
 					{/if}
 					{#if p.blocked_reason && !p.can_delete}
@@ -424,9 +441,9 @@
 			</div>
 		{/if}
 		<Dialog.Footer>
-			<Button variant="outline" disabled={removeBusy} onclick={() => (removeOpen = false)}>Cancel</Button>
+			<Button variant="outline" disabled={removeBusy} onclick={() => (removeOpen = false)}>{$t('common.cancel')}</Button>
 			<Button variant="destructive" disabled={removeBusy || (removeMode === 'transfer' && !removeTo)} onclick={doRemove}>
-				{removeBusy ? 'Removing…' : 'Remove member'}
+				{removeBusy ? $t('members.remove.removing') : $t('members.remove.confirm')}
 			</Button>
 		</Dialog.Footer>
 	</Dialog.Content>
@@ -686,7 +703,7 @@
 													{/if}
 													<!-- Any admin may remove any member except the owner and themselves. -->
 													{#if !m.is_owner && m.id !== $currentUser.id}
-														<Button size="sm" variant="ghost" class="h-7 text-xs text-destructive hover:text-destructive" onclick={() => startRemove(m)}>Remove</Button>
+														<Button size="sm" variant="ghost" class="h-7 text-xs text-destructive hover:text-destructive" onclick={() => startRemove(m)}>{$t('common.remove')}</Button>
 													{/if}
 												{/if}
 											{/if}

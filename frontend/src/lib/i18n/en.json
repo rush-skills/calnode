@@ -52,7 +52,19 @@
 		"undo": "Undo",
 		"uploading": "Uploading…",
 		"sending": "Sending…",
-		"testing": "Testing…"
+		"testing": "Testing…",
+		"richText": {
+			"formatting": "Formatting",
+			"bold": "Bold",
+			"italic": "Italic",
+			"heading": "Heading",
+			"bulletList": "Bullet list",
+			"numberedList": "Numbered list",
+			"link": "Link",
+			"linkUrl": "Link URL",
+			"apply": "Apply",
+			"removeLink": "Remove link"
+		}
 	},
 	"layout": {
 		"loading": "Loading…",
@@ -77,7 +89,9 @@
 			"webhooks": "Webhooks",
 			"settings": "Settings",
 			"teamCalendar": "Team calendar",
-			"liveEvents": "Live events"
+			"liveEvents": "Live events",
+			"open": "Open navigation",
+			"close": "Close navigation"
 		},
 		"reportDialog": {
 			"title": "Report an issue",
@@ -519,6 +533,75 @@
 		},
 		"validation": {
 			"password": "Password is required."
+		},
+		"remove": {
+			"title": "Remove {name}?",
+			"description": "This permanently deletes their account. It can't be undone — archive them instead if you may need them back.",
+			"lost": {
+				"title": "Lost with the account",
+				"signIn": "Their sign-in and sessions",
+				"signInWithKeys": {
+					"one": "Their sign-in, sessions and {count} API key",
+					"other": "Their sign-in, sessions and {count} API keys"
+				},
+				"settings": "Availability, profile and notification settings",
+				"calendars": {
+					"one": "{count} connected calendar",
+					"other": "{count} connected calendars"
+				},
+				"hostSeats": "Their seats as a host on other people's event types"
+			},
+			"modeLabel": "Their event types and history",
+			"mode": {
+				"transfer": "Transfer to another member",
+				"delete": "Delete them"
+			},
+			"eventTypes": {
+				"one": "{count} event type",
+				"other": "{count} event types"
+			},
+			"eventTypesNamed": {
+				"one": "{count} event type ({names})",
+				"other": "{count} event types ({names})"
+			},
+			"pastHosted": {
+				"one": "{count} past booking they hosted",
+				"other": "{count} past bookings they hosted"
+			},
+			"transfer": {
+				"upcoming": {
+					"one": "{count} upcoming meeting (the invite moves to the new host's calendar; attendees are told)",
+					"other": "{count} upcoming meetings (invites move to the new host's calendar; attendees are told)"
+				},
+				"liveEvents": {
+					"one": "{count} live event",
+					"other": "{count} live events"
+				},
+				"summary": "{eventTypes}, {pastHosted} and {liveEvents} move to:",
+				"summaryWithUpcoming": "{eventTypes}, {upcoming}, {pastHosted} and {liveEvents} move to:"
+			},
+			"transferTo": "Transfer to",
+			"chooseMember": "Choose a member",
+			"delete": {
+				"pastOnTheirs": {
+					"one": "{count} past booking of those event types",
+					"other": "{count} past bookings of those event types"
+				},
+				"summary": "Deletes {eventTypes} and their booking links, {pastOnTheirs}, and {pastHosted}.",
+				"liveEvents": "Sessions they host that are scheduled or live are cancelled; other live events they created stay, credited to you."
+			},
+			"validation": {
+				"transferTo": "Choose who receives their event types and history."
+			},
+			"removing": "Removing…",
+			"confirm": "Remove member",
+			"toast": {
+				"removed": "{name} removed",
+				"errors": {
+					"prepare": "Could not prepare removal",
+					"remove": "Could not remove member"
+				}
+			}
 		}
 	},
 	"teams": {
@@ -624,7 +707,8 @@
 			"restore": "Restore",
 			"archive": "Archive",
 			"delete": "Delete",
-			"viewReadOnly": "View settings (read-only)"
+			"viewReadOnly": "View settings (read-only)",
+			"copyLink": "Copy booking link"
 		},
 		"confirm": {
 			"delete": {
@@ -647,7 +731,10 @@
 			},
 			"nameDurationRequired": "Name and duration are required.",
 			"slugNoAlnum": "The slug needs at least one letter or number.",
-			"slugUnderivable": "A booking link could not be made from this name — add a slug with letters or numbers."
+			"slugUnderivable": "A booking link could not be made from this name — add a slug with letters or numbers.",
+			"created": "Created — booking link is {path}",
+			"linkCopied": "Booking link copied",
+			"copyFailed": "Could not copy — {url}"
 		}
 	},
 	"recordings": {
@@ -761,7 +848,12 @@
 			"fieldsPii": "· personal data",
 			"piiBadge": "PII",
 			"creating": "Creating…",
-			"create": "Create webhook"
+			"create": "Create webhook",
+			"orgLabel": "Every booking in the workspace",
+			"orgHintOn": "Organisation-wide: fires for every member's bookings. Any admin can see and remove it.",
+			"orgHintOff": "Only bookings you host. Tick this for an integration that should hear about the whole team.",
+			"eventTypesTitle": "Event types",
+			"eventTypesHint": "— none ticked sends every event type"
 		},
 		"empty": {
 			"title": "No webhooks",
@@ -780,7 +872,8 @@
 		"tooltip": {
 			"deliveries": "Recent deliveries",
 			"hideDeliveries": "Hide deliveries",
-			"delete": "Delete webhook"
+			"delete": "Delete webhook",
+			"rotate": "Rotate signing secret"
 		},
 		"deliveries": {
 			"loading": "Loading deliveries…",
@@ -943,6 +1036,22 @@
 		},
 		"validation": {
 			"name": "Name is required."
+		},
+		"scopes": {
+			"title": "Limit to read-only access",
+			"bookingsRead": {
+				"label": "Read bookings",
+				"help": "GET {list} and {item}"
+			},
+			"webhooksRead": {
+				"label": "Read webhooks",
+				"help": "GET {path} and their delivery log"
+			},
+			"limitedHint": "This key can only make those reads, and nothing else, whatever your role. Made by an admin, it reads every booking in the workspace.",
+			"fullHint": "With nothing ticked the key can do everything you can."
+		},
+		"badge": {
+			"fullAccess": "Full access"
 		}
 	},
 	"auth": {
@@ -1362,6 +1471,21 @@
 			"error": {
 				"load": "Could not load Google settings",
 				"save": "Could not save Google settings"
+			},
+			"signin": {
+				"title": "Who can sign in",
+				"description": "By default only invited people can sign in. List your organisation's email domains and anyone who signs in with a verified Google or Microsoft account under one of them becomes a member automatically, with their own booking links. New members are never admins.",
+				"label": "Allowed sign-in domains",
+				"hint": "One per line. Exact match on the part after the @ — list each subdomain you use.",
+				"inviteOnly": "Currently invite-only.",
+				"save": "Save domains",
+				"toast": {
+					"saved": "Allowed domains saved",
+					"off": "Domain sign-in turned off"
+				},
+				"error": {
+					"save": "Could not save allowed domains"
+				}
 			}
 		},
 		"zoom": {
@@ -1926,7 +2050,8 @@
 			"slotInterval": "Slot interval must be at least 1 minute.",
 			"maxActive": "Max active bookings cannot be negative (0 = unlimited).",
 			"rotation": "Add at least one person to the rotation",
-			"collective": "Add at least one required host (someone who always attends)"
+			"collective": "Add at least one required host (someone who always attends)",
+			"mixed": "Add at least one person who always attends, or switch to \"{rotate}\""
 		},
 		"questions": {
 			"title": "Intake Questions",
@@ -1984,7 +2109,9 @@
 			"buttonText": "Book a call",
 			"form": {
 				"label": "Inside your form",
-				"hint": "A compact time picker that submits with your own lead form."
+				"hint": "A compact time picker that submits with your own lead form.",
+				"submitText": "Send",
+				"explain": "Picking a time does not book. The form submits {meeting} (start, UTC), {meetingEnd} and {meetingTz}; book it from your submit handler with {bookCall}, or from your backend via {endpoint}. See {docs}."
 			}
 		},
 		"reminders": {

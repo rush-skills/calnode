@@ -2,7 +2,7 @@
 	import { page } from '$app/stores';
 	import { Button } from '$lib/components/ui/button';
 	import { toast } from 'svelte-sonner';
-	import { t, tr } from '$lib/i18n';
+	import { t, tr, splitLinked } from '$lib/i18n';
 
 	let { slug }: { slug: string } = $props();
 
@@ -18,9 +18,20 @@
 	// "Inside your form": a compact, form-associated slot picker that submits the chosen
 	// time with the host site's own lead form (docs/embed-in-form.md).
 	const formSnippet = $derived(
-		`<script src="${embedOrigin}/embed.js" async><\/script>\n<form id="lead">\n  <input name="name" required>\n  <input name="email" type="email" required>\n  <calnode-booking slug="${slug}" mode="picker" compact required name="meeting"></calnode-booking>\n  <button type="submit">Send</button>\n</form>`
+		`<script src="${embedOrigin}/embed.js" async><\/script>\n<form id="lead">\n  <input name="name" required>\n  <input name="email" type="email" required>\n  <calnode-booking slug="${slug}" mode="picker" compact required name="meeting"></calnode-booking>\n  <button type="submit">${$t('eventTypeEditor.embed.form.submitText')}</button>\n</form>`
 	);
 	const formDocsUrl = 'https://github.com/Calnode/calnode/blob/main/docs/embed-in-form.md';
+	// Code tokens dropped into the translated explanation; they stay literal in every locale.
+	const formExplainCode: Record<string, string> = {
+		meeting: 'meeting',
+		meetingEnd: 'meeting_end',
+		meetingTz: 'meeting_timezone',
+		bookCall: 'picker.book({ name, email })',
+		endpoint: 'POST /v1/bookings',
+	};
+	const formExplain = $derived(
+		splitLinked($t('eventTypeEditor.embed.form.explain'), [...Object.keys(formExplainCode), 'docs'])
+	);
 	let copied = $state('');
 	function copyEmbed(kind: string, text: string) {
 		navigator.clipboard.writeText(text).then(() => {
@@ -55,11 +66,7 @@
 				<pre class="overflow-x-auto rounded-md bg-muted px-3 py-2.5 text-xs leading-relaxed"><code>{snip.code}</code></pre>
 				{#if snip.key === 'form'}
 					<p class="mt-1.5 text-xs text-muted-foreground">
-						Picking a time does not book. The form submits <code>meeting</code> (start, UTC),
-						<code>meeting_end</code> and <code>meeting_timezone</code>; book it from your submit
-						handler with <code>picker.book(&#123; name, email &#125;)</code>, or from your backend via
-						<code>POST /v1/bookings</code>. See
-						<a href={formDocsUrl} target="_blank" rel="noopener noreferrer" class="font-medium text-primary underline">docs/embed-in-form.md</a>.
+						{#each formExplain as seg, i (i)}{#if seg.type === 'text'}{seg.value}{:else if seg.name === 'docs'}<a href={formDocsUrl} target="_blank" rel="noopener noreferrer" class="font-medium text-primary underline">docs/embed-in-form.md</a>{:else}<code>{formExplainCode[seg.name]}</code>{/if}{/each}
 					</p>
 				{/if}
 			</div>

@@ -432,7 +432,7 @@
 			toast.error(tr('eventTypeEditor.validation.rotation')); return;
 		}
 		if (staffing === 'mixed' && togetherHosts.length === 0) {
-			toast.error('Add at least one person who always attends, or switch to "Rotate between them"'); return;
+			toast.error(tr('eventTypeEditor.validation.mixed', { rotate: tr('eventTypeEditor.hosts.rotate') })); return;
 		}
 		if (routingMode === 'collective' && !togetherHosts.some((h) => !h.optional)) {
 			toast.error(tr('eventTypeEditor.validation.collective')); return;

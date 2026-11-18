@@ -434,7 +434,7 @@
 												{/if}
 											</Select.Trigger>
 											<Select.Content>
-												<Select.Item value="null" label="All">{$t('availability.eventTypes.allEventTypes')}</Select.Item>
+												<Select.Item value="null" label={$t('availability.eventTypes.allEventTypes')}>{$t('availability.eventTypes.allEventTypes')}</Select.Item>
 												{#each eventTypes as e}<Select.Item value={e.id} label={e.name}>{e.name}</Select.Item>{/each}
 											</Select.Content>
 										</Select.Root>

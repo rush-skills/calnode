@@ -307,7 +307,7 @@
 			type="button"
 			bind:this={menuButtonEl}
 			class={buttonVariants({ variant: 'ghost', size: 'icon-sm' })}
-			aria-label="Open navigation"
+			aria-label={$t('layout.nav.open')}
 			aria-controls="app-sidebar"
 			aria-expanded={sidebarOpen}
 			onclick={() => (sidebarOpen = true)}
@@ -326,7 +326,7 @@
 			<button
 				type="button"
 				class="fixed inset-0 z-40 bg-black/40 md:hidden"
-				aria-label="Close navigation"
+				aria-label={$t('layout.nav.close')}
 				onclick={() => (sidebarOpen = false)}
 			></button>
 		{/if}

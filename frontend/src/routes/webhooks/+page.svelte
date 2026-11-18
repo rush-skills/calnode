@@ -306,12 +306,10 @@
 			<div class="mb-4 space-y-1">
 				<label class="flex cursor-pointer items-center gap-2 text-sm font-medium">
 					<Checkbox checked={form.org} onCheckedChange={(v) => (form.org = v === true)} />
-					Every booking in the workspace
+					{$t('webhooks.new.orgLabel')}
 				</label>
 				<p class="pl-6 text-xs text-muted-foreground">
-					{form.org
-						? 'Organisation-wide: fires for every member\'s bookings. Any admin can see and remove it.'
-						: 'Only bookings you host. Tick this for an integration that should hear about the whole team.'}
+					{form.org ? $t('webhooks.new.orgHintOn') : $t('webhooks.new.orgHintOff')}
 				</p>
 			</div>
 		{/if}
@@ -331,7 +329,7 @@
 
 		{#if eventTypeOptions.length > 0}
 			<div class="mb-4 space-y-2">
-				<p class="text-sm font-medium">Event types <span class="font-normal text-muted-foreground">— none ticked sends every event type</span></p>
+				<p class="text-sm font-medium">{$t('webhooks.new.eventTypesTitle')} <span class="font-normal text-muted-foreground">{$t('webhooks.new.eventTypesHint')}</span></p>
 				<div class="grid grid-cols-2 gap-x-4 gap-y-1">
 					{#each eventTypeOptions as et}
 						<label class="flex cursor-pointer items-center gap-2 text-sm">
@@ -427,7 +425,7 @@
 									<Tooltip.Trigger class={buttonVariants({ variant: 'ghost', size: 'icon' })} onclick={() => { rotateId = wh.id; rotateOpen = true; }}>
 										<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
 									</Tooltip.Trigger>
-									<Tooltip.Content>Rotate signing secret</Tooltip.Content>
+									<Tooltip.Content>{$t('webhooks.tooltip.rotate')}</Tooltip.Content>
 								</Tooltip.Root>
 								<Tooltip.Root>
 									<Tooltip.Trigger class={buttonVariants({ variant: 'ghost', size: 'icon' })} onclick={() => del(wh.id)}>
