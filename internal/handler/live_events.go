@@ -51,7 +51,8 @@ const (
 	liveEventDescMax       = 4000
 	liveEventListLimit     = 50
 	liveEventListLimitMax  = 200
-	liveStatusUpcomingMax  = 5
+	liveStatusUpcomingMax  = 5  // default size of the feed's upcoming list
+	liveStatusLimitMax     = 50 // ?limit= ceiling
 )
 
 // errLiveNoCalendar is the 409 condition: the session has no join link and the host has
@@ -82,11 +83,21 @@ type liveEvent struct {
 	// JoinURLMinted: the link came from the host's calendar provider (Meet/Teams), so it
 	// belongs to the host's calendar event and is re-minted on a host change. A manual
 	// link is kept across host changes.
-	JoinURLMinted    bool   `json:"join_url_minted"`
-	HasCalendarEvent bool   `json:"has_calendar_event"`
-	CreatedBy        string `json:"created_by"`
-	CreatedAt        string `json:"created_at"`
-	UpdatedAt        string `json:"updated_at"`
+	JoinURLMinted    bool `json:"join_url_minted"`
+	HasCalendarEvent bool `json:"has_calendar_event"`
+	// InviteDefaultParticipants: the workspace's default participants (a notetaker bot,
+	// say) are invited on the host's calendar event. Off for sessions promised as not
+	// recorded.
+	InviteDefaultParticipants bool `json:"invite_default_participants"`
+	// SeriesID/OccurrenceDate tie an occurrence of a recurring series to the date it
+	// stands for (live_series.go); both null for a one-off session. Overrides lists the
+	// field groups edited on this occurrence alone, which a series edit leaves alone.
+	SeriesID       *string  `json:"series_id"`
+	OccurrenceDate *string  `json:"occurrence_date"`
+	Overrides      []string `json:"overrides"`
+	CreatedBy      string   `json:"created_by"`
+	CreatedAt      string   `json:"created_at"`
+	UpdatedAt      string   `json:"updated_at"`
 
 	// Stamped calendar event, never serialised: the triple routes updates and cancels to
 	// the provider that wrote the event (see calendar.Service.UpdateEvent).
@@ -100,6 +111,7 @@ const liveEventSelect = `
 	       e.scheduled_start_at, e.scheduled_end_at, e.started_at, e.ended_at, e.auto_start, e.auto_end, e.join_url,
 	       e.join_url_minted,
 	       COALESCE(e.external_event_id, ''), COALESCE(e.external_calendar_id, ''), COALESCE(e.external_provider, ''),
+	       e.invite_default_participants, e.series_id, e.occurrence_date, e.overrides,
 	       e.created_by, e.created_at, e.updated_at
 	FROM live_events e LEFT JOIN users u ON u.id = e.host_user_id`
 
@@ -109,13 +121,17 @@ type liveEventScanner interface {
 
 func scanLiveEvent(row liveEventScanner) (*liveEvent, error) {
 	var ev liveEvent
-	var autoStart, autoEnd, minted int
+	var autoStart, autoEnd, minted, invite int
+	var overrides string
 	if err := row.Scan(&ev.ID, &ev.Title, &ev.Description, &ev.Kind, &ev.Status, &ev.HostUserID, &ev.HostName,
 		&ev.ScheduledStartAt, &ev.ScheduledEndAt, &ev.StartedAt, &ev.EndedAt, &autoStart, &autoEnd, &ev.JoinURL,
 		&minted, &ev.externalEventID, &ev.externalCalendarID, &ev.externalProvider,
+		&invite, &ev.SeriesID, &ev.OccurrenceDate, &overrides,
 		&ev.CreatedBy, &ev.CreatedAt, &ev.UpdatedAt); err != nil {
 		return nil, err
 	}
+	ev.InviteDefaultParticipants = invite != 0
+	ev.Overrides = splitOverrides(overrides)
 	ev.AutoStart = autoStart != 0
 	ev.AutoEnd = autoEnd != 0
 	ev.JoinURLMinted = minted != 0
@@ -196,6 +212,16 @@ func (h *Handler) liveEventExtraAttendees(ctx context.Context, hostEmail string)
 	return out
 }
 
+// liveEventGuests is liveEventExtraAttendees for one session: none when the session has
+// default participants switched off (a session promised as not recorded keeps the
+// notetaker out).
+func (h *Handler) liveEventGuests(ctx context.Context, ev *liveEvent, hostEmail string) []string {
+	if !ev.InviteDefaultParticipants {
+		return nil
+	}
+	return h.liveEventExtraAttendees(ctx, hostEmail)
+}
+
 // liveEventWindow is the calendar block for a session: the scheduled start (or now when
 // there is none / when going live) and the scheduled end, else start + default duration.
 func liveEventWindow(ev *liveEvent, now time.Time) (start, end time.Time) {
@@ -268,7 +294,7 @@ func (h *Handler) ensureLiveEventCalendar(ctx context.Context, ev *liveEvent, no
 		Start:          start,
 		End:            end,
 		AddMeet:        addMeet,
-		ExtraAttendees: h.liveEventExtraAttendees(ctx, hostEmail),
+		ExtraAttendees: h.liveEventGuests(ctx, ev, hostEmail),
 	})
 	if err != nil {
 		return fmt.Errorf("live event: create calendar event: %w", err)
@@ -549,6 +575,8 @@ type liveEventInput struct {
 	JoinURL          *string `json:"join_url"`
 	AutoStart        *bool   `json:"auto_start"`
 	AutoEnd          *bool   `json:"auto_end"`
+	// InviteDefaultParticipants defaults to true on create.
+	InviteDefaultParticipants *bool `json:"invite_default_participants"`
 }
 
 func (h *Handler) decodeLiveEventInput(w http.ResponseWriter, r *http.Request) (liveEventInput, bool) {
@@ -664,12 +692,15 @@ func (h *Handler) CreateLiveEvent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	autoStart, autoEnd := true, true
+	autoStart, autoEnd, invite := true, true, true
 	if in.AutoStart != nil {
 		autoStart = *in.AutoStart
 	}
 	if in.AutoEnd != nil {
 		autoEnd = *in.AutoEnd
+	}
+	if in.InviteDefaultParticipants != nil {
+		invite = *in.InviteDefaultParticipants
 	}
 
 	now := time.Now()
@@ -681,15 +712,16 @@ func (h *Handler) CreateLiveEvent(w http.ResponseWriter, r *http.Request) {
 	ev := &liveEvent{
 		ID: uid.New(), Title: title, Description: desc, Kind: kind, Status: liveStatusScheduled,
 		HostUserID: hostID, ScheduledStartAt: start, ScheduledEndAt: end,
-		AutoStart: autoStart, AutoEnd: autoEnd, JoinURL: joinURL,
+		AutoStart: autoStart, AutoEnd: autoEnd, JoinURL: joinURL, InviteDefaultParticipants: invite,
 		CreatedBy: user.ID, CreatedAt: ts, UpdatedAt: ts,
 	}
 	if _, err := h.db.ExecContext(r.Context(), `
 		INSERT INTO live_events (id, title, description, kind, status, host_user_id, scheduled_start_at, scheduled_end_at,
-		                         auto_start, auto_end, join_url, created_by, created_at, updated_at)
-		VALUES (?, ?, ?, ?, 'scheduled', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                         auto_start, auto_end, join_url, invite_default_participants, created_by, created_at, updated_at)
+		VALUES (?, ?, ?, ?, 'scheduled', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		ev.ID, ev.Title, ev.Description, ev.Kind, ev.HostUserID, ev.ScheduledStartAt, ev.ScheduledEndAt,
-		boolInt(ev.AutoStart), boolInt(ev.AutoEnd), ev.JoinURL, ev.CreatedBy, ev.CreatedAt, ev.UpdatedAt); err != nil {
+		boolInt(ev.AutoStart), boolInt(ev.AutoEnd), ev.JoinURL, boolInt(ev.InviteDefaultParticipants),
+		ev.CreatedBy, ev.CreatedAt, ev.UpdatedAt); err != nil {
 		h.logger.ErrorContext(r.Context(), "live events: insert", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -898,12 +930,16 @@ func (h *Handler) PatchLiveEvent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Field groups this request actually changes. On an occurrence of a series they become
+	// overrides: a later edit of the series leaves them alone (live_series.go).
+	changed := map[string]bool{}
 	if in.Title != nil {
 		t := strings.TrimSpace(*in.Title)
 		if t == "" || len(t) > liveEventTitleMax {
 			h.writeError(w, http.StatusBadRequest, "title is required and must be at most 200 characters")
 			return
 		}
+		changed[liveOverrideTitle] = t != ev.Title
 		ev.Title = t
 	}
 	if in.Description != nil {
@@ -912,6 +948,7 @@ func (h *Handler) PatchLiveEvent(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, http.StatusBadRequest, "description is too long")
 			return
 		}
+		changed[liveOverrideDescription] = d != ev.Description
 		ev.Description = d
 	}
 	if in.Kind != nil {
@@ -920,6 +957,7 @@ func (h *Handler) PatchLiveEvent(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, http.StatusBadRequest, "kind must be a short lowercase name: letters, digits, - or _ (e.g. office_hours, demo)")
 			return
 		}
+		changed[liveOverrideKind] = k != ev.Kind
 		ev.Kind = k
 	}
 	linkChanged := false
@@ -952,8 +990,8 @@ func (h *Handler) PatchLiveEvent(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
+		scheduleChanged = ptrString(start) != ptrString(ev.ScheduledStartAt) || ptrString(end) != ptrString(ev.ScheduledEndAt)
 		ev.ScheduledStartAt, ev.ScheduledEndAt = start, end
-		scheduleChanged = true
 	}
 	hostChanged := false
 	newHostID := ev.HostUserID
@@ -974,19 +1012,35 @@ func (h *Handler) PatchLiveEvent(w http.ResponseWriter, r *http.Request) {
 		hostChanged = true
 	}
 	if in.AutoStart != nil {
+		changed[liveOverrideAuto] = changed[liveOverrideAuto] || *in.AutoStart != ev.AutoStart
 		ev.AutoStart = *in.AutoStart
 	}
 	if in.AutoEnd != nil {
+		changed[liveOverrideAuto] = changed[liveOverrideAuto] || *in.AutoEnd != ev.AutoEnd
 		ev.AutoEnd = *in.AutoEnd
+	}
+	inviteChanged := false
+	if in.InviteDefaultParticipants != nil && *in.InviteDefaultParticipants != ev.InviteDefaultParticipants {
+		inviteChanged = true
+		ev.InviteDefaultParticipants = *in.InviteDefaultParticipants
+	}
+	changed[liveOverrideSchedule] = scheduleChanged
+	changed[liveOverrideHost] = hostChanged
+	changed[liveOverrideLink] = linkChanged
+	changed[liveOverrideInvite] = inviteChanged
+	if ev.SeriesID != nil {
+		ev.Overrides = addOverrides(ev.Overrides, changed)
 	}
 
 	now := time.Now()
 	ev.UpdatedAt = liveTime(now)
 	if _, err := h.db.ExecContext(r.Context(), `
 		UPDATE live_events SET title = ?, description = ?, kind = ?, scheduled_start_at = ?, scheduled_end_at = ?,
-		       auto_start = ?, auto_end = ?, join_url = ?, join_url_minted = ?, updated_at = ? WHERE id = ?`,
+		       auto_start = ?, auto_end = ?, join_url = ?, join_url_minted = ?, invite_default_participants = ?,
+		       overrides = ?, updated_at = ? WHERE id = ?`,
 		ev.Title, ev.Description, ev.Kind, ev.ScheduledStartAt, ev.ScheduledEndAt,
-		boolInt(ev.AutoStart), boolInt(ev.AutoEnd), ev.JoinURL, boolInt(ev.JoinURLMinted), ev.UpdatedAt, ev.ID); err != nil {
+		boolInt(ev.AutoStart), boolInt(ev.AutoEnd), ev.JoinURL, boolInt(ev.JoinURLMinted), boolInt(ev.InviteDefaultParticipants),
+		strings.Join(ev.Overrides, ","), ev.UpdatedAt, ev.ID); err != nil {
 		h.logger.ErrorContext(r.Context(), "live events: update", "error", err, "live_event_id", ev.ID)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -1004,7 +1058,15 @@ func (h *Handler) PatchLiveEvent(w http.ResponseWriter, r *http.Request) {
 		if err := h.rehostLiveEvent(r.Context(), ev, newHostID, now); err != nil {
 			h.logger.ErrorContext(r.Context(), "live events: calendar event after host change", "error", err, "live_event_id", ev.ID)
 		}
-	} else if linkChanged && ev.Status == liveStatusScheduled && ev.externalEventID != "" {
+	} else if (linkChanged || inviteChanged) && ev.Status == liveStatusScheduled && ev.externalEventID != "" {
+		// The guest list is part of the event too: switching the notetaker on or off
+		// re-creates it (a minted link is minted afresh with it).
+		if inviteChanged && !linkChanged && ev.JoinURLMinted {
+			ev.JoinURL, ev.JoinURLMinted = "", false
+			if _, err := h.db.ExecContext(r.Context(), `UPDATE live_events SET join_url = '', join_url_minted = 0 WHERE id = ?`, ev.ID); err != nil {
+				h.logger.ErrorContext(r.Context(), "live events: clear minted link", "error", err, "live_event_id", ev.ID)
+			}
+		}
 		h.cancelLiveEventCalendar(r.Context(), ev)
 		if err := h.ensureLiveEventCalendar(r.Context(), ev, now); err != nil && !errors.Is(err, errLiveNoCalendar) {
 			h.logger.ErrorContext(r.Context(), "live events: calendar event after link change", "error", err, "live_event_id", ev.ID)
@@ -1117,6 +1179,8 @@ type livePublicSession struct {
 	StartedAt        *string `json:"started_at,omitempty"`
 	ScheduledStartAt *string `json:"scheduled_start_at,omitempty"`
 	ScheduledEndAt   *string `json:"scheduled_end_at,omitempty"`
+	// SeriesID groups the occurrences of one recurring series; absent on a one-off.
+	SeriesID *string `json:"series_id,omitempty"`
 }
 
 // LiveStatus handles GET /v1/live/status?kind= (public, no auth). It publishes the join
@@ -1125,16 +1189,36 @@ type livePublicSession struct {
 func (h *Handler) LiveStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Cache-Control", "no-store")
-	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
-	if kind != "" && !validLiveKind(kind) {
-		h.writeError(w, http.StatusBadRequest, "kind must be a short lowercase name: letters, digits, - or _ (e.g. office_hours, demo)")
-		return
+	// kind: one kind, or a comma list ("webinar,office_hours") so a site can show exactly
+	// the kinds it knows and nothing else (a "test" session, say).
+	var kinds []string
+	for _, k := range strings.Split(r.URL.Query().Get("kind"), ",") {
+		if k = strings.TrimSpace(k); k == "" {
+			continue
+		}
+		if !validLiveKind(k) {
+			h.writeError(w, http.StatusBadRequest, "kind must be a short lowercase name: letters, digits, - or _ (e.g. office_hours, demo), or a comma list of them")
+			return
+		}
+		kinds = append(kinds, k)
+	}
+	// limit: how many sessions after "next" the upcoming list may hold (default 5).
+	limit := liveStatusUpcomingMax
+	if v := r.URL.Query().Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			h.writeError(w, http.StatusBadRequest, "limit must be a non-negative integer")
+			return
+		}
+		limit = min(n, liveStatusLimitMax)
 	}
 	now := liveTime(time.Now())
 	kindFilter, args := "", []any{}
-	if kind != "" {
-		kindFilter = ` AND e.kind = ?`
-		args = append(args, kind)
+	if len(kinds) > 0 {
+		kindFilter = ` AND e.kind IN (?` + strings.Repeat(`, ?`, len(kinds)-1) + `)`
+		for _, k := range kinds {
+			args = append(args, k)
+		}
 	}
 
 	// A session has a single host, and single-host events always show their host.
@@ -1151,6 +1235,8 @@ func (h *Handler) LiveStatus(w http.ResponseWriter, r *http.Request) {
 			live = append(live, livePublicSession{
 				ID: ev.ID, Title: ev.Title, Description: ev.Description, Kind: ev.Kind, HostName: hostName(ev.HostName),
 				JoinURL: ev.JoinURL, StartedAt: ev.StartedAt,
+				// The planned window too, so a site can say "until 18:00".
+				ScheduledStartAt: ev.ScheduledStartAt, ScheduledEndAt: ev.ScheduledEndAt, SeriesID: ev.SeriesID,
 			})
 		}
 	}
@@ -1165,7 +1251,7 @@ func (h *Handler) LiveStatus(w http.ResponseWriter, r *http.Request) {
 		WHERE e.status = 'scheduled' AND e.scheduled_start_at IS NOT NULL
 		  AND ((e.scheduled_end_at IS NOT NULL AND e.scheduled_end_at >= ?)
 		    OR (e.scheduled_end_at IS NULL AND e.scheduled_start_at >= ?))`+kindFilter+`
-		ORDER BY e.scheduled_start_at ASC LIMIT ?`, append(append([]any{now, openEndedCutoff}, args...), liveStatusUpcomingMax+1)...)
+		ORDER BY e.scheduled_start_at ASC LIMIT ?`, append(append([]any{now, openEndedCutoff}, args...), limit+1)...) // #nosec G202 -- kindFilter holds only ? placeholders
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "live status: upcoming rows", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
@@ -1176,7 +1262,7 @@ func (h *Handler) LiveStatus(w http.ResponseWriter, r *http.Request) {
 		if ev, err := scanLiveEvent(rows); err == nil {
 			upcoming = append(upcoming, livePublicSession{
 				ID: ev.ID, Title: ev.Title, Description: ev.Description, Kind: ev.Kind, HostName: hostName(ev.HostName),
-				ScheduledStartAt: ev.ScheduledStartAt, ScheduledEndAt: ev.ScheduledEndAt,
+				ScheduledStartAt: ev.ScheduledStartAt, ScheduledEndAt: ev.ScheduledEndAt, SeriesID: ev.SeriesID,
 			})
 		}
 	}
@@ -1218,6 +1304,10 @@ func (h *Handler) SweepLiveEvents(ctx context.Context, now time.Time) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	nowStr := liveTime(now)
+
+	// Recurring series first, so an occurrence that just came within reach can be
+	// auto-started in this same pass.
+	h.materializeAllLiveSeries(ctx, now)
 
 	// Read fully before acting: the single SQLite connection cannot serve the per-row
 	// updates while a cursor is open.

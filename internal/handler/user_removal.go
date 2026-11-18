@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/calnode/calnode/internal/webhook"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -261,6 +262,11 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if err := h.settleLiveSeriesForRemoval(ctx, targetID, req.Mode, req.TransferTo); err != nil {
+		h.logger.ErrorContext(ctx, "remove user: live series", "error", err, "user_id", targetID)
+		h.writeError(w, http.StatusInternalServerError, "could not settle the member's recurring live events")
+		return
+	}
 	if err := h.settleLiveEventsForRemoval(ctx, targetID, req.Mode, req.TransferTo); err != nil {
 		h.logger.ErrorContext(ctx, "remove user: live events", "error", err, "user_id", targetID)
 		h.writeError(w, http.StatusInternalServerError, "could not settle the member's live events")
@@ -304,6 +310,7 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 			args []any
 		}{
 			{`UPDATE live_events SET created_by = ? WHERE created_by = ?`, []any{heir, targetID}},
+			{`UPDATE live_event_series SET created_by = ? WHERE created_by = ?`, []any{heir, targetID}}, // fork: recurring series
 			{`UPDATE team_calendar_shares SET created_by = ? WHERE created_by = ?`, []any{heir, targetID}},
 			{`DELETE FROM users WHERE id = ?`, []any{targetID}},
 		} {
@@ -653,6 +660,47 @@ func (h *Handler) moveSecondarySeat(ctx context.Context, s upcomingSeat, targetI
 			UPDATE booking_hosts SET external_event_id = ?, external_calendar_id = ?, external_provider = ?, external_ical_uid = ? WHERE id = ?`,
 			eventID, calID, provider, icalUID, s.seatID); err != nil {
 			h.logger.ErrorContext(ctx, "remove user: persist receiver's event id", "error", err, "booking_id", s.bookingID)
+		}
+	}
+	return nil
+}
+
+// settleLiveSeriesForRemoval takes the leaver out of every recurring series they host
+// (fork: live_series.go): in transfer mode the new member takes their place in the
+// rotation; in delete mode they are dropped from it, and a series left with no host ends.
+// Their own occurrences are handled by settleLiveEventsForRemoval like any session.
+func (h *Handler) settleLiveSeriesForRemoval(ctx context.Context, targetID, mode, to string) error {
+	rows, err := h.db.QueryContext(ctx, liveSeriesSelect+` WHERE status = 'active' AND host_user_ids LIKE ?`, `%"`+targetID+`"%`)
+	if err != nil {
+		return err
+	}
+	var all []*liveSeries
+	for rows.Next() {
+		if s, err := scanLiveSeries(rows); err == nil {
+			all = append(all, s)
+		}
+	}
+	rows.Close() // #nosec G104 -- read fully before writing (single connection)
+	now := time.Now()
+	for _, s := range all {
+		var hosts []string
+		for _, id := range s.HostUserIDs {
+			if id == targetID {
+				if mode != "transfer" {
+					continue
+				}
+				id = to
+			}
+			if !slices.Contains(hosts, id) {
+				hosts = append(hosts, id)
+			}
+		}
+		s.HostUserIDs, s.UpdatedAt = hosts, liveTime(now)
+		if len(hosts) == 0 {
+			s.Status = liveSeriesEnded
+		}
+		if err := h.saveLiveSeries(ctx, s, false); err != nil {
+			return fmt.Errorf("live series %s: %w", s.ID, err)
 		}
 	}
 	return nil

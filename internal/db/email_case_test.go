@@ -131,3 +131,14 @@ func applyAllFork(t *testing.T, d *testDB) {
 		t.Fatalf("fork migrations: %v", err)
 	}
 }
+
+// applyForkTo applies the fork's own migrations up to version v.
+func applyForkTo(t *testing.T, d *testDB, v int64) {
+	t.Helper()
+	goose.SetBaseFS(forkMigrations)
+	goose.SetTableName(forkVersionTable)
+	defer func() { goose.SetBaseFS(migrations); goose.SetTableName(upstreamTable) }()
+	if err := goose.UpTo(d.DB, forkMigrationsDir, v); err != nil {
+		t.Fatalf("fork migrations to %d: %v", v, err)
+	}
+}

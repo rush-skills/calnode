@@ -9,10 +9,11 @@ import (
 // Migrate must convert that bookkeeping once, apply upstream's real 70..72, re-run no
 // fork migration, and keep the data.
 func TestMigrate_convertsPreSplitForkDatabase(t *testing.T) {
-	// A pre-split database: upstream up to 69, every fork migration, and upstream's
+	// A pre-split database: upstream up to 69, the 13 fork migrations that existed before
+	// the split (later ones were only ever numbered in the fork table), and upstream's
 	// 70..72 not yet run.
 	pre := openUpstreamTo(t, 69)
-	applyAllFork(t, pre)
+	applyForkTo(t, pre, 13)
 	// Rewrite the bookkeeping into the pre-split layout.
 	mustExec := func(q string, args ...any) {
 		t.Helper()

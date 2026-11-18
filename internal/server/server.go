@@ -578,6 +578,12 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	mux.HandleFunc("DELETE /v1/live-events/{id}", h.RequireAuth(h.CancelLiveEvent))
 	mux.HandleFunc("POST /v1/live-events/{id}/start", h.RequireAuth(h.StartLiveEvent))
 	mux.HandleFunc("POST /v1/live-events/{id}/end", h.RequireAuth(h.EndLiveEvent))
+	// Recurring series (fork): each occurrence is an ordinary live event above.
+	mux.HandleFunc("POST /v1/live-series", h.RequireAuth(h.CreateLiveSeries))
+	mux.HandleFunc("GET /v1/live-series", h.RequireAuth(h.ListLiveSeries))
+	mux.HandleFunc("GET /v1/live-series/{id}", h.RequireAuth(h.GetLiveSeries))
+	mux.HandleFunc("PATCH /v1/live-series/{id}", h.RequireAuth(h.PatchLiveSeries))
+	mux.HandleFunc("DELETE /v1/live-series/{id}", h.RequireAuth(h.EndLiveSeries))
 	// The status feed is read-only public data polled by every embedded widget and iframe,
 	// so it is CORS-open to any origin (set by the handler, independent of the booking
 	// widget's EMBED_ALLOWED_ORIGINS). The limit is a flood guard, not a quota: each viewer
