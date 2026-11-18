@@ -1271,7 +1271,9 @@ func (h *Handler) LiveStatus(w http.ResponseWriter, r *http.Request) {
 		next = &upcoming[0]
 		upcoming = upcoming[1:]
 	}
-	h.writeJSON(w, http.StatusOK, map[string]any{"live": live, "next": next, "upcoming": upcoming})
+	resp := map[string]any{"live": live, "next": next, "upcoming": upcoming}
+	h.addLiveStatusLabels(r, resp) // ?lang= only: adds locale + labels (live_page.go)
+	h.writeJSON(w, http.StatusOK, resp)
 }
 
 // ---------------------------------------------------------------------------

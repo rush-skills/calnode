@@ -125,7 +125,22 @@ Headers, set explicitly in `TeamCalendarEmbed`:
   the URL reveals nothing about whether a share ever existed.
 
 The embed has no viewer preferences, so the week starts on Monday and times use the
-browser's locale and time zone (shown in the footer).
+browser's time zone (shown in the footer).
+
+**Translated, in every booker locale** (`team_calendar_*` keys; LLM drafts outside
+English). The language is resolved like the booking page's (`?lang=`, the `calnode_lang`
+cookie, `Accept-Language`, the operator's fallback locale) but `?lang=` is not persisted to
+the cookie, since on a framed page it is the dashboard's setting. Static chrome (heading,
+buttons, aria-labels, the 404 page) is rendered with `.T`; the script gets one object of
+finished strings plus the resolved locale tag, which drives every `Intl` date, weekday and
+month name. Client-side substitution is `%s` only, for values known after load (the time
+zone, an HTTP status, an overflow count whose "+N more" wording is invariant in every
+shipped locale). The data feed's placeholder titles stay English in the JSON because the
+admin app reads the same feed; the embed swaps them for `team_calendar_busy` /
+`team_calendar_booking`, rebuilding the title from the item's own fields (no event type,
+no attendee → "Busy"; booking with no event type → "Booking · attendee"), never by editing
+a title someone wrote. Event titles, member names and event-type names are content and
+are not translated. Guard: `TestTeamCalendarEmbed_i18nKeysExist`.
 
 ## Admin page
 

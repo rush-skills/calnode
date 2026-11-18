@@ -1,11 +1,19 @@
 /*
  * Calnode live-status widget: <calnode-live data-base="https://cal.example.com"
- *   data-kind="office_hours" data-poll="30"></calnode-live>
+ *   data-kind="office_hours" data-poll="30" data-lang="fr"></calnode-live>
  *
  * A standalone, framework-free Web Component (Shadow DOM, own minimal CSS, no build step)
  * served at GET /live-widget.js. It polls GET {base}/v1/live/status every data-poll seconds
  * (default 30) and renders "Live now · Join" or "Offline · next session at …" inline on
  * any site. data-base defaults to the origin this script was loaded from.
+ *
+ * Language: the widget sends ?lang= with every poll - data-lang, else the nearest lang=""
+ * attribute (normally the host page's <html lang>), else navigator.language - and the
+ * feed answers with `locale` (the matched Calnode locale) and `labels` (finished,
+ * translated strings, built server-side by liveLabels). This file is the same bytes for
+ * every language, so its ETag stays a content hash. EN below is only what shows before
+ * the first successful poll (or if the server never answers); it mirrors en.json and
+ * TestLiveWidgetJS_fallbackMatchesEnglish keeps it that way.
  *
  * Deliberately independent of embed.js and booking-logic.js: it shares no state or
  * helpers with the booking widget, so neither can break the other.
@@ -44,6 +52,44 @@
   // Consecutive failed polls before the widget stops offering Join and says so.
   var STALE_AFTER = 3;
 
+  // English fallback for the labels the feed sends (mirrors en.json; see header).
+  var EN = {
+    live_unavailable: 'Live status unavailable.',
+    live_stale: 'Live status may be out of date \u2014 we couldn\u2019t reach the server. Retrying\u2026',
+    live_now: 'Live now',
+    live_offline: 'Offline',
+    live_join_now: 'Join now',
+    live_hosted_by: 'Hosted by %s',
+    live_next_session_at: 'Next session: %s',
+    live_no_session: 'No session scheduled yet.',
+    live_today_at: 'Today at %s',
+    live_tomorrow_at: 'Tomorrow at %s',
+    live_date_at: '%s at %s'
+  };
+
+  function t(labels, key) { return (labels && labels[key]) || EN[key] || key; }
+
+  // Mirrors the shared fmt in assets/booking-logic.js (which this widget does not load):
+  // %s and %[n]s only, for values the feed returns after load. Not a printf; plurals and
+  // date patterns never pass through here.
+  function fmt(template, args) {
+    var next = 0;
+    return String(template).replace(/%(?:\[(\d+)\])?s/g, function (_m, i) {
+      var v = args[i ? Number(i) - 1 : next++];
+      return v == null ? '' : String(v);
+    });
+  }
+
+  // The language to ask the feed for: data-lang, else the closest lang="" (the host page's
+  // <html lang> unless a container overrides it), else the browser's.
+  function pickLang(host) {
+    var own = host.getAttribute('data-lang');
+    if (own) return own;
+    var withLang = host.closest && host.closest('[lang]');
+    if (withLang && withLang.getAttribute('lang')) return withLang.getAttribute('lang');
+    return (navigator.languages && navigator.languages[0]) || navigator.language || '';
+  }
+
   function el(tag, cls, text) {
     var e = document.createElement(tag);
     if (cls) e.className = cls;
@@ -51,16 +97,18 @@
     return e;
   }
 
-  // Viewer-local time via Intl; the API sends RFC3339 UTC only.
-  function fmtWhen(iso) {
+  // Viewer-local time via Intl, in the feed's matched locale so day/month names agree with
+  // the labels around them; the API sends RFC3339 UTC only.
+  function fmtWhen(iso, labels, locale) {
     var d = new Date(iso);
     if (isNaN(d)) return iso;
+    var tag = locale || [];
     var now = new Date();
     var tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1);
-    var time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    if (d.toDateString() === now.toDateString()) return 'today at ' + time;
-    if (d.toDateString() === tomorrow.toDateString()) return 'tomorrow at ' + time;
-    return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) + ' at ' + time;
+    var time = d.toLocaleTimeString(tag, { hour: 'numeric', minute: '2-digit' });
+    if (d.toDateString() === now.toDateString()) return fmt(t(labels, 'live_today_at'), [time]);
+    if (d.toDateString() === tomorrow.toDateString()) return fmt(t(labels, 'live_tomorrow_at'), [time]);
+    return fmt(t(labels, 'live_date_at'), [d.toLocaleDateString(tag, { weekday: 'short', month: 'short', day: 'numeric' }), time]);
   }
 
   class CalnodeLive extends HTMLElement {
@@ -77,11 +125,14 @@
         style.textContent = CSS;
         root.appendChild(style);
         this._box = el('div', 'box');
-        this._box.appendChild(el('span', 'muted', 'Checking who\u2019s live\u2026'));
+        // Language-neutral until the first answer brings the translated labels.
+        this._box.setAttribute('aria-busy', 'true');
+        this._box.appendChild(el('span', 'muted', '\u2026'));
         root.appendChild(this._box);
       }
       this._base = (this.getAttribute('data-base') || scriptOrigin).replace(/\/+$/, '');
       this._kind = this.getAttribute('data-kind') || '';
+      this._lang = pickLang(this);
       var poll = parseInt(this.getAttribute('data-poll'), 10);
       this._pollMs = (poll > 0 ? Math.max(poll, 5) : 30) * 1000;
       var that = this;
@@ -99,14 +150,16 @@
 
     poll() {
       var that = this;
-      var url = this._base + '/v1/live/status' + (this._kind ? '?kind=' + encodeURIComponent(this._kind) : '');
+      var url = this._base + '/v1/live/status?lang=' + encodeURIComponent(this._lang) +
+        (this._kind ? '&kind=' + encodeURIComponent(this._kind) : '');
       fetch(url, { cache: 'no-store', mode: 'cors' })
         .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(function (data) { that._failures = 0; that._last = data; that.render(data); })
         .catch(function () {
           if (!that._rendered) {
             that._box.textContent = '';
-            that._box.appendChild(el('span', 'muted', 'Live status unavailable.'));
+            that._box.removeAttribute('aria-busy');
+            that._box.appendChild(el('span', 'muted', t(that._labels, 'live_unavailable')));
             return;
           }
           // After STALE_AFTER consecutive failed polls the last good status is still shown,
@@ -120,31 +173,35 @@
     render(data, stale) {
       var box = this._box;
       box.textContent = '';
+      box.removeAttribute('aria-busy');
+      var labels = data.labels || this._labels;
+      this._labels = labels;
+      var locale = data.locale;
       var live = data.live || [];
       if (live.length) {
         live.forEach(function (s) {
           var wrap = el('div', 'session');
-          wrap.appendChild(el('span', 'badge live', 'Live now'));
+          wrap.appendChild(el('span', 'badge live', t(labels, 'live_now')));
           wrap.appendChild(el('div', 'title', s.title));
-          if (s.host_name) wrap.appendChild(el('div', 'muted', 'Hosted by ' + s.host_name));
+          if (s.host_name) wrap.appendChild(el('div', 'muted', fmt(t(labels, 'live_hosted_by'), [s.host_name])));
           if (s.join_url && !stale) {
-            var a = el('a', 'join', 'Join now');
+            var a = el('a', 'join', t(labels, 'live_join_now'));
             a.href = s.join_url; a.target = '_blank'; a.rel = 'noopener noreferrer';
             wrap.appendChild(a);
           }
           box.appendChild(wrap);
         });
       } else {
-        box.appendChild(el('span', 'badge off', 'Offline'));
+        box.appendChild(el('span', 'badge off', t(labels, 'live_offline')));
         var next = data.next;
         if (next) {
           box.appendChild(el('div', 'title', next.title));
-          box.appendChild(el('div', 'muted', 'Next session ' + fmtWhen(next.scheduled_start_at) + (next.host_name ? ' \u00b7 ' + next.host_name : '')));
+          box.appendChild(el('div', 'muted', fmt(t(labels, 'live_next_session_at'), [fmtWhen(next.scheduled_start_at, labels, locale)]) + (next.host_name ? ' \u00b7 ' + next.host_name : '')));
         } else {
-          box.appendChild(el('div', 'muted', 'No session scheduled yet.'));
+          box.appendChild(el('div', 'muted', t(labels, 'live_no_session')));
         }
       }
-      if (stale) box.appendChild(el('div', 'muted', 'Live status may be out of date — we could not reach the server.'));
+      if (stale) box.appendChild(el('div', 'muted', t(labels, 'live_stale')));
       this._rendered = true;
       this.dispatchEvent(new CustomEvent('calnode-live:update', { detail: data }));
     }

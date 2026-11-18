@@ -576,12 +576,57 @@ func (h *Handler) TeamCalendarEmbed(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Language as on the other public pages (?lang=, the calnode_lang cookie,
+	// Accept-Language, the operator's fallback). Not persisted: on a framed page ?lang= is
+	// the embedding dashboard's setting, not the viewer's choice.
+	loc := h.resolveLocale(r)
+	w.Header().Set("Vary", "Accept-Language, Cookie")
+	data := teamCalendarPageData{Locale: loc.Code, T: loc.T, Labels: localeLabels(loc, teamCalendarLabelKeys)}
 	if !ok {
 		w.WriteHeader(http.StatusNotFound)
-		_ = teamCalendarTmpl.Execute(w, map[string]any{"NotFound": true})
+		data.NotFound = true
+		_ = teamCalendarTmpl.Execute(w, data)
 		return
 	}
-	if err := teamCalendarTmpl.Execute(w, map[string]any{"Token": tok}); err != nil {
+	data.Token = tok
+	if err := teamCalendarTmpl.Execute(w, data); err != nil {
 		h.logger.ErrorContext(r.Context(), "team calendar embed: template", "error", err)
 	}
+}
+
+type teamCalendarPageData struct {
+	NotFound bool
+	Token    string
+	Locale   string
+	T        func(string) string
+	// Labels is JSON-encoded by html/template in the script context.
+	Labels map[string]string
+}
+
+// teamCalendarLabelKeys are the strings the embed page's script builds markup from, sent
+// finished (localeLabels). Its only client-side substitutions are %s for values known
+// after load (the viewer's time zone, a date Intl formatted, an HTTP status, an overflow
+// count whose wording is invariant in every shipped locale). team_calendar_busy and
+// team_calendar_booking replace the data feed's English placeholder titles, which stay
+// English in the feed because the admin app reads the same feed.
+//
+// TestTeamCalendarEmbed_i18nKeysExist checks every t('…') in the template is listed here.
+var teamCalendarLabelKeys = []string{
+	"loading",
+	"team_calendar_revoked",
+	"team_calendar_load_error",
+	"team_calendar_all_day",
+	"team_calendar_when_all_day",
+	"team_calendar_more",
+	"team_calendar_when",
+	"team_calendar_member",
+	"team_calendar_source",
+	"team_calendar_event_type",
+	"team_calendar_attendee",
+	"team_calendar_location",
+	"team_calendar_source_booking",
+	"team_calendar_busy",
+	"team_calendar_booking",
+	"team_calendar_tz_footer",
+	"team_calendar_tz_local",
 }

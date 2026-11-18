@@ -108,9 +108,21 @@ Code: `internal/handler/live_events.go` (API + sweep), `live_page.go` (page + wi
     Google/Microsoft provider plumbing that turns it into invitees lives in the
     default-participants branch; take that side on conflict.
 - **Migration numbering:** the fork's migrations now live in `internal/db/migrations_fork` with their own goose table, so they never collide with upstream's numbering; see docs/FORK.md.
-- **Not translated.** `/live` and the widget are English-only, like the LiveKit room: the
-  content is three short status strings and viewer-local dates come from `Intl`. Adding
-  the strings to the nine locale files is straightforward if the page is ever marketed.
+- **Translated, in every booker locale.** The strings are the `live_*` keys in
+  `internal/i18n/locales/*.json` (LLM drafts outside English, like the rest of the booker
+  locales). `/live` resolves its language like the booking page (`?lang=`, the
+  `calnode_lang` cookie, `Accept-Language`, the operator's fallback locale), renders its
+  static text through `.T`, sets `<html lang>`, and hands its script one object of finished
+  strings (`liveLabels`) plus the locale tag its `Intl` calls use. `?lang=` is *not*
+  persisted to the cookie here: on a framed page it is the embedding site's setting, not
+  the visitor's choice. The widget cannot use templates and is one static file for every
+  language, so it asks the status feed instead (`?lang=` → `locale` + `labels`, below).
+  Neither surface builds grammar client-side: the only substitution is `%s` / `%[n]s` (a
+  mirror of `BookingLogic.fmt`) for values that arrive after load - a host name, a session
+  title, a time `Intl` formatted in the viewer's zone. The two built-in kinds
+  (`office_hours`, `event`) are translated (`live_kind_*`); a custom kind is shown as the
+  operator named it. Guards: `TestLiveSurfaces_i18nKeysExist` (every lookup in the page and
+  widget is sent and defined; the widget's English fallback equals `en.json`).
 - **`end` on a scheduled session is 409** (it never went live); cancel is the way out.
   `end` and `start` are idempotent on rows already in the target state (200 with the row).
   Cancelling a live session ends it and deletes the calendar event in one provider call
@@ -135,7 +147,8 @@ All timestamps are RFC3339; the server stores UTC.
   "started_at": null, "ended_at": null,
   "auto_start": true, "auto_end": true,
   "join_url": "https://meet.google.com/abc-defg-hij", "join_url_minted": true,
-  "has_calendar_event": true,
+  "has_calendar_event": true, "invite_default_participants": true,
+  "series_id": null, "occurrence_date": null, "overrides": [],
   "created_by": "…", "created_at": "…", "updated_at": "…"
 }
 ```
@@ -146,7 +159,8 @@ All timestamps are RFC3339; the server stores UTC.
 |---|---|
 | `title` | required, ≤ 200 chars |
 | `description` | optional, ≤ 4000 chars |
-| `kind` | `office_hours` (default) or `event` |
+| `kind` | default `office_hours`; any short lowercase slug (`webinar`, `weekly_onboarding`) |
+| `invite_default_participants` | default `true`; `false` keeps the workspace's default participants (a notetaker) off the calendar event |
 | `scheduled_start_at`, `scheduled_end_at` | optional RFC3339; end must be after start |
 | `start_now` | `true` creates and goes live immediately |
 | `host_user_id` | admins only; default = caller. Members get 403 if they name anyone else |
@@ -190,28 +204,66 @@ Ends now (`ended_at`), sets the calendar event's end to now. Idempotent on an en
 Marks the row cancelled (a live one is ended first) and deletes its calendar event.
 Idempotent.
 
-### `GET /v1/live/status?kind=` - public, no auth
+### `GET /v1/live/status?kind=&limit=&lang=` - public, no auth
 
 ```json
 {
-  "live": [{ "id", "title", "description", "kind", "host_name", "join_url", "started_at" }],
-  "next": { "id", "title", "description", "kind", "host_name", "scheduled_start_at", "scheduled_end_at" } | null,
-  "upcoming": [ ...same shape as next, up to 5 ]
+  "live": [{ "id", "title", "description", "kind", "host_name", "join_url", "started_at",
+             "scheduled_start_at", "scheduled_end_at", "series_id" }],
+  "next": { "id", "title", "description", "kind", "host_name", "scheduled_start_at", "scheduled_end_at", "series_id" } | null,
+  "upcoming": [ ...same shape as next, up to `limit` ]
 }
 ```
+
+- `scheduled_start_at` / `scheduled_end_at` on a live row are its planned window (omitted
+  when unset), so a site can say "until 18:00".
+- `series_id` is set on an occurrence of a recurring series (omitted on a one-off). Every
+  occurrence has its own `id`, so a client dedupes by `id`.
+- `limit` is how many sessions `upcoming` may hold after `next`: default 5, max 50.
+- `kind` is one kind or a comma list (`kind=webinar,office_hours,weekly_onboarding`).
 
 `join_url` appears **only** on `live` rows. `next` is the earliest scheduled session whose
 window has not fully passed: until its `scheduled_end_at`, or for four hours after its
 start when it has none (so a session past its start but not yet live - auto_start off,
 host running late - is still "next"). `upcoming` is the sessions after it (it does not
 repeat `next`). `kind` filters all three.
+
+The 600/min limit is per client IP. Behind Fly.io set `TRUSTED_PROXY_CIDRS=172.16.0.0/12`
+and `CLIENT_IP_HEADER=Fly-Client-IP` (both in `deploy/fly/.env.example`): the request
+crosses two Fly proxy hops, and without the header the X-Forwarded-For walk can stop on a
+shared edge address. The request log's `client_ip` shows the address the limit keys on.
 Headers: `Access-Control-Allow-Origin: *`, `Cache-Control: no-store`. 600 requests/min/IP.
 
-### `GET /live?kind=&theme=light|dark` - public page
+**`lang` (optional) adds two fields and changes nothing else.** Without it the payload is
+exactly the shape above. With it:
+
+```json
+{
+  "live": [...], "next": {...}, "upcoming": [...],
+  "locale": "fr",
+  "labels": {
+    "live_now": "En direct", "live_offline": "Hors ligne", "live_join_now": "Rejoindre",
+    "live_hosted_by": "Animé par %s", "live_next_session_at": "Prochaine session : %s",
+    "live_today_at": "Aujourd’hui à %s", "live_date_at": "%s à %s", "…": "…"
+  }
+}
+```
+
+`lang` is a BCP-47 tag. An exact Calnode locale code wins (`fr-CA`); otherwise it is
+matched like a one-entry `Accept-Language`, so `pt-BR` gets `pt` and `de-AT` gets `de`; no
+match gets the operator's fallback locale (English by default). `locale` is the code
+actually used - pass it to `Intl` so day and month names agree with the labels. The
+visitor's own `Accept-Language` is not consulted: a widget on someone else's page should
+match that page. `labels` holds every `live_*` key (`liveLabelKeys`); values are finished
+strings, and the only placeholders are `%s` / `%[n]s` for the title, host name or
+formatted time the client drops in.
+
+### `GET /live?kind=&theme=light|dark&lang=` - public page
 
 Self-contained HTML that polls the status feed every 30 s (and on tab focus) and shows a
 pulsing LIVE badge, title, host and a Join button, or "Offline" with the next session in the
-viewer's local time plus the upcoming list. Frameable from any origin.
+viewer's local time plus the upcoming list. Frameable from any origin. Translated: `lang`
+forces a locale (`/live?lang=de`), otherwise the visitor's `Accept-Language` picks one.
 
 ```html
 <iframe src="https://cal.example.com/live" width="100%" height="320" style="border:0"></iframe>
@@ -221,13 +273,84 @@ viewer's local time plus the upcoming list. Frameable from any origin.
 
 ```html
 <script src="https://cal.example.com/live-widget.js" async></script>
-<calnode-live data-kind="office_hours" data-poll="30"></calnode-live>
+<calnode-live data-kind="office_hours" data-poll="30" data-lang="fr"></calnode-live>
 ```
 
 `data-base` defaults to the script's own origin; `data-kind` omitted shows every kind;
-`data-poll` is seconds (min 5, default 30). The element dispatches `calnode-live:update`
+`data-poll` is seconds (min 5, default 30). `data-lang` picks the language; without it the
+widget uses the nearest `lang` attribute (normally the host page's `<html lang>`), then
+`navigator.language`. It sends that as `?lang=` on every poll and renders the returned
+`labels`; before the first answer it shows a language-neutral "…", and if the server never
+answers it falls back to its built-in English. The script itself is identical for every
+language, so its content-hash ETag and caching are unchanged. The element dispatches `calnode-live:update`
 with the status payload as `detail` after every successful poll, for sites that want to
 react to it themselves.
+
+## Recurring series (fork)
+
+Code: `internal/handler/live_series.go`, fork migration `migrations_fork/00014_live_event_series.sql`,
+admin UI on `/admin/live-events` ("New recurring series").
+
+A series is a weekly rule, never a session itself. The sweep turns it into ordinary
+`live_events` rows four weeks ahead (`liveSeriesHorizon`), one per date, each with its own
+`id`. Everything above (the status feed, `/live`, the widget, calendar minting, start/end/
+cancel, auto start/end) works on an occurrence exactly as on a one-off session.
+
+- **Wall clock in the series' timezone.** `start_time` + `timezone` (IANA) give each date's
+  start, so 17:00 Europe/Sofia is 14:00Z in summer and 15:00Z in winter. Dates in the rule
+  (`start_date`, `end_date`, `skip_dates`) are calendar dates in that zone.
+- **Rule:** `weekdays` (0 = Sunday … 6 = Saturday), `interval_weeks` counted from the week
+  (Monday-based) of `start_date`, `duration_minutes`, optional inclusive `end_date`,
+  `skip_dates` as `YYYY-MM-DD` or inclusive ranges `YYYY-MM-DD/YYYY-MM-DD`.
+- **Hosts:** `host_user_ids` is one host or a rotation. The n-th held occurrence goes to
+  `hosts[n % len]`, counting from `start_date` and skipping skipped dates, so a skipped
+  week does not skip a host. Members may only host their own series; admins may name anyone.
+- **Link:** `join_url` set = a standing room every occurrence reuses (manual link, carried on
+  each calendar event as Location, nothing minted). Empty = each occurrence gets a fresh
+  Meet/Teams from its host's calendar, minted when the occurrence is materialised.
+- **One occurrence on its own.** `PATCH /v1/live-events/{id}` works as for any session and
+  records which field groups it changed in `overrides` (`title`, `description`, `kind`,
+  `schedule`, `host`, `link`, `auto`, `invite`). A later series edit updates every future
+  scheduled occurrence field by field and leaves those groups alone. `DELETE` cancels that
+  date only; the cancelled row keeps the date taken, so it is never re-created.
+- **Series edits** (`PATCH /v1/live-series/{id}`) touch only *future scheduled* occurrences:
+  live, ended and cancelled ones are history. A date the rule no longer produces (newly
+  skipped, past a shortened end, a removed weekday) is deleted along with its calendar
+  event; nobody has its link yet. A new host re-hosts the occurrence (old event cancelled
+  as the old host, fresh one minted); a changed title, description, link or guest list
+  re-creates the calendar event (a minted link is minted afresh); a moved time moves it.
+- **Ending a series** (`DELETE /v1/live-series/{id}`) stops it producing dates and cancels
+  its scheduled occurrences. A session live right now keeps running.
+- **Member removal:** transfer mode puts the new member in the leaver's place in every
+  rotation; delete mode drops them, and a series left with no host ends.
+- **Not recorded:** `invite_default_participants` (on series and on single sessions,
+  default true) keeps the workspace's default participants, such as a notetaker, off the
+  calendar event. Changing it on a scheduled session re-creates its calendar event.
+
+### `POST /v1/live-series` → 201 `{"series": {...}, "occurrences": [...]}`
+
+| field | notes |
+|---|---|
+| `title` | required, ≤ 200 chars |
+| `description` | optional, ≤ 4000 chars |
+| `kind` | default `office_hours`; any short lowercase slug (`webinar`, `weekly_onboarding`) |
+| `timezone` | required, IANA name, e.g. `Europe/Sofia` |
+| `weekdays` | required, non-empty, 0–6 |
+| `interval_weeks` | default 1 (1–52) |
+| `start_time` | required, `HH:MM` 24-hour |
+| `duration_minutes` | required, 1–1440 |
+| `start_date` | required, `YYYY-MM-DD` |
+| `end_date` | optional; `""` on PATCH clears it |
+| `skip_dates` | optional list of dates / ranges |
+| `host_user_ids` (or `host_user_id`) | default the caller |
+| `join_url` | `""` = fresh link per occurrence |
+| `auto_start`, `auto_end`, `invite_default_participants` | default `true` |
+
+`GET /v1/live-series?status=active|ended` → `{"series": [...]}` (any member).
+`GET /v1/live-series/{id}` → the series with its scheduled and live occurrences.
+`PATCH /v1/live-series/{id}` → same fields; applied as above. 409 on an ended series.
+`DELETE /v1/live-series/{id}` → ends it. Creator, any host of the series, or an admin may
+manage it; any member may read.
 
 ## Admin UI
 
@@ -242,5 +365,8 @@ widget snippets. The list re-polls every 30 s so sweep transitions show without 
 
 `internal/handler/live_events_test.go` (state machine, validation, 409 paths, calendar
 minting with a fake provider, manual override, permissions matrix, public status payload,
-sweep with a fixed clock, page headers, widget headers) and
-`live_events_internal_test.go` (default participants minus host on `ExtraAttendees`).
+sweep with a fixed clock, page headers, widget headers),
+`live_events_internal_test.go` (default participants minus host on `ExtraAttendees`),
+`public_pages_i18n_test.go` (`/live` in French by `Accept-Language` and German by `?lang=`;
+the feed's `labels` only with `lang`, and its matching rules) and
+`public_pages_i18n_internal_test.go` (every string lookup is sent and defined).

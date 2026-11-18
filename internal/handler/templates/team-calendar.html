@@ -1,11 +1,11 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{.Locale}}">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex, nofollow">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<title>Team calendar</title>
+<title>{{call .T "team_calendar_title"}}</title>
 <style>
 /* Framework-free, same family as book.html: system font, neutral greys, one card.
    Styled here (not booking.css) because nothing is shared with the booking widgets. */
@@ -76,32 +76,32 @@ button[aria-pressed="true"] { background: var(--fg); color: #fff; border-color: 
 <body>
 {{if .NotFound}}
 <div class="tc-status" style="padding-top:64px">
-  <h1 style="font-size:18px;margin:0 0 8px">Calendar not found</h1>
-  <p>This share link is invalid or has been revoked.</p>
+  <h1 style="font-size:18px;margin:0 0 8px">{{call .T "team_calendar_not_found"}}</h1>
+  <p>{{call .T "team_calendar_not_found_body"}}</p>
 </div>
 {{else}}
 <header class="tc-head">
-  <h1>Team calendar</h1>
+  <h1>{{call .T "team_calendar_title"}}</h1>
   <div class="tc-nav">
-    <button type="button" id="prev" aria-label="Previous">&lsaquo;</button>
-    <button type="button" id="today">Today</button>
-    <button type="button" id="next" aria-label="Next">&rsaquo;</button>
+    <button type="button" id="prev" aria-label="{{call .T "team_calendar_previous"}}" title="{{call .T "team_calendar_previous"}}">&lsaquo;</button>
+    <button type="button" id="today">{{call .T "team_calendar_today"}}</button>
+    <button type="button" id="next" aria-label="{{call .T "team_calendar_next"}}" title="{{call .T "team_calendar_next"}}">&rsaquo;</button>
     <span class="tc-range" id="range"></span>
   </div>
-  <div class="tc-views" role="group" aria-label="View">
-    <button type="button" data-view="week" aria-pressed="true">Week</button>
-    <button type="button" data-view="month" aria-pressed="false">Month</button>
+  <div class="tc-views" role="group" aria-label="{{call .T "team_calendar_view"}}">
+    <button type="button" data-view="week" aria-pressed="true">{{call .T "team_calendar_week"}}</button>
+    <button type="button" data-view="month" aria-pressed="false">{{call .T "team_calendar_month"}}</button>
   </div>
 </header>
-<div class="tc-members" id="members" aria-label="Members"></div>
-<div class="tc-body" id="body"><div class="tc-status">Loading…</div></div>
-<div class="tc-foot">All times are shown in your local time zone (<span id="tz"></span>).</div>
+<div class="tc-members" id="members" aria-label="{{call .T "team_calendar_members"}}"></div>
+<div class="tc-body" id="body"><div class="tc-status">{{call .T "loading"}}</div></div>
+<div class="tc-foot" id="tz"></div>
 
 <div class="tc-detail" id="detail" hidden>
   <div class="tc-card" role="dialog" aria-modal="true" aria-labelledby="dtitle">
     <h2 id="dtitle"></h2>
     <dl id="dbody"></dl>
-    <button type="button" class="close" id="dclose">Close</button>
+    <button type="button" class="close" id="dclose">{{call .T "close"}}</button>
   </div>
 </div>
 
@@ -109,6 +109,20 @@ button[aria-pressed="true"] { background: var(--fg); color: #fff; border-color: 
 (function () {
   'use strict';
   var TOKEN = {{.Token}};
+  // The resolved locale drives every Intl call, so weekday/month names match the
+  // translated chrome; L holds the finished strings (teamCalendarLabelKeys).
+  var LOCALE = {{.Locale}};
+  var L = {{.Labels}};
+  function t(key) { return L[key] || key; }
+  // Mirrors BookingLogic.fmt (assets/booking-logic.js, not loaded here): %s and %[n]s
+  // only, for values known after load. Never a plural rule or a date pattern.
+  function fmt(template, args) {
+    var next = 0;
+    return String(template).replace(/%(?:\[(\d+)\])?s/g, function (_m, i) {
+      var v = args[i ? Number(i) - 1 : next++];
+      return v == null ? '' : String(v);
+    });
+  }
   var WEEK_START = 1; // Monday; the embed has no viewer preferences to read
   var HOUR = 44;
 
@@ -121,8 +135,8 @@ button[aria-pressed="true"] { background: var(--fg); color: #fff; border-color: 
   function addDays(d, n) { var x = new Date(d); x.setDate(x.getDate() + n); return x; }
   function startOfWeek(d) { var x = startOfDay(d); var diff = (x.getDay() - WEEK_START + 7) % 7; return addDays(x, -diff); }
   function sameDay(a, b) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(); }
-  function fmtTime(d) { return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }); }
-  function fmtDate(d) { return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }); }
+  function fmtTime(d) { return d.toLocaleTimeString(LOCALE, { hour: 'numeric', minute: '2-digit' }); }
+  function fmtDate(d) { return d.toLocaleDateString(LOCALE, { weekday: 'short', month: 'short', day: 'numeric' }); }
   function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 
   // The grid's date span: 7 days for week, a 6-row Monday-aligned grid for month.
@@ -142,13 +156,13 @@ button[aria-pressed="true"] { background: var(--fg); color: #fff; border-color: 
   function load(refresh) {
     var r = gridRange();
     var key = ymd(r.from) + '/' + ymd(addDays(r.to, -1));
-    if (state.revoked) { $('body').innerHTML = '<div class="tc-status error">This share link is no longer valid.</div>'; return; }
+    if (state.revoked) { $('body').innerHTML = '<div class="tc-status error">' + esc(t('team_calendar_revoked')) + '</div>'; return; }
     if (!refresh && state.cache[key]) { state.members = state.cache[key].members; state.items = state.cache[key].items; render(); return; }
-    if (!refresh) $('body').innerHTML = '<div class="tc-status">Loading…</div>';
+    if (!refresh) $('body').innerHTML = '<div class="tc-status">' + esc(t('loading')) + '</div>';
     fetch('/v1/team-calendar?from=' + ymd(r.from) + '&to=' + ymd(addDays(r.to, -1)) + '&token=' + encodeURIComponent(TOKEN), { cache: 'no-store' })
       .then(function (res) {
-        if (res.status === 401) { state.cache = {}; state.revoked = true; throw new Error('This share link is no longer valid.'); }
-        if (!res.ok) throw new Error('Could not load the calendar (' + res.status + ').');
+        if (res.status === 401) { state.cache = {}; state.revoked = true; throw new Error(t('team_calendar_revoked')); }
+        if (!res.ok) throw new Error(fmt(t('team_calendar_load_error'), [res.status]));
         return res.json();
       })
       .then(function (data) {
@@ -157,6 +171,7 @@ button[aria-pressed="true"] { background: var(--fg); color: #fff; border-color: 
         data.items.forEach(function (it) {
           it.s = it.all_day ? localDay(it.start) : new Date(it.start);
           it.e = it.all_day ? localDay(it.end) : new Date(it.end);
+          localizeTitle(it);
         });
         state.cache[key] = data;
         // The viewer may have moved on while a background refresh was in flight.
@@ -173,6 +188,17 @@ button[aria-pressed="true"] { background: var(--fg); color: #fff; border-color: 
   }
   setInterval(function () { if (!document.hidden) load(true); }, 60000);
   document.addEventListener('visibilitychange', function () { if (!document.hidden) load(true); });
+
+  // The feed's placeholder titles are English on purpose (the admin app reads the same
+  // feed through its own catalogue): "Busy" for a private booking or an untitled external
+  // event, "Booking[ · attendee]" for a booking with no event type. Rebuilt from the
+  // item's own fields, never by editing a title someone actually wrote.
+  function localizeTitle(it) {
+    if (it.title === 'Busy' && !it.event_type_name && !it.attendee_name) { it.title = t('team_calendar_busy'); return; }
+    if (it.kind === 'booking' && !it.event_type_name) {
+      it.title = t('team_calendar_booking') + (it.attendee_name ? ' · ' + it.attendee_name : '');
+    }
+  }
 
   function memberById(id) { for (var i = 0; i < state.members.length; i++) if (state.members[i].id === id) return state.members[i]; return null; }
   function visibleItems() { return state.items.filter(function (it) { return !state.hidden[it.member_id]; }); }
@@ -194,7 +220,7 @@ button[aria-pressed="true"] { background: var(--fg); color: #fff; border-color: 
     d.className = 'ev ' + it.kind + (cls ? ' ' + cls : '');
     d.style.setProperty('--c', m ? m.color : '#6b7280');
     d.title = it.title;
-    d.innerHTML = '<div class="t">' + esc(it.title) + '</div>' + (cls === 'allday' ? '' : '<div class="m">' + (it.all_day ? 'All day' : fmtTime(it.s)) + (m ? ' · ' + esc(m.name) : '') + '</div>');
+    d.innerHTML = '<div class="t">' + esc(it.title) + '</div>' + (cls === 'allday' ? '' : '<div class="m">' + (it.all_day ? esc(t('team_calendar_all_day')) : fmtTime(it.s)) + (m ? ' · ' + esc(m.name) : '') + '</div>');
     d.onclick = function () { showDetail(it); };
     return d;
   }
@@ -207,7 +233,7 @@ button[aria-pressed="true"] { background: var(--fg); color: #fff; border-color: 
     for (var i = 0; i < 7; i++) {
       var d = addDays(r.from, i); days.push(d);
       var h = document.createElement('div'); h.className = 'wk-hd' + (sameDay(d, today) ? ' today' : '');
-      h.innerHTML = d.toLocaleDateString(undefined, { weekday: 'short' }) + '<div class="d">' + d.getDate() + '</div>';
+      h.innerHTML = esc(d.toLocaleDateString(LOCALE, { weekday: 'short' })) + '<div class="d">' + d.getDate() + '</div>';
       g.appendChild(h);
     }
     // all-day row
@@ -263,7 +289,7 @@ button[aria-pressed="true"] { background: var(--fg); color: #fff; border-color: 
   function renderMonth() {
     var r = gridRange(), items = visibleItems(), today = new Date(), month = state.anchor.getMonth();
     var g = document.createElement('div'); g.className = 'mo';
-    for (var i = 0; i < 7; i++) { var h = document.createElement('div'); h.className = 'mo-hd'; h.textContent = addDays(r.from, i).toLocaleDateString(undefined, { weekday: 'short' }); g.appendChild(h); }
+    for (var i = 0; i < 7; i++) { var h = document.createElement('div'); h.className = 'mo-hd'; h.textContent = addDays(r.from, i).toLocaleDateString(LOCALE, { weekday: 'short' }); g.appendChild(h); }
     for (var d = 0; d < 42; d++) {
       var day = addDays(r.from, d), next = addDays(day, 1);
       var cell = document.createElement('div'); cell.className = 'mo-day' + (day.getMonth() !== month ? ' other' : '') + (sameDay(day, today) ? ' today' : '');
@@ -272,7 +298,7 @@ button[aria-pressed="true"] { background: var(--fg); color: #fff; border-color: 
       var shown = dayItems.slice(0, 4);
       shown.forEach(function (it) { cell.appendChild(evNode(it, 'allday')); });
       if (dayItems.length > shown.length) {
-        var more = document.createElement('div'); more.className = 'more'; more.textContent = '+' + (dayItems.length - shown.length) + ' more';
+        var more = document.createElement('div'); more.className = 'more'; more.textContent = fmt(t('team_calendar_more'), [dayItems.length - shown.length]);
         more.onclick = (function (dd) { return function () { state.anchor = dd; state.view = 'week'; syncViewButtons(); load(); }; })(day);
         cell.appendChild(more);
       }
@@ -286,7 +312,7 @@ button[aria-pressed="true"] { background: var(--fg); color: #fff; border-color: 
     var r = gridRange();
     $('range').textContent = state.view === 'week'
       ? fmtDate(r.from) + ' – ' + fmtDate(addDays(r.to, -1))
-      : state.anchor.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+      : state.anchor.toLocaleDateString(LOCALE, { month: 'long', year: 'numeric' });
     if (state.view === 'week') renderWeek(); else renderMonth();
   }
 
@@ -294,13 +320,14 @@ button[aria-pressed="true"] { background: var(--fg); color: #fff; border-color: 
     var m = memberById(it.member_id);
     $('dtitle').textContent = it.title; $('dtitle').style.setProperty('--c', m ? m.color : '#6b7280');
     var rows = [
-      ['When', it.all_day ? fmtDate(it.s) + ' (all day)' : fmtDate(it.s) + ', ' + fmtTime(it.s) + ' – ' + fmtTime(it.e)],
-      ['Member', m ? m.name : '—'],
-      ['Source', it.kind === 'booking' ? 'Calnode booking' : (it.source === 'google' ? 'Google Calendar' : it.source === 'microsoft' ? 'Microsoft 365' : it.source)]
+      [t('team_calendar_when'), it.all_day ? fmt(t('team_calendar_when_all_day'), [fmtDate(it.s)]) : fmtDate(it.s) + ', ' + fmtTime(it.s) + ' – ' + fmtTime(it.e)],
+      [t('team_calendar_member'), m ? m.name : '—'],
+      // Product names stay as they are; only "Calnode booking" is a phrase.
+      [t('team_calendar_source'), it.kind === 'booking' ? t('team_calendar_source_booking') : (it.source === 'google' ? 'Google Calendar' : it.source === 'microsoft' ? 'Microsoft 365' : it.source)]
     ];
-    if (it.event_type_name) rows.push(['Event type', it.event_type_name]);
-    if (it.attendee_name) rows.push(['Attendee', it.attendee_name]);
-    if (it.location) rows.push(['Location', it.location]);
+    if (it.event_type_name) rows.push([t('team_calendar_event_type'), it.event_type_name]);
+    if (it.attendee_name) rows.push([t('team_calendar_attendee'), it.attendee_name]);
+    if (it.location) rows.push([t('team_calendar_location'), it.location]);
     $('dbody').innerHTML = rows.map(function (r) { return '<dt>' + esc(r[0]) + '</dt><dd>' + esc(r[1]) + '</dd>'; }).join('');
     $('detail').hidden = false;
   }
@@ -336,10 +363,12 @@ button[aria-pressed="true"] { background: var(--fg); color: #fff; border-color: 
     'America/Mendoza': 'America/Argentina/Mendoza', 'America/Indianapolis': 'America/Indiana/Indianapolis',
     'America/Louisville': 'America/Kentucky/Louisville', 'America/Coral_Harbour': 'America/Atikokan'
   };
+  var zoneName;
   try {
     var zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    $('tz').textContent = (TZ_RENAMED[zone] || zone).replace(/_/g, ' ');
-  } catch (e) { $('tz').textContent = 'local'; }
+    zoneName = (TZ_RENAMED[zone] || zone).replace(/_/g, ' ');
+  } catch (e) { zoneName = t('team_calendar_tz_local'); }
+  $('tz').textContent = fmt(t('team_calendar_tz_footer'), [zoneName]);
   load();
 })();
 </script>

@@ -13,6 +13,23 @@ exact tag (`ghcr.io/calnode/calnode:0.1.0`) if you need stability between upgrad
 
 Fork changes (rush-skills/calnode) not yet in an upstream release. See docs/FORK.md.
 
+### Added (fork)
+- **Recurring live events.** A series repeats weekly (chosen weekdays, every N weeks) at a
+  wall-clock time in its own timezone, so 17:00 Europe/Sofia stays 17:00 across daylight
+  saving. It can skip dates or whole periods, rotate hosts, and use either one standing
+  link or a fresh Meet per session. Sessions are created four weeks ahead as ordinary live
+  events with their own ids; one can be edited or cancelled without touching the series.
+  `/v1/live-series`, docs/features/live-events.md.
+- **"Invite the default participants" switch** on live events and series, for sessions
+  promised as not recorded.
+- **Live status feed:** live rows carry their scheduled window, rows carry `series_id`,
+  `?limit=` (up to 50) and comma-separated `?kind=`. `?lang=` adds translated `labels`.
+- **`CLIENT_IP_HEADER`** (e.g. `Fly-Client-IP`): per-IP rate limits behind Fly key on the
+  visitor rather than a shared proxy address. The request log records `client_ip`.
+- **Translations.** The admin app's fork pages are in the catalogue (en + fr), and the public
+  live page, live widget and team calendar page are in all 11 booker languages. Greek and
+  Polish gained the ten keys they were missing.
+
 ### Fixed
 - **`booking.created` carries the Meet/Teams link.** It used to carry the event type's
   static location, because the link the calendar minted was never copied into the payload.
