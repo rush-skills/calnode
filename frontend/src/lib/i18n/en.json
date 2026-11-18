@@ -1638,6 +1638,25 @@
 				"load": "Could not load tracking settings",
 				"save": "Could not save tracking settings"
 			}
+		},
+		"participants": {
+			"toast": {
+				"loadError": "Could not load meeting defaults",
+				"saveError": "Could not save meeting defaults",
+				"saved": "Meeting defaults saved"
+			},
+			"defaultParticipants": {
+				"title": "Default participants",
+				"description": "These addresses are invited to the calendar event of every new meeting booked here, for every event type, including live events. They get the calendar invite only — Calnode does not email them and bookers never see them. Typical use: a notetaker bot that joins when a shared mailbox is invited.",
+				"emailsLabel": "Email addresses",
+				"emailsHint": "One address per line (commas work too). Up to 20. The invite comes from each host's own connected calendar, so a host without a connected calendar sends none. Google and Microsoft email the invite themselves; on CalDAV the addresses are written to the event and whether an invite goes out depends on the server's scheduling support."
+			},
+			"inviteMessage": {
+				"title": "Default invite message",
+				"description": "Added to the calendar invite of every new booking, for every event type, after the event type's own invite message. Also added to live events. Use it for notices like \"This call may be recorded for quality and training purposes.\" Changes apply to bookings made from now on; invites already sent are not changed.",
+				"messageLabel": "Message",
+				"placeholder": "This call may be recorded for quality and training purposes."
+			}
 		}
 	},
 	"eventTypeEditor": {
@@ -2244,6 +2263,105 @@
 				"description": "\"{title}\" stops repeating and its upcoming sessions are cancelled. A session that is live now keeps running, and past sessions stay in the history.",
 				"action": "End series"
 			}
+		}
+	},
+	"teamCalendar": {
+		"headTitle": "Team calendar — Calnode",
+		"title": "Team calendar",
+		"subtitle": "Every member's meetings in one place, in your local time zone.",
+		"today": "Today",
+		"viewAria": "View",
+		"view": {
+			"week": "Week",
+			"month": "Month"
+		},
+		"membersAria": "Members",
+		"more": {
+			"one": "+{count} more",
+			"other": "+{count} more"
+		},
+		"source": {
+			"booking": "Calnode booking",
+			"google": "Google Calendar",
+			"microsoft": "Microsoft 365"
+		},
+		"detail": {
+			"when": "When",
+			"allDay": "{date} (all day)",
+			"timeRange": "{date}, {start} – {end}",
+			"member": "Member",
+			"eventType": "Event type",
+			"attendee": "Attendee",
+			"location": "Location",
+			"status": "Status",
+			"openInBookings": "Open in Bookings"
+		},
+		"share": {
+			"title": "Share / embed",
+			"description": "Create a share link to embed this calendar in an external dashboard. Anyone with the link can see every member's meetings, including attendee names — treat it like a password and revoke it when it is no longer needed.",
+			"nameLabel": "Share link name",
+			"namePlaceholder": "e.g. Office lobby screen",
+			"creating": "Creating…",
+			"create": "Create share link",
+			"createdNotice": "Share link created — copy the snippet now. The token will not be shown again.",
+			"copySnippet": "Copy snippet",
+			"table": {
+				"name": "Name",
+				"created": "Created",
+				"status": "Status"
+			},
+			"revokedOn": "Revoked {date}",
+			"revokeTooltip": "Revoke share link",
+			"error": {
+				"nameRequired": "Give the share link a name.",
+				"clipboardUnavailable": "Clipboard unavailable on this origin — select the snippet and copy it."
+			},
+			"confirmRevoke": {
+				"title": "Revoke share link?",
+				"description": "Revoke \"{name}\"? Any dashboard embedding it will stop showing the calendar immediately.",
+				"confirm": "Revoke"
+			}
+		}
+	},
+	"bookingDetail": {
+		"headTitle": "Booking — Calnode",
+		"back": "← Bookings",
+		"loadError": "Could not load this booking",
+		"fallbackTitle": "Booking",
+		"cancellationReason": "Cancellation reason:",
+		"section": {
+			"meeting": "Meeting",
+			"hosts": "Hosts",
+			"attendees": "Attendees",
+			"answers": "Answers"
+		},
+		"provider": {
+			"googleMeet": "Google Meet",
+			"teams": "Microsoft Teams",
+			"zoom": "Zoom",
+			"livekit": "Calnode video",
+			"phone": "Phone call",
+			"inPerson": "In person",
+			"manual": "Link"
+		},
+		"joinLink": "Join link",
+		"calendar": "Calendar: {provider}",
+		"role": {
+			"primary": "primary",
+			"fixed": "fixed",
+			"rotation": "rotation",
+			"optional": "optional"
+		},
+		"booker": "booker",
+		"rsvp": {
+			"accepted": "accepted",
+			"declined": "declined",
+			"tentative": "tentative"
+		},
+		"noAnswers": "No intake answers.",
+		"footer": {
+			"booking": "Booking",
+			"meta": "revision {revision} · created {created}"
 		}
 	}
 }

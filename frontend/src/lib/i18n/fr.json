@@ -1638,6 +1638,25 @@
 				"load": "Impossible de charger les paramètres de suivi",
 				"save": "Impossible d'enregistrer les paramètres de suivi"
 			}
+		},
+		"participants": {
+			"toast": {
+				"loadError": "Impossible de charger les paramètres par défaut des réunions",
+				"saveError": "Impossible d'enregistrer les paramètres par défaut des réunions",
+				"saved": "Paramètres par défaut des réunions enregistrés"
+			},
+			"defaultParticipants": {
+				"title": "Participants par défaut",
+				"description": "Ces adresses sont invitées à l'événement de calendrier de chaque nouvelle réunion réservée ici, pour tous les types de rendez-vous, y compris les événements en direct. Elles reçoivent uniquement l'invitation de calendrier — Calnode ne leur envoie aucun e-mail et les réservataires ne les voient jamais. Usage typique : un bot de prise de notes qui rejoint la réunion lorsqu'une boîte partagée est invitée.",
+				"emailsLabel": "Adresses e-mail",
+				"emailsHint": "Une adresse par ligne (les virgules fonctionnent aussi). 20 au maximum. L'invitation part du calendrier connecté de chaque hôte : un hôte sans calendrier connecté n'en envoie aucune. Google et Microsoft envoient eux-mêmes l'invitation par e-mail ; avec CalDAV, les adresses sont inscrites dans l'événement et l'envoi d'une invitation dépend de la prise en charge de la planification par le serveur."
+			},
+			"inviteMessage": {
+				"title": "Message d'invitation par défaut",
+				"description": "Ajouté à l'invitation de calendrier de chaque nouvelle réservation, pour tous les types de rendez-vous, après le message d'invitation propre au type de rendez-vous. Également ajouté aux événements en direct. Utilisez-le pour des mentions comme « Cet appel peut être enregistré à des fins de qualité et de formation. » Les modifications s'appliquent aux réservations effectuées à partir de maintenant ; les invitations déjà envoyées ne sont pas modifiées.",
+				"messageLabel": "Message",
+				"placeholder": "Cet appel peut être enregistré à des fins de qualité et de formation."
+			}
 		}
 	},
 	"eventTypeEditor": {
@@ -2244,6 +2263,105 @@
 				"description": "« {title} » cesse de se répéter et ses sessions à venir sont annulées. Une session en direct continue, et les sessions passées restent dans l'historique.",
 				"action": "Terminer la série"
 			}
+		}
+	},
+	"teamCalendar": {
+		"headTitle": "Calendrier d'équipe — Calnode",
+		"title": "Calendrier d'équipe",
+		"subtitle": "Les réunions de tous les membres au même endroit, dans votre fuseau horaire.",
+		"today": "Aujourd'hui",
+		"viewAria": "Affichage",
+		"view": {
+			"week": "Semaine",
+			"month": "Mois"
+		},
+		"membersAria": "Membres",
+		"more": {
+			"one": "+{count} autre",
+			"other": "+{count} autres"
+		},
+		"source": {
+			"booking": "Réservation Calnode",
+			"google": "Google Calendar",
+			"microsoft": "Microsoft 365"
+		},
+		"detail": {
+			"when": "Quand",
+			"allDay": "{date} (toute la journée)",
+			"timeRange": "{date}, {start} – {end}",
+			"member": "Membre",
+			"eventType": "Type de rendez-vous",
+			"attendee": "Participant",
+			"location": "Lieu",
+			"status": "Statut",
+			"openInBookings": "Ouvrir dans Réservations"
+		},
+		"share": {
+			"title": "Partager / intégrer",
+			"description": "Créez un lien de partage pour intégrer ce calendrier dans un tableau de bord externe. Toute personne disposant du lien voit les réunions de tous les membres, y compris le nom des participants — traitez-le comme un mot de passe et révoquez-le dès qu'il n'est plus utile.",
+			"nameLabel": "Nom du lien de partage",
+			"namePlaceholder": "p. ex. Écran de l'accueil",
+			"creating": "Création…",
+			"create": "Créer un lien de partage",
+			"createdNotice": "Lien de partage créé — copiez le code maintenant. Le jeton ne sera plus affiché.",
+			"copySnippet": "Copier le code",
+			"table": {
+				"name": "Nom",
+				"created": "Créé",
+				"status": "Statut"
+			},
+			"revokedOn": "Révoqué le {date}",
+			"revokeTooltip": "Révoquer le lien de partage",
+			"error": {
+				"nameRequired": "Donnez un nom au lien de partage.",
+				"clipboardUnavailable": "Presse-papiers indisponible sur cette origine — sélectionnez le code et copiez-le."
+			},
+			"confirmRevoke": {
+				"title": "Révoquer le lien de partage ?",
+				"description": "Révoquer « {name} » ? Les tableaux de bord qui l'intègrent cesseront immédiatement d'afficher le calendrier.",
+				"confirm": "Révoquer"
+			}
+		}
+	},
+	"bookingDetail": {
+		"headTitle": "Réservation — Calnode",
+		"back": "← Réservations",
+		"loadError": "Impossible de charger cette réservation",
+		"fallbackTitle": "Réservation",
+		"cancellationReason": "Motif d'annulation :",
+		"section": {
+			"meeting": "Réunion",
+			"hosts": "Hôtes",
+			"attendees": "Participants",
+			"answers": "Réponses"
+		},
+		"provider": {
+			"googleMeet": "Google Meet",
+			"teams": "Microsoft Teams",
+			"zoom": "Zoom",
+			"livekit": "Vidéo Calnode",
+			"phone": "Appel téléphonique",
+			"inPerson": "En personne",
+			"manual": "Lien"
+		},
+		"joinLink": "Lien pour rejoindre",
+		"calendar": "Calendrier : {provider}",
+		"role": {
+			"primary": "principal",
+			"fixed": "fixe",
+			"rotation": "rotation",
+			"optional": "facultatif"
+		},
+		"booker": "réservataire",
+		"rsvp": {
+			"accepted": "accepté",
+			"declined": "refusé",
+			"tentative": "peut-être"
+		},
+		"noAnswers": "Aucune réponse au formulaire.",
+		"footer": {
+			"booking": "Réservation",
+			"meta": "révision {revision} · créée le {created}"
 		}
 	}
 }

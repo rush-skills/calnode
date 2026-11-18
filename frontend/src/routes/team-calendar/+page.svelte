@@ -11,6 +11,7 @@
 	} from '$lib/api';
 	import { currentUser } from '$lib/stores';
 	import { prefs } from '$lib/prefs';
+	import { t, tr, localeTag } from '$lib/i18n';
 	import { Button, buttonVariants } from '$lib/components/ui/button';
 	import { Badge } from '$lib/components/ui/badge';
 	import { ConfirmDialog } from '$lib/components/ui/confirm-dialog';
@@ -46,8 +47,8 @@
 	function ymd(d: Date) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 	/** Local midnight of the calendar day named by an RFC3339 UTC-midnight string (all-day bounds). */
 	function localDay(iso: string) { const [y, m, d] = iso.slice(0, 10).split('-').map(Number); return new Date(y, m - 1, d); }
-	function fmtTime(d: Date) { return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12 }); }
-	function fmtDay(d: Date) { return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }); }
+	function fmtTime(d: Date) { return d.toLocaleTimeString(localeTag(), { hour: 'numeric', minute: '2-digit', hour12 }); }
+	function fmtDay(d: Date) { return d.toLocaleDateString(localeTag(), { weekday: 'short', month: 'short', day: 'numeric' }); }
 
 	/** The dates the grid shows: 7 days, or a 6-row month grid aligned to the week start. */
 	const range = $derived.by(() => {
@@ -61,7 +62,7 @@
 	const rangeLabel = $derived(
 		view === 'week'
 			? `${fmtDay(range.from)} – ${fmtDay(addDays(range.to, -1))}`
-			: anchor.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+			: anchor.toLocaleDateString(localeTag(), { month: 'long', year: 'numeric' })
 	);
 	const visible = $derived(items.filter((it) => !hidden[it.member_id]));
 	const today = new Date();
@@ -146,10 +147,16 @@
 		return out;
 	}
 	function sourceLabel(it: Item) {
-		if (it.kind === 'booking') return 'Calnode booking';
-		if (it.source === 'google') return 'Google Calendar';
-		if (it.source === 'microsoft') return 'Microsoft 365';
+		if (it.kind === 'booking') return tr('teamCalendar.source.booking');
+		if (it.source === 'google') return tr('teamCalendar.source.google');
+		if (it.source === 'microsoft') return tr('teamCalendar.source.microsoft');
 		return it.source;
+	}
+	function statusLabel(status: string) {
+		if (status === 'confirmed') return tr('bookings.status.confirmed');
+		if (status === 'cancelled') return tr('bookings.status.cancelled');
+		if (status === 'rescheduled') return tr('bookings.filter.status.rescheduled');
+		return status;
 	}
 
 	// ── share links (admin) ──────────────────────────────────────────────────
@@ -174,7 +181,7 @@
 		}
 	}
 	async function createShare() {
-		if (!shareName.trim()) { sharesError = 'Give the share link a name.'; return; }
+		if (!shareName.trim()) { sharesError = tr('teamCalendar.share.error.nameRequired'); return; }
 		creating = true;
 		sharesError = '';
 		copied = false;
@@ -202,10 +209,10 @@
 	function copySnippet() {
 		// navigator.clipboard is undefined on plain-HTTP origins (a LAN self-host); the
 		// snippet is still selectable in the <pre>, so just say so instead of throwing.
-		if (!navigator.clipboard?.writeText) { sharesError = 'Clipboard unavailable on this origin — select the snippet and copy it.'; return; }
+		if (!navigator.clipboard?.writeText) { sharesError = tr('teamCalendar.share.error.clipboardUnavailable'); return; }
 		navigator.clipboard.writeText(snippet).then(() => { copied = true; }).catch(() => {});
 	}
-	function fmtDate(iso: string) { return new Date(iso).toLocaleDateString(undefined, { dateStyle: 'medium' }); }
+	function fmtDate(iso: string) { return new Date(iso).toLocaleDateString(localeTag(), { dateStyle: 'medium' }); }
 
 	onMount(() => {
 		const unsub = currentUser.subscribe((u) => { if (u?.is_admin) loadShares(); });
@@ -213,13 +220,13 @@
 	});
 </script>
 
-<svelte:head><title>Team calendar — Calnode</title></svelte:head>
+<svelte:head><title>{$t('teamCalendar.headTitle')}</title></svelte:head>
 
 <ConfirmDialog
 	bind:open={revokeOpen}
-	title="Revoke share link?"
-	description={revokeTarget ? `Revoke "${revokeTarget.name}"? Any dashboard embedding it will stop showing the calendar immediately.` : ''}
-	confirmText="Revoke"
+	title={$t('teamCalendar.share.confirmRevoke.title')}
+	description={revokeTarget ? $t('teamCalendar.share.confirmRevoke.description', { name: revokeTarget.name }) : ''}
+	confirmText={$t('teamCalendar.share.confirmRevoke.confirm')}
 	destructive
 	onConfirm={doRevoke}
 />
@@ -234,23 +241,23 @@
 				<Dialog.Description>{sourceLabel(selected)}</Dialog.Description>
 			</Dialog.Header>
 			<dl class="grid grid-cols-[90px_1fr] gap-x-3 gap-y-2 text-sm">
-				<dt class="text-muted-foreground">When</dt>
-				<dd>{selected.all_day ? `${fmtDay(selected.s)} (all day)` : `${fmtDay(selected.s)}, ${fmtTime(selected.s)} – ${fmtTime(selected.e)}`}</dd>
-				<dt class="text-muted-foreground">Member</dt>
-				<dd>{member(selected.member_id)?.name ?? '—'}</dd>
-				{#if selected.event_type_name}<dt class="text-muted-foreground">Event type</dt><dd>{selected.event_type_name}</dd>{/if}
-				{#if selected.attendee_name}<dt class="text-muted-foreground">Attendee</dt><dd>{selected.attendee_name}</dd>{/if}
-				{#if selected.location}<dt class="text-muted-foreground">Location</dt><dd class="break-all">{selected.location}</dd>{/if}
-				<dt class="text-muted-foreground">Status</dt>
-				<dd><Badge variant="outline">{selected.status}</Badge></dd>
+				<dt class="text-muted-foreground">{$t('teamCalendar.detail.when')}</dt>
+				<dd>{selected.all_day ? $t('teamCalendar.detail.allDay', { date: fmtDay(selected.s) }) : $t('teamCalendar.detail.timeRange', { date: fmtDay(selected.s), start: fmtTime(selected.s), end: fmtTime(selected.e) })}</dd>
+				<dt class="text-muted-foreground">{$t('teamCalendar.detail.member')}</dt>
+				<dd>{member(selected.member_id)?.name ?? $t('common.emDash')}</dd>
+				{#if selected.event_type_name}<dt class="text-muted-foreground">{$t('teamCalendar.detail.eventType')}</dt><dd>{selected.event_type_name}</dd>{/if}
+				{#if selected.attendee_name}<dt class="text-muted-foreground">{$t('teamCalendar.detail.attendee')}</dt><dd>{selected.attendee_name}</dd>{/if}
+				{#if selected.location}<dt class="text-muted-foreground">{$t('teamCalendar.detail.location')}</dt><dd class="break-all">{selected.location}</dd>{/if}
+				<dt class="text-muted-foreground">{$t('teamCalendar.detail.status')}</dt>
+				<dd><Badge variant="outline">{statusLabel(selected.status)}</Badge></dd>
 			</dl>
 			<Dialog.Footer class="mt-4">
 				<!-- Bookings only lists the viewer's own meetings (admins see everyone's), so the
 				     link is offered only when it would actually show this item. -->
 				{#if selected.kind === 'booking' && (isAdmin || selected.member_id === $currentUser?.id)}
-					<a href="{base}/bookings" class={buttonVariants({ variant: 'default' })}>Open in Bookings</a>
+					<a href="{base}/bookings" class={buttonVariants({ variant: 'default' })}>{$t('teamCalendar.detail.openInBookings')}</a>
 				{/if}
-				<Button variant="outline" onclick={() => (detailOpen = false)}>Close</Button>
+				<Button variant="outline" onclick={() => (detailOpen = false)}>{$t('common.close')}</Button>
 			</Dialog.Footer>
 		{/if}
 	</Dialog.Content>
@@ -258,23 +265,23 @@
 
 <div class="mb-6 flex flex-wrap items-start justify-between gap-4">
 	<div>
-		<h1 class="text-2xl font-semibold tracking-tight">Team calendar</h1>
-		<p class="mt-1 text-sm text-muted-foreground">Every member's meetings in one place, in your local time zone.</p>
+		<h1 class="text-2xl font-semibold tracking-tight">{$t('teamCalendar.title')}</h1>
+		<p class="mt-1 text-sm text-muted-foreground">{$t('teamCalendar.subtitle')}</p>
 	</div>
 	<div class="flex shrink-0 items-center gap-2">
-		<Button variant="outline" size="sm" onclick={() => step(-1)} aria-label="Previous">‹</Button>
-		<Button variant="outline" size="sm" onclick={() => (anchor = startOfDay(new Date()))}>Today</Button>
-		<Button variant="outline" size="sm" onclick={() => step(1)} aria-label="Next">›</Button>
+		<Button variant="outline" size="sm" onclick={() => step(-1)} aria-label={$t('common.previous')}>‹</Button>
+		<Button variant="outline" size="sm" onclick={() => (anchor = startOfDay(new Date()))}>{$t('teamCalendar.today')}</Button>
+		<Button variant="outline" size="sm" onclick={() => step(1)} aria-label={$t('common.next')}>›</Button>
 		<span class="min-w-[180px] text-center text-sm font-medium">{rangeLabel}</span>
-		<div class="ml-2 flex rounded-md border p-0.5" role="group" aria-label="View">
-			<Button variant={view === 'week' ? 'secondary' : 'ghost'} size="sm" aria-pressed={view === 'week'} onclick={() => (view = 'week')}>Week</Button>
-			<Button variant={view === 'month' ? 'secondary' : 'ghost'} size="sm" aria-pressed={view === 'month'} onclick={() => (view = 'month')}>Month</Button>
+		<div class="ml-2 flex rounded-md border p-0.5" role="group" aria-label={$t('teamCalendar.viewAria')}>
+			<Button variant={view === 'week' ? 'secondary' : 'ghost'} size="sm" aria-pressed={view === 'week'} onclick={() => (view = 'week')}>{$t('teamCalendar.view.week')}</Button>
+			<Button variant={view === 'month' ? 'secondary' : 'ghost'} size="sm" aria-pressed={view === 'month'} onclick={() => (view = 'month')}>{$t('teamCalendar.view.month')}</Button>
 		</div>
 	</div>
 </div>
 
 {#if members.length}
-	<div class="mb-4 flex flex-wrap gap-2" aria-label="Members">
+	<div class="mb-4 flex flex-wrap gap-2" aria-label={$t('teamCalendar.membersAria')}>
 		{#each members as m (m.id)}
 			<Button
 				variant={hidden[m.id] ? 'ghost' : 'outline'}
@@ -296,7 +303,7 @@
      Calendar is a date picker). Everything around it stays shadcn. See docs/features/team-calendar.md. -->
 <div class="relative overflow-hidden rounded-lg border bg-card">
 	{#if loading}
-		<div class="absolute inset-0 z-20 flex items-center justify-center bg-card/60 text-sm text-muted-foreground">Loading…</div>
+		<div class="absolute inset-0 z-20 flex items-center justify-center bg-card/60 text-sm text-muted-foreground">{$t('common.loading')}</div>
 	{/if}
 	{#if view === 'week'}
 		<div class="max-h-[70vh] overflow-auto" bind:this={gridEl}>
@@ -305,7 +312,7 @@
 				<div class="sticky top-0 z-10 border-b bg-card"></div>
 				{#each days as d (d.getTime())}
 					<div class="sticky top-0 z-10 border-b border-l bg-card px-1 py-1.5 text-center text-xs {sameDay(d, today) ? 'text-primary' : 'text-muted-foreground'}">
-						{d.toLocaleDateString(undefined, { weekday: 'short' })}
+						{d.toLocaleDateString(localeTag(), { weekday: 'short' })}
 						<div class="text-base font-semibold text-foreground {sameDay(d, today) ? 'text-primary' : ''}">{d.getDate()}</div>
 					</div>
 				{/each}
@@ -344,7 +351,7 @@
 		<div class="overflow-auto">
 			<div class="grid grid-cols-7" style="min-width: 640px">
 				{#each days.slice(0, 7) as d (d.getTime())}
-					<div class="border-b px-1 py-1.5 text-center text-xs text-muted-foreground">{d.toLocaleDateString(undefined, { weekday: 'short' })}</div>
+					<div class="border-b px-1 py-1.5 text-center text-xs text-muted-foreground">{d.toLocaleDateString(localeTag(), { weekday: 'short' })}</div>
 				{/each}
 				{#each days as d (d.getTime())}
 					{@const list = dayItems(d)}
@@ -360,7 +367,7 @@
 							>{it.all_day ? '' : fmtTime(it.s) + ' '}{it.title}</button>
 						{/each}
 						{#if list.length > 4}
-							<button type="button" class="text-[11px] text-muted-foreground hover:text-foreground" onclick={() => { anchor = d; view = 'week'; }}>+{list.length - 4} more</button>
+							<button type="button" class="text-[11px] text-muted-foreground hover:text-foreground" onclick={() => { anchor = d; view = 'week'; }}>{$t('teamCalendar.more', { count: list.length - 4 })}</button>
 						{/if}
 					</div>
 				{/each}
@@ -371,27 +378,26 @@
 
 {#if isAdmin}
 	<section class="mt-8 rounded-lg border bg-card p-6">
-		<h2 class="text-base font-semibold">Share / embed</h2>
+		<h2 class="text-base font-semibold">{$t('teamCalendar.share.title')}</h2>
 		<p class="mt-1 text-sm text-muted-foreground">
-			Create a share link to embed this calendar in an external dashboard. Anyone with the link can see every member's
-			meetings, including attendee names — treat it like a password and revoke it when it is no longer needed.
+			{$t('teamCalendar.share.description')}
 		</p>
 
 		{#if sharesError}<p class="mt-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{sharesError}</p>{/if}
 
 		<div class="mt-4 flex flex-wrap items-end gap-3">
 			<div class="w-full max-w-xs space-y-1.5">
-				<Label for="share-name">Share link name</Label>
-				<Input id="share-name" bind:value={shareName} placeholder="e.g. Office lobby screen" onkeydown={(e) => { if (e.key === 'Enter') createShare(); }} />
+				<Label for="share-name">{$t('teamCalendar.share.nameLabel')}</Label>
+				<Input id="share-name" bind:value={shareName} placeholder={$t('teamCalendar.share.namePlaceholder')} onkeydown={(e) => { if (e.key === 'Enter') createShare(); }} />
 			</div>
-			<Button onclick={createShare} disabled={creating}>{creating ? 'Creating…' : 'Create share link'}</Button>
+			<Button onclick={createShare} disabled={creating}>{creating ? $t('teamCalendar.share.creating') : $t('teamCalendar.share.create')}</Button>
 		</div>
 
 		{#if created}
 			<div class="mt-4 rounded-lg border border-green-200 bg-green-50 p-4">
-				<p class="mb-2 text-sm font-medium text-green-800">Share link created — copy the snippet now. The token will not be shown again.</p>
+				<p class="mb-2 text-sm font-medium text-green-800">{$t('teamCalendar.share.createdNotice')}</p>
 				<pre class="mb-3 overflow-x-auto rounded-md border bg-white px-3 py-2 font-mono text-xs text-foreground whitespace-pre-wrap break-all">{snippet}</pre>
-				<Button variant="outline" size="sm" onclick={copySnippet}>{copied ? 'Copied' : 'Copy snippet'}</Button>
+				<Button variant="outline" size="sm" onclick={copySnippet}>{copied ? $t('common.copiedShort') : $t('teamCalendar.share.copySnippet')}</Button>
 			</div>
 		{/if}
 
@@ -400,9 +406,9 @@
 				<table class="w-full text-sm">
 					<thead>
 						<tr class="border-b">
-							<th class="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">Name</th>
-							<th class="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">Created</th>
-							<th class="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">Status</th>
+							<th class="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">{$t('teamCalendar.share.table.name')}</th>
+							<th class="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">{$t('teamCalendar.share.table.created')}</th>
+							<th class="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">{$t('teamCalendar.share.table.status')}</th>
 							<th class="px-4 py-2.5"></th>
 						</tr>
 					</thead>
@@ -413,15 +419,15 @@
 									<td class="px-4 py-2.5 font-medium">{s.name}</td>
 									<td class="px-4 py-2.5 text-muted-foreground">{fmtDate(s.created_at)}{s.created_by ? ` · ${s.created_by}` : ''}</td>
 									<td class="px-4 py-2.5">
-										{#if s.revoked_at}<Badge variant="outline">Revoked {fmtDate(s.revoked_at)}</Badge>{:else}<Badge variant="secondary">Active</Badge>{/if}
+										{#if s.revoked_at}<Badge variant="outline">{$t('teamCalendar.share.revokedOn', { date: fmtDate(s.revoked_at) })}</Badge>{:else}<Badge variant="secondary">{$t('common.active')}</Badge>{/if}
 									</td>
 									<td class="px-4 py-2.5 text-right">
 										{#if !s.revoked_at}
 											<Tooltip.Root>
-												<Tooltip.Trigger class={buttonVariants({ variant: 'ghost', size: 'icon' })} onclick={() => askRevoke(s)} aria-label="Revoke share link">
+												<Tooltip.Trigger class={buttonVariants({ variant: 'ghost', size: 'icon' })} onclick={() => askRevoke(s)} aria-label={$t('teamCalendar.share.revokeTooltip')}>
 													<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
 												</Tooltip.Trigger>
-												<Tooltip.Content>Revoke share link</Tooltip.Content>
+												<Tooltip.Content>{$t('teamCalendar.share.revokeTooltip')}</Tooltip.Content>
 											</Tooltip.Root>
 										{/if}
 									</td>
