@@ -5,6 +5,7 @@
 	import { cn } from '$lib/utils.js';
 	import CheckIcon from '@lucide/svelte/icons/check';
 	import ChevronsUpDownIcon from '@lucide/svelte/icons/chevrons-up-down';
+	import { t } from '$lib/i18n';
 
 	// `keywords`: extra searchable text (e.g. aliases) that is matched but never shown.
 	type Item = { value: string; label: string; keywords?: string };
@@ -12,8 +13,8 @@
 	let {
 		items,
 		value = $bindable(''),
-		placeholder = 'Select…',
-		searchPlaceholder = 'Search…',
+		placeholder,
+		searchPlaceholder,
 		class: className,
 	}: {
 		items: Item[];
@@ -22,6 +23,9 @@
 		searchPlaceholder?: string;
 		class?: string;
 	} = $props();
+
+	const resolvedPlaceholder = $derived(placeholder ?? $t('common.select'));
+	const resolvedSearchPlaceholder = $derived(searchPlaceholder ?? $t('common.combobox.searchPlaceholder'));
 
 	let open = $state(false);
 	let filter = $state('');
@@ -57,17 +61,17 @@
 		)}
 	>
 		<span class={cn('truncate', !selectedLabel && 'text-muted-foreground')}>
-			{selectedLabel || placeholder}
+			{selectedLabel || resolvedPlaceholder}
 		</span>
 		<ChevronsUpDownIcon class="text-muted-foreground size-4 shrink-0 opacity-50" />
 	</Popover.Trigger>
 	<Popover.Content class="w-[var(--bits-floating-anchor-width)] p-0" align="start">
 		<div class="p-2">
-			<Input bind:value={filter} placeholder={searchPlaceholder} onkeydown={onInputKeydown} autofocus />
+			<Input bind:value={filter} placeholder={resolvedSearchPlaceholder} onkeydown={onInputKeydown} autofocus />
 		</div>
 		<div class="max-h-72 overflow-y-auto p-1">
 			{#if filtered.length === 0}
-				<p class="px-2 py-3 text-center text-sm text-muted-foreground">No results.</p>
+				<p class="px-2 py-3 text-center text-sm text-muted-foreground">{$t('common.noResults')}</p>
 			{:else}
 				{#each filtered as item (item.value)}
 					<button

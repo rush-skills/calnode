@@ -15,7 +15,7 @@ dashboard through a share link that renders a public, frameable page.
 | Admin page | `frontend/src/routes/team-calendar/+page.svelte` | any member; share card admin-only |
 
 Code: `internal/handler/team_calendar.go` (+ `team_calendar_test.go`), the embed template
-`internal/handler/templates/team-calendar.html`, migration `00074_team_calendar_shares.sql`,
+`internal/handler/templates/team-calendar.html`, migration `migrations_fork/00007_team_calendar_shares.sql`,
 `calendar.Provider.ListEvents` with implementations in `internal/gcal/listevents.go` and
 `internal/calendar/microsoft/listevents.go`, and `calendar.Service.ListEvents` (fan-out).
 
@@ -150,10 +150,7 @@ Scheduling, visible to every member.
 
 ## Review findings deliberately not applied
 
-- **Migration number 00074 while the tree's latest is 00067.** The number was assigned
-  by the integrator (other branches hold 00068-00073). `db.Migrate` runs `goose.Up` without
-  migration lands, the next boot fails with "missing migrations". Merge order is the
-  integrator's call; flagged, not changed.
+- **Migration number.** Resolved: the fork's migrations now live in `internal/db/migrations_fork` with their own goose table, so they never collide with upstream's numbering; see docs/FORK.md.
 - **`created_by … ON DELETE CASCADE`** is the schema the brief specified. Consequence:
   deleting the admin who created a share link deletes the link (the iframe goes 404 and
   the row leaves the list). `ON DELETE SET NULL` would keep the link; change if that

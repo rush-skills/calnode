@@ -9,8 +9,9 @@ import (
 
 type testDB struct{ *sql.DB }
 
-// openTo opens an in-memory database migrated up to version v.
-func openTo(t *testing.T, v int64) *testDB {
+// openForkTo opens an in-memory database with every upstream migration applied and
+// the fork's own migrations up to fork version v (fork.go).
+func openForkTo(t *testing.T, v int64) *testDB {
 	t.Helper()
 	database, err := Open("sqlite://:memory:")
 	if err != nil {
@@ -21,19 +22,25 @@ func openTo(t *testing.T, v int64) *testDB {
 	if err := goose.SetDialect("sqlite3"); err != nil {
 		t.Fatalf("set dialect: %v", err)
 	}
-	if err := goose.UpTo(database, "migrations", v); err != nil {
-		t.Fatalf("migrate to %d: %v", v, err)
+	if err := goose.Up(database, "migrations"); err != nil {
+		t.Fatalf("upstream migrations: %v", err)
+	}
+	goose.SetBaseFS(forkMigrations)
+	goose.SetTableName(forkVersionTable)
+	defer func() { goose.SetBaseFS(migrations); goose.SetTableName(upstreamTable) }()
+	if err := goose.UpTo(database, forkMigrationsDir, v); err != nil {
+		t.Fatalf("fork migrations to %d: %v", v, err)
 	}
 	return &testDB{database}
 }
 
-// Migration 00078 lowercases stored addresses where that cannot collide, and
+// Fork migration 00011 lowercases stored addresses where that cannot collide, and
 // ensureEmailNoCaseIndex adds the NOCASE unique index only once no pair of accounts
 // differs by case alone - a database holding such a pair still boots, without the index.
 func TestMigrate_emailCaseFolding(t *testing.T) {
 	open := func(t *testing.T, upToVersion int64, seed []string) *testDB {
 		t.Helper()
-		d := openTo(t, upToVersion)
+		d := openForkTo(t, upToVersion)
 		for _, q := range seed {
 			if _, err := d.Exec(q); err != nil {
 				t.Fatal(err)
@@ -48,7 +55,7 @@ func TestMigrate_emailCaseFolding(t *testing.T) {
 	}
 
 	t.Run("lowercases and indexes a clean database", func(t *testing.T) {
-		d := open(t, 77, []string{
+		d := open(t, 10, []string{
 			`INSERT INTO users (id,email,name,iana_timezone) VALUES ('a','Ada@Example.com','Ada','UTC')`,
 			`INSERT INTO users (id,email,name,iana_timezone) VALUES ('b','bob@example.com','Bob','UTC')`,
 		})
@@ -66,7 +73,7 @@ func TestMigrate_emailCaseFolding(t *testing.T) {
 	})
 
 	t.Run("a pair differing only by case keeps both rows and boots without the index", func(t *testing.T) {
-		d := open(t, 77, []string{
+		d := open(t, 10, []string{
 			`INSERT INTO users (id,email,name,iana_timezone) VALUES ('a','Ada@Example.com','Ada','UTC')`,
 			`INSERT INTO users (id,email,name,iana_timezone) VALUES ('a2','ada@example.com','Ada 2','UTC')`,
 			`INSERT INTO users (id,email,name,iana_timezone) VALUES ('b','Bob@Example.com','Bob','UTC')`,
@@ -94,4 +101,33 @@ func TestMigrate_emailCaseFolding(t *testing.T) {
 			t.Error("index not created after the collision was resolved")
 		}
 	})
+}
+
+// openUpstreamTo opens an in-memory database with upstream migrations up to v only.
+func openUpstreamTo(t *testing.T, v int64) *testDB {
+	t.Helper()
+	database, err := Open("sqlite://:memory:")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	goose.SetBaseFS(migrations)
+	if err := goose.SetDialect("sqlite3"); err != nil {
+		t.Fatal(err)
+	}
+	if err := goose.UpTo(database, "migrations", v); err != nil {
+		t.Fatalf("upstream migrations to %d: %v", v, err)
+	}
+	return &testDB{database}
+}
+
+// applyAllFork applies every fork migration to d.
+func applyAllFork(t *testing.T, d *testDB) {
+	t.Helper()
+	goose.SetBaseFS(forkMigrations)
+	goose.SetTableName(forkVersionTable)
+	defer func() { goose.SetBaseFS(migrations); goose.SetTableName(upstreamTable) }()
+	if err := goose.Up(d.DB, forkMigrationsDir); err != nil {
+		t.Fatalf("fork migrations: %v", err)
+	}
 }

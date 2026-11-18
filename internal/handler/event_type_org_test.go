@@ -123,7 +123,8 @@ func TestOrgEventTypes_listAndGetVisibility(t *testing.T) {
 		t.Errorf("member list: private event type is visible to a non-owner")
 	}
 
-	// Admin: the org-wide one editable; the private one absent (private is owner-only).
+	// Admin: the org-wide one editable; the private one absent from the default list
+	// (it appears under ?scope=all, upstream's admin view).
 	admin := ws.list(t, ws.adminKey)
 	if it := admin[orgSlug]; it.Owned || !it.CanEdit {
 		t.Errorf("admin list org: %+v; want not owned, can_edit", it)
@@ -142,8 +143,10 @@ func TestOrgEventTypes_listAndGetVisibility(t *testing.T) {
 	if code, it := ws.get(t, ws.adminKey, orgSlug); code != http.StatusOK || !it.CanEdit {
 		t.Errorf("admin get org: %d can_edit=%v; want 200/true", code, it.CanEdit)
 	}
-	if code, _ := ws.get(t, ws.adminKey, privSlug); code != http.StatusNotFound {
-		t.Errorf("admin get private: %d; want 404", code)
+	// Upstream's rule: an admin may open and manage any event type, private ones too;
+	// private only keeps it out of other members' lists and the admin's default list.
+	if code, it := ws.get(t, ws.adminKey, privSlug); code != http.StatusOK || it.Owned || !it.CanEdit {
+		t.Errorf("admin get private: %d %+v; want 200, not owned, can_edit", code, it)
 	}
 	if code, it := ws.get(t, ws.ownerKey, privSlug); code != http.StatusOK || !it.Owned || !it.CanEdit {
 		t.Errorf("owner get private: %d %+v; want 200, owned, can_edit", code, it)
@@ -214,7 +217,8 @@ var writeSuccess = map[string]int{
 	"duplicate": http.StatusCreated, "delete": http.StatusNoContent,
 }
 
-// The write matrix: owner always; admin on org-wide; nobody else. Every action goes
+// The write matrix: owner and admins always (upstream's canManageEventType); nobody
+// else, who gets upstream's 404 whether or not they can read it. Every action goes
 // through the same helper, so one table covers them all. A fresh event type per cell
 // because delete consumes it.
 func TestOrgEventTypes_writeMatrix(t *testing.T) {
@@ -227,9 +231,9 @@ func TestOrgEventTypes_writeMatrix(t *testing.T) {
 		{"owner", "org", ws.ownerKey, func(a string) int { return writeSuccess[a] }},
 		{"owner", "private", ws.ownerKey, func(a string) int { return writeSuccess[a] }},
 		{"admin", "org", ws.adminKey, func(a string) int { return writeSuccess[a] }},
-		{"admin", "private", ws.adminKey, func(string) int { return http.StatusForbidden }},
-		{"member", "org", ws.memberKey, func(string) int { return http.StatusForbidden }},
-		{"member", "private", ws.memberKey, func(string) int { return http.StatusForbidden }},
+		{"admin", "private", ws.adminKey, func(a string) int { return writeSuccess[a] }},
+		{"member", "org", ws.memberKey, func(string) int { return http.StatusNotFound }},
+		{"member", "private", ws.memberKey, func(string) int { return http.StatusNotFound }},
 	}
 	for _, act := range writeActions {
 		for _, c := range cells {
@@ -260,12 +264,12 @@ func TestOrgEventTypes_questionReadAndWriteScopes(t *testing.T) {
 		t.Errorf("member list questions (admin endpoint): %d; want 200", code)
 	}
 	if code := doReq(ws, ws.h.UpdateQuestion, http.MethodPatch, "/v1/event-types/"+slug+"/questions/"+qID, `{"label":"Hijacked"}`, ws.memberKey,
-		map[string]string{"slug": slug, "id": qID}); code != http.StatusForbidden {
-		t.Errorf("member update question: %d; want 403", code)
+		map[string]string{"slug": slug, "id": qID}); code != http.StatusNotFound {
+		t.Errorf("member update question: %d; want 404", code)
 	}
 	if code := doReq(ws, ws.h.DeleteQuestion, http.MethodDelete, "/v1/event-types/"+slug+"/questions/"+qID, "", ws.memberKey,
-		map[string]string{"slug": slug, "id": qID}); code != http.StatusForbidden {
-		t.Errorf("member delete question: %d; want 403", code)
+		map[string]string{"slug": slug, "id": qID}); code != http.StatusNotFound {
+		t.Errorf("member delete question: %d; want 404", code)
 	}
 	// Admin can do both on an org-wide event type.
 	if code := doReq(ws, ws.h.UpdateQuestion, http.MethodPatch, "/v1/event-types/"+slug+"/questions/"+qID, `{"label":"Edited"}`, ws.adminKey,
@@ -309,12 +313,16 @@ func TestOrgEventTypes_onlyOwnerChangesVisibility(t *testing.T) {
 	if code := patch(ws.ownerKey, `{"visibility":"private"}`); code != http.StatusOK {
 		t.Errorf("owner making it private: %d; want 200", code)
 	}
-	// Now private: the admin has lost both sight and reach.
-	if code, _ := ws.get(t, ws.adminKey, slug); code != http.StatusNotFound {
-		t.Errorf("admin get after owner made it private: %d; want 404", code)
+	// Now private: an admin can still open and edit it (upstream's rule), but still
+	// cannot change its visibility back.
+	if code, _ := ws.get(t, ws.adminKey, slug); code != http.StatusOK {
+		t.Errorf("admin get after owner made it private: %d; want 200", code)
 	}
-	if code := patch(ws.adminKey, `{"name":"x"}`); code != http.StatusForbidden {
-		t.Errorf("admin patch after owner made it private: %d; want 403", code)
+	if code := patch(ws.adminKey, `{"name":"x"}`); code != http.StatusOK {
+		t.Errorf("admin patch after owner made it private: %d; want 200", code)
+	}
+	if code := patch(ws.adminKey, `{"visibility":"org"}`); code != http.StatusForbidden {
+		t.Errorf("admin making the owner's private event type org-wide: %d; want 403", code)
 	}
 }
 

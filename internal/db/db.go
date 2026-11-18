@@ -6,7 +6,6 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
-	"log/slog"
 	"path"
 	"strconv"
 	"strings"
@@ -59,42 +58,17 @@ func Migrate(db *sql.DB) error {
 		return fmt.Errorf("set goose dialect: %w", err)
 	}
 
+	// Fork hook (fork.go): move a pre-split fork database's bookkeeping out of the way
+	// first, so goose sees upstream's own history here.
+	if err := prepareForkMigrations(db); err != nil {
+		return err
+	}
+
 	if err := goose.Up(db, "migrations"); err != nil {
 		return fmt.Errorf("run migrations: %w", err)
 	}
 
-	return ensureEmailNoCaseIndex(db)
-}
-
-// ensureEmailNoCaseIndex adds the case-insensitive unique index on users.email (the
-// pair of migration 00078). SQL cannot create it conditionally, and a database holding
-// two accounts whose addresses differ only by case must keep booting: the index is
-// created only once no such pair exists, otherwise each colliding address is logged for
-// the operator to merge or remove, and boot carries on without it.
-func ensureEmailNoCaseIndex(db *sql.DB) error {
-	rows, err := db.Query(`SELECT lower(email), COUNT(*) FROM users GROUP BY lower(email) HAVING COUNT(*) > 1`)
-	if err != nil {
-		return fmt.Errorf("check email case collisions: %w", err)
-	}
-	var collisions []string
-	for rows.Next() {
-		var e string
-		var n int
-		if err := rows.Scan(&e, &n); err == nil {
-			collisions = append(collisions, fmt.Sprintf("%s (%d accounts)", e, n))
-		}
-	}
-	rows.Close() // #nosec G104 -- fully consumed above
-	if len(collisions) > 0 {
-		slog.Warn("users.email: accounts differing only by letter case exist; sign-in matches case-insensitively, "+
-			"so merge or remove the duplicates (the case-insensitive unique index is not created until then)",
-			"emails", collisions)
-		return nil
-	}
-	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_nocase ON users (email COLLATE NOCASE)`); err != nil {
-		return fmt.Errorf("create idx_users_email_nocase: %w", err)
-	}
-	return nil
+	return migrateFork(db) // fork hook (fork.go)
 }
 
 var (
@@ -159,7 +133,17 @@ func SchemaReady(ctx context.Context, db *sql.DB) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return applied >= target, nil
+	if applied < target {
+		return false, nil
+	}
+	return forkSchemaReady(ctx, db) // fork hook (fork.go)
+}
+
+// FilePath returns the on-disk database file path for a connection URL, e.g.
+// sqlite:///data/calnode.db -> /data/calnode.db. Used to place companion files,
+// like the keyvault key, beside the database they belong to.
+func FilePath(databaseURL string) string {
+	return parseDSN(databaseURL)
 }
 
 func parseDSN(url string) string {

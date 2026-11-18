@@ -10,6 +10,7 @@
 	import * as Tooltip from '$lib/components/ui/tooltip';
 	import { currentUser } from '$lib/stores';
 	import * as Dialog from '$lib/components/ui/dialog';
+	import { t, tr, localeTag } from '$lib/i18n';
 
 	let items: Webhook[] = $state([]);
 	let loading = $state(true);
@@ -31,54 +32,67 @@
 	// Payload field catalog (keys must match the backend's webhook field keys).
 	// `pii` flags personal data so the operator chooses consciously what leaves the system.
 	type FieldDef = { key: string; label: string; pii?: boolean };
-	const fieldGroups: { group: string; pii?: boolean; fields: FieldDef[] }[] = [
-		{ group: 'Booking', fields: [
-			{ key: 'id', label: 'Booking reference' },
-			{ key: 'status', label: 'Status' },
-			{ key: 'start_at', label: 'Start time' },
-			{ key: 'end_at', label: 'End time' },
-			{ key: 'created_at', label: 'Created at' },
-			{ key: 'location_value', label: 'Location' },
-			{ key: 'cancellation_reason', label: 'Cancellation reason' },
-			{ key: 'previous_start_at', label: 'Previous start (reschedule)' },
-			{ key: 'previous_end_at', label: 'Previous end (reschedule)' },
-			{ key: 'rsvp_status', label: 'RSVP answer (booking.rsvp)' },
-			{ key: 'initiated_by', label: 'Initiated by (booker / host / admin / system)' },
-			{ key: 'revision', label: 'Revision (orders events)' },
-			{ key: 'occurred_at', label: 'Occurred at' },
-			{ key: 'changed', label: 'Changed fields (booking.updated)' },
-			{ key: 'admin_url', label: 'Admin link' },
-			{ key: 'meeting', label: 'Meeting (link, calendar event, iCalUID)' },
+	const fieldGroups = $derived<{ group: string; pii?: boolean; fields: FieldDef[] }[]>([
+		{ group: $t('webhooks.fieldGroup.booking'), fields: [
+			{ key: 'id', label: $t('webhooks.fields.booking.id') },
+			{ key: 'status', label: $t('webhooks.fields.booking.status') },
+			{ key: 'start_at', label: $t('webhooks.fields.booking.start_at') },
+			{ key: 'end_at', label: $t('webhooks.fields.booking.end_at') },
+			{ key: 'created_at', label: $t('webhooks.fields.booking.created_at') },
+			{ key: 'location_value', label: $t('webhooks.fields.booking.location_value') },
+			{ key: 'cancellation_reason', label: $t('webhooks.fields.booking.cancellation_reason') },
+			{ key: 'previous_start_at', label: $t('webhooks.fields.booking.previous_start_at') },
+			{ key: 'previous_end_at', label: $t('webhooks.fields.booking.previous_end_at') },
+			{ key: 'rsvp_status', label: $t('webhooks.fields.booking.rsvp_status') },
+			{ key: 'invite_delivery', label: $t('webhooks.fields.booking.invite_delivery') },
+			{ key: 'initiated_by', label: $t('webhooks.fields.booking.initiated_by') },
+			{ key: 'revision', label: $t('webhooks.fields.booking.revision') },
+			{ key: 'occurred_at', label: $t('webhooks.fields.booking.occurred_at') },
+			{ key: 'changed', label: $t('webhooks.fields.booking.changed') },
+			{ key: 'admin_url', label: $t('webhooks.fields.booking.admin_url') },
+			{ key: 'meeting', label: $t('webhooks.fields.booking.meeting') },
 		] },
-		{ group: 'Payment', fields: [
-			{ key: 'payment_status', label: 'Payment status' },
-			{ key: 'amount_paid_cents', label: 'Amount paid (cents)' },
-			{ key: 'amount_paid_currency', label: 'Currency' },
+		{ group: $t('webhooks.fieldGroup.payment'), fields: [
+			{ key: 'payment_status', label: $t('webhooks.fields.payment.payment_status') },
+			{ key: 'amount_paid_cents', label: $t('webhooks.fields.payment.amount_paid_cents') },
+			{ key: 'amount_paid_currency', label: $t('webhooks.fields.payment.amount_paid_currency') },
 		] },
-		{ group: 'Event type', fields: [
-			{ key: 'event_type_slug', label: 'Event type slug' },
-			{ key: 'event_type_name', label: 'Event type name' },
+		{ group: $t('webhooks.fieldGroup.eventType'), fields: [
+			{ key: 'event_type_slug', label: $t('webhooks.fields.eventType.event_type_slug') },
+			{ key: 'event_type_name', label: $t('webhooks.fields.eventType.event_type_name') },
 		] },
-		{ group: 'Host', fields: [
-			{ key: 'host_id', label: 'Host ID' },
-			{ key: 'host_name', label: 'Host name' },
-			{ key: 'host_email', label: 'Host email', pii: true },
-			{ key: 'hosts', label: 'All hosts', pii: true },
-			{ key: 'previous_host_id', label: 'Previous host ID (reassigned)' },
-			{ key: 'previous_host_name', label: 'Previous host name (reassigned)' },
-			{ key: 'previous_host_email', label: 'Previous host email (reassigned)', pii: true },
+		{ group: $t('webhooks.fieldGroup.host'), fields: [
+			{ key: 'host_id', label: $t('webhooks.fields.host.host_id') },
+			{ key: 'host_name', label: $t('webhooks.fields.host.host_name') },
+			{ key: 'host_email', label: $t('webhooks.fields.host.host_email'), pii: true },
+			{ key: 'hosts', label: $t('webhooks.fields.host.hosts'), pii: true },
+			{ key: 'previous_host_id', label: $t('webhooks.fields.host.previous_host_id') },
+			{ key: 'previous_host_name', label: $t('webhooks.fields.host.previous_host_name') },
+			{ key: 'previous_host_email', label: $t('webhooks.fields.host.previous_host_email'), pii: true },
 		] },
-		{ group: 'Attendee', pii: true, fields: [
-			{ key: 'attendee_name', label: 'Attendee name', pii: true },
-			{ key: 'attendee_email', label: 'Attendee email', pii: true },
-			{ key: 'attendee_timezone', label: 'Attendee timezone', pii: true },
-			{ key: 'attendees', label: 'All attendees (incl. phone)', pii: true },
+		{ group: $t('webhooks.fieldGroup.attendee'), pii: true, fields: [
+			{ key: 'attendee_name', label: $t('webhooks.fields.attendee.attendee_name'), pii: true },
+			{ key: 'attendee_email', label: $t('webhooks.fields.attendee.attendee_email'), pii: true },
+			{ key: 'attendee_timezone', label: $t('webhooks.fields.attendee.attendee_timezone'), pii: true },
+			{ key: 'attendees', label: $t('webhooks.fields.attendee.attendees'), pii: true },
 		] },
-		{ group: 'Intake', pii: true, fields: [
-			{ key: 'answers', label: 'Intake answers', pii: true },
+		{ group: $t('webhooks.fieldGroup.intake'), pii: true, fields: [
+			{ key: 'answers', label: $t('webhooks.fields.intake.answers'), pii: true },
 		] },
+	]);
+	// Keys are stable identifiers; only the labels above follow the locale.
+	const allFieldKeys = [
+		'id', 'status', 'start_at', 'end_at', 'created_at', 'location_value',
+		'cancellation_reason', 'previous_start_at', 'previous_end_at', 'rsvp_status', 'invite_delivery',
+		'initiated_by', 'revision', 'occurred_at', 'changed', 'admin_url', 'meeting', // fork
+		'payment_status', 'amount_paid_cents', 'amount_paid_currency',
+		'event_type_slug', 'event_type_name',
+		'host_id', 'host_name', 'host_email',
+		'hosts', 'previous_host_id', 'previous_host_name', 'previous_host_email', // fork
+		'attendee_name', 'attendee_email', 'attendee_timezone',
+		'attendees', // fork
+		'answers'
 	];
-	const allFieldKeys = fieldGroups.flatMap((g) => g.fields.map((f) => f.key));
 
 	// org = every booking in the workspace, not only the ones you host (admins only).
 	const blankForm = () => ({
@@ -158,9 +172,9 @@
 
 	async function create() {
 		createError = '';
-		if (!form.url) { createError = 'URL is required.'; return; }
-		if (!form.url.startsWith('https://')) { createError = 'URL must start with https://'; return; }
-		if (form.events.length === 0) { createError = 'Select at least one event.'; return; }
+		if (!form.url) { createError = tr('webhooks.validation.url'); return; }
+		if (!form.url.startsWith('https://')) { createError = tr('webhooks.validation.https'); return; }
+		if (form.events.length === 0) { createError = tr('webhooks.validation.events'); return; }
 		creating = true;
 		try {
 			const res = await api.post<{ secret: string }>('/v1/webhooks', {
@@ -193,7 +207,7 @@
 	}
 
 	function fmtDate(iso: string) {
-		return new Date(iso).toLocaleDateString(undefined, { dateStyle: 'medium' });
+		return new Date(iso).toLocaleDateString(localeTag(), { dateStyle: 'medium' });
 	}
 
 	function toggleEvent(ev: string) {
@@ -228,67 +242,63 @@
 
 <ConfirmDialog
 	bind:open={deleteOpen}
-	title="Delete webhook?"
-	description="The endpoint will stop receiving events immediately."
-	confirmText="Delete"
+	title={$t('webhooks.confirm.delete.title')}
+	description={$t('webhooks.confirm.delete.description')}
+	confirmText={$t('common.delete')}
 	destructive
 	onConfirm={doDelete}
 />
 
 <ConfirmDialog
 	bind:open={rotateOpen}
-	title="Rotate the signing secret?"
-	description="You get a new secret, shown once. For the next 24 hours every delivery is signed with both the new and the old secret, so you can update your receiver without rejecting anything."
-	confirmText="Rotate secret"
+	title={$t('webhooks.rotate.title')}
+	description={$t('webhooks.rotate.description')}
+	confirmText={$t('webhooks.rotate.confirm')}
 	onConfirm={doRotate}
 />
 
 <Dialog.Root bind:open={secretOpen}>
 	<Dialog.Content class="sm:max-w-lg">
 		<Dialog.Header>
-			<Dialog.Title>{secretRotated ? 'New signing secret' : 'Webhook created'}</Dialog.Title>
+			<Dialog.Title>{secretRotated ? $t('webhooks.secret.titleRotated') : $t('webhooks.secret.titleCreated')}</Dialog.Title>
 			<Dialog.Description>
-				Copy the signing secret now. You will not see it again.
-				{#if secretRotated}The old secret keeps signing alongside it for 24 hours.{/if}
+				{$t('webhooks.secret.copyNow')}
+				{#if secretRotated}{$t('webhooks.secret.oldStillSigns')}{/if}
 			</Dialog.Description>
 		</Dialog.Header>
 		<div class="rounded-md border bg-muted/40 px-3 py-2 font-mono text-xs break-all">{secretValue}</div>
-		<p class="text-xs text-muted-foreground">
-			Verify <span class="font-mono">X-Calnode-Signature</span> as HMAC-SHA256 of the raw request body, keyed by
-			the <strong>hex-decoded</strong> secret (32 bytes), not the text above. During a rotation the header holds
-			two values, comma-separated; accept the delivery if either matches.
-		</p>
+		<p class="text-xs text-muted-foreground">{$t('webhooks.secret.verifyHint')}</p>
 		<Dialog.Footer>
-			<Button variant="outline" onclick={copySecret}>{secretCopied ? 'Copied' : 'Copy secret'}</Button>
-			<Button onclick={() => (secretOpen = false)}>Done</Button>
+			<Button variant="outline" onclick={copySecret}>{secretCopied ? $t('webhooks.secret.copied') : $t('webhooks.secret.copy')}</Button>
+			<Button onclick={() => (secretOpen = false)}>{$t('webhooks.secret.done')}</Button>
 		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>
 
-<svelte:head><title>Webhooks — Calnode</title></svelte:head>
+<svelte:head><title>{$t('webhooks.headTitle')}</title></svelte:head>
 
 <div class="mb-8 flex items-center justify-between">
 	<div>
-		<h1 class="text-2xl font-semibold tracking-tight">Webhooks</h1>
-		<p class="mt-1 text-sm text-muted-foreground">Receive real-time notifications for booking events.</p>
+		<h1 class="text-2xl font-semibold tracking-tight">{$t('webhooks.title')}</h1>
+		<p class="mt-1 text-sm text-muted-foreground">{$t('webhooks.subtitle')}</p>
 	</div>
 	<Button onclick={() => { showCreate = !showCreate; createError = ''; }}>
-		{showCreate ? 'Cancel' : 'New webhook'}
+		{showCreate ? $t('webhooks.new.toggleCancel') : $t('webhooks.new.toggleOpen')}
 	</Button>
 </div>
 
 {#if showCreate}
 	<div class="mb-6 rounded-lg border bg-card p-6">
-		<h2 class="mb-4 text-sm font-semibold">New webhook</h2>
+		<h2 class="mb-4 text-sm font-semibold">{$t('webhooks.new.title')}</h2>
 		{#if createError}<p class="mb-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{createError}</p>{/if}
 
 		<div class="mb-4 space-y-1.5">
-			<Label for="wh-url">Endpoint URL</Label>
+			<Label for="wh-url">{$t('webhooks.new.urlLabel')}</Label>
 			<Input
 				id="wh-url"
 				type="url"
 				bind:value={form.url}
-				placeholder="https://your-server.com/hooks/calnode"
+				placeholder={$t('webhooks.new.urlPlaceholder')}
 			/>
 		</div>
 
@@ -307,7 +317,7 @@
 		{/if}
 
 		<div class="mb-4 space-y-2">
-			<p class="text-sm font-medium">Events to send</p>
+			<p class="text-sm font-medium">{$t('webhooks.new.eventsTitle')}</p>
 			{#each allEvents as ev}
 				<label class="flex cursor-pointer items-center gap-2 font-mono text-sm">
 					<Checkbox
@@ -335,17 +345,17 @@
 		{/if}
 
 		<div class="mb-4 space-y-3">
-			<p class="text-sm font-medium">Data to send <span class="font-normal text-muted-foreground">— untick anything you don't want delivered</span></p>
+			<p class="text-sm font-medium">{$t('webhooks.new.fieldsTitle')}</p>
 			{#each fieldGroups as grp}
 				<div class="space-y-1.5">
 					<p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-						{grp.group}{#if grp.pii}<span class="ml-1.5 font-normal normal-case text-amber-600">· personal data</span>{/if}
+						{grp.group}{#if grp.pii}<span class="ml-1.5 font-normal normal-case text-amber-600">{$t('webhooks.new.fieldsPii')}</span>{/if}
 					</p>
 					<div class="grid grid-cols-2 gap-x-4 gap-y-1">
 						{#each grp.fields as f}
 							<label class="flex cursor-pointer items-center gap-2 font-mono text-sm">
 								<Checkbox checked={form.fields.includes(f.key)} onCheckedChange={() => toggleField(f.key)} />
-								<span>{f.label}{#if f.pii}<span class="ml-1 text-[10px] font-medium uppercase text-amber-600">PII</span>{/if}</span>
+								<span>{f.label}{#if f.pii}<span class="ml-1 text-[10px] font-medium uppercase text-amber-600">{$t('webhooks.new.piiBadge')}</span>{/if}</span>
 							</label>
 						{/each}
 					</div>
@@ -354,7 +364,7 @@
 		</div>
 
 		<Button onclick={create} disabled={creating}>
-			{creating ? 'Creating…' : 'Create webhook'}
+			{creating ? $t('webhooks.new.creating') : $t('webhooks.new.create')}
 		</Button>
 	</div>
 {/if}
@@ -362,22 +372,22 @@
 {#if error}<p class="mb-4 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>{/if}
 
 {#if loading}
-	<p class="py-8 text-sm text-muted-foreground">Loading…</p>
+	<p class="py-8 text-sm text-muted-foreground">{$t('common.loading')}</p>
 {:else if items.length === 0}
 	<div class="rounded-lg border border-dashed bg-card p-12 text-center">
-		<p class="text-sm font-medium">No webhooks</p>
-		<p class="mt-1 text-sm text-muted-foreground">Add a webhook to receive real-time notifications for booking events.</p>
+		<p class="text-sm font-medium">{$t('webhooks.empty.title')}</p>
+		<p class="mt-1 text-sm text-muted-foreground">{$t('webhooks.empty.description')}</p>
 	</div>
 {:else}
 	<div class="rounded-lg border bg-card overflow-hidden">
 		<table class="w-full text-sm">
 			<thead>
 				<tr class="border-b">
-					<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">URL</th>
-					<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">Events</th>
-					<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">Fields</th>
-					<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">Status</th>
-					<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">Created</th>
+					<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">{$t('webhooks.table.url')}</th>
+					<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">{$t('webhooks.table.events')}</th>
+					<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">{$t('webhooks.table.fields')}</th>
+					<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">{$t('webhooks.table.status')}</th>
+					<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">{$t('webhooks.table.created')}</th>
 					<th class="px-4 pb-3 pt-3"></th>
 				</tr>
 			</thead>
@@ -386,23 +396,23 @@
 					{#each items as wh}
 						<tr class="transition-colors hover:bg-muted/30">
 							<td class="max-w-xs overflow-hidden text-ellipsis whitespace-nowrap px-4 py-3 font-mono text-xs">
-								{#if wh.scope === 'org'}<Badge variant="secondary" class="mr-1.5 font-sans">Workspace</Badge>{/if}{wh.url}
+								{#if wh.scope === 'org'}<Badge variant="secondary" class="mr-1.5 font-sans">{$t('webhooks.badge.workspace')}</Badge>{/if}{wh.url}
 							</td>
 							<td class="px-4 py-3 text-xs text-muted-foreground">
 								{(wh.events ?? []).join(', ')}
 								{#if wh.event_types && wh.event_types.length > 0}
-									<span class="mt-1 block">Only: <span class="font-mono">{wh.event_types.join(', ')}</span></span>
+									<span class="mt-1 block">{$t('webhooks.table.onlyEventTypes')} <span class="font-mono">{wh.event_types.join(', ')}</span></span>
 								{/if}
 								{#if wh.previous_secret_valid_until}
-									<span class="mt-1 block text-amber-700 dark:text-amber-300">Old secret valid until {new Date(wh.previous_secret_valid_until).toLocaleString()}</span>
+									<span class="mt-1 block text-amber-700 dark:text-amber-300">{$t('webhooks.table.oldSecretUntil', { when: new Date(wh.previous_secret_valid_until).toLocaleString(localeTag()) })}</span>
 								{/if}
 							</td>
-							<td class="px-4 py-3 text-xs text-muted-foreground">{(wh.fields ?? []).length} fields</td>
+							<td class="px-4 py-3 text-xs text-muted-foreground">{$t('webhooks.fieldsCount', { count: (wh.fields ?? []).length })}</td>
 							<td class="px-4 py-3">
 								{#if wh.is_active}
-									<Badge class="bg-green-50 text-green-700 border-green-200">Active</Badge>
+									<Badge class="bg-green-50 text-green-700 border-green-200">{$t('common.active')}</Badge>
 								{:else}
-									<Badge variant="secondary">Inactive</Badge>
+									<Badge variant="secondary">{$t('common.inactive')}</Badge>
 								{/if}
 							</td>
 							<td class="px-4 py-3 text-muted-foreground">{fmtDate(wh.created_at)}</td>
@@ -411,7 +421,7 @@
 									<Tooltip.Trigger class={buttonVariants({ variant: 'ghost', size: 'icon' })} onclick={() => toggleDeliveries(wh.id)}>
 										<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
 									</Tooltip.Trigger>
-									<Tooltip.Content>{openDeliveries === wh.id ? 'Hide deliveries' : 'Recent deliveries'}</Tooltip.Content>
+									<Tooltip.Content>{openDeliveries === wh.id ? $t('webhooks.tooltip.hideDeliveries') : $t('webhooks.tooltip.deliveries')}</Tooltip.Content>
 								</Tooltip.Root>
 								<Tooltip.Root>
 									<Tooltip.Trigger class={buttonVariants({ variant: 'ghost', size: 'icon' })} onclick={() => { rotateId = wh.id; rotateOpen = true; }}>
@@ -423,7 +433,7 @@
 									<Tooltip.Trigger class={buttonVariants({ variant: 'ghost', size: 'icon' })} onclick={() => del(wh.id)}>
 										<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
 									</Tooltip.Trigger>
-									<Tooltip.Content>Delete webhook</Tooltip.Content>
+									<Tooltip.Content>{$t('webhooks.tooltip.delete')}</Tooltip.Content>
 								</Tooltip.Root>
 							</td>
 						</tr>
@@ -431,18 +441,18 @@
 							<tr class="bg-muted/20">
 								<td colspan="6" class="px-4 py-3">
 									{#if deliveriesLoading}
-										<p class="text-xs text-muted-foreground">Loading deliveries…</p>
+										<p class="text-xs text-muted-foreground">{$t('webhooks.deliveries.loading')}</p>
 									{:else if deliveries.length === 0}
-										<p class="text-xs text-muted-foreground">No deliveries yet for this webhook.</p>
+										<p class="text-xs text-muted-foreground">{$t('webhooks.deliveries.empty')}</p>
 									{:else}
 										<table class="w-full text-xs">
 											<thead>
 												<tr class="text-left text-muted-foreground">
-													<th class="py-1 pr-4 font-medium">Event</th>
-													<th class="py-1 pr-4 font-medium">Status</th>
-													<th class="py-1 pr-4 font-medium">HTTP</th>
-													<th class="py-1 pr-4 font-medium">Attempts</th>
-													<th class="py-1 pr-4 font-medium">Last attempt</th>
+													<th class="py-1 pr-4 font-medium">{$t('webhooks.deliveries.event')}</th>
+													<th class="py-1 pr-4 font-medium">{$t('webhooks.deliveries.status')}</th>
+													<th class="py-1 pr-4 font-medium">{$t('webhooks.deliveries.http')}</th>
+													<th class="py-1 pr-4 font-medium">{$t('webhooks.deliveries.attempts')}</th>
+													<th class="py-1 pr-4 font-medium">{$t('webhooks.deliveries.lastAttempt')}</th>
 													<th class="py-1"></th>
 												</tr>
 											</thead>
@@ -453,13 +463,13 @@
 														<td class="py-1 pr-4">
 															<span class={d.status === 'success' || d.status === 'delivered' ? 'text-green-700' : d.status === 'failed' ? 'text-destructive' : 'text-muted-foreground'}>{d.status}</span>
 														</td>
-														<td class="py-1 pr-4">{d.response_status ?? '—'}</td>
+														<td class="py-1 pr-4">{d.response_status ?? $t('common.emDash')}</td>
 														<td class="py-1 pr-4">{d.attempt_count}</td>
-														<td class="py-1 pr-4 text-muted-foreground">{d.last_attempted_at ? new Date(d.last_attempted_at).toLocaleString() : '—'}</td>
+														<td class="py-1 pr-4 text-muted-foreground">{d.last_attempted_at ? new Date(d.last_attempted_at).toLocaleString(localeTag()) : $t('common.emDash')}</td>
 														<td class="py-1 text-right">
 															<Button variant="ghost" size="sm" class="h-7 text-xs" disabled={redelivering === d.id}
 																onclick={() => redeliver(wh.id, d.id)}>
-																{redelivering === d.id ? 'Queuing…' : 'Redeliver'}
+																{redelivering === d.id ? $t('webhooks.deliveries.queuing') : $t('webhooks.deliveries.redeliver')}
 															</Button>
 														</td>
 													</tr>

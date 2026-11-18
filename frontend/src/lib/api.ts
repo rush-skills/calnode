@@ -22,6 +22,8 @@ export type User = {
 };
 
 export type EventType = {
+	/** Lower first on public person/team pages; ties sort by name, then slug. */
+	display_order: number;
 	allow_phone_call: boolean;
 	id: string;
 	slug: string;
@@ -39,8 +41,9 @@ export type EventType = {
 	show_taken_slots: boolean;
 	/** Who sends the booker's calendar invite. 'calendar': each host's connected calendar,
 	 *  from the host's own address. 'calnode': Calnode's own invite, from the email sender
-	 *  in Settings → Email, so no host's personal address reaches the booker. */
-	invite_delivery: 'calendar' | 'calnode';
+	 *  in Settings → Email, so no host's personal address reaches the booker. 'none': no
+	 *  invite from either; the hosts' events are guestless, for integrations that send their own. */
+	invite_delivery: 'calendar' | 'calnode' | 'none';
 	/** Whether Calnode can currently send invites (a sender and working email). Only
 	 *  returned on the single event type GET. */
 	invite_sender_ready?: boolean;
@@ -71,17 +74,16 @@ export type EventType = {
 	rr_strategy: 'even' | 'soonest' | 'priority';
 	/** True when archived — hidden from the default list, is_active forced off. Reversible. */
 	archived?: boolean;
-	/** Who in the workspace sees it in the admin: everyone ('org', the default; admins may
-	 *  edit) or only its owner ('private'). Unrelated to is_public (the public directory). */
+	/** Fork: who in the workspace sees it in the admin: everyone ('org', the default) or
+	 *  only its owner, hosts and admins ('private'). Unrelated to is_public (the public directory). */
 	visibility: 'org' | 'private';
-	/** The creator (event_types.user_id): seeded as first host; their calendar mints links. */
-	owner_id: string;
-	/** True if the current user owns this event type. */
+	/** True if the current user owns this event type; false if they host it, or are an admin viewing someone else's. */
 	owned?: boolean;
-	/** True if the current user may change it: the owner, or an admin on an org-wide one.
-	 *  The editor renders read-only when false; the server enforces the same rule. */
+	/** True if the current user may edit it (the owner, or any admin); false = read-only host. */
 	can_edit?: boolean;
-	/** Owner identity, so a read-only viewer knows who created it and who to ask. */
+	/** The user the event type belongs to; its availability and calendar/Zoom connections are theirs. */
+	owner_id?: string;
+	/** Owner identity, returned when the viewer is not the owner. */
 	owner_name?: string;
 	owner_email?: string;
 };
@@ -122,6 +124,8 @@ export type Booking = {
 	amount_paid_currency?: string;
 	/** The booker's RSVP to a Calnode-sent invite; absent until an answer arrives. */
 	rsvp_status?: 'accepted' | 'declined' | 'tentative';
+	/** Who sent the booker's calendar invite, fixed when the booking was made. */
+	invite_delivery?: 'calendar' | 'calnode' | 'none';
 };
 
 export type APIKey = {

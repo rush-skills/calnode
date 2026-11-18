@@ -109,7 +109,7 @@ func (f ListFilter) where(includeWhen bool) (string, []any) {
 		conds = append(conds, "bookings.status != 'cancelled'")
 	}
 	if !f.UpdatedSince.IsZero() {
-		// changed_at is written as milliseconds-and-Z by the triggers in migration 00082,
+		// changed_at is written as milliseconds-and-Z by the triggers in fork migration 00013 (migrations_fork),
 		// so the bound value uses the same layout for the text comparison.
 		conds = append(conds, "bookings.changed_at >= ?")
 		args = append(args, f.UpdatedSince.UTC().Format("2006-01-02T15:04:05.000Z"))

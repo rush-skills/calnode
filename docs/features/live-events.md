@@ -9,7 +9,7 @@ it through the API with an ordinary API key, and shows the state on its own site
 frameable page or a web component.
 
 Code: `internal/handler/live_events.go` (API + sweep), `live_page.go` (page + widget),
-`templates/live.html`, `live-widget.js`, migration `00075_live_events.sql`, admin UI
+`templates/live.html`, `live-widget.js`, migration `migrations_fork/00008_live_events.sql`, admin UI
 `frontend/src/routes/live-events/`.
 
 ## Decisions
@@ -29,7 +29,7 @@ Code: `internal/handler/live_events.go` (API + sweep), `live_page.go` (page + wi
   (it lives on their calendar) and mints a fresh one on the new host's calendar
   (`rehostLiveEvent`).
 - **A minted link belongs to the host's calendar event; a manual one belongs to the
-  operator.** `join_url_minted` (migration 00077) records which. On a host change (or
+  operator.** `join_url_minted` (fork migration 00010) records which. On a host change (or
   when the link is cleared) a minted `join_url` is dropped so `ensureLiveEventCalendar`
   mints a fresh Meet/Teams for the new host; a manual `join_url` is kept and carried onto
   the new host's event as `Location`. Typing a link over a minted one marks it manual.
@@ -107,8 +107,7 @@ Code: `internal/handler/live_events.go` (API + sweep), `live_page.go` (page + wi
   - `calendar.CreateEventParams.ExtraAttendees` was added here as a field only. The
     Google/Microsoft provider plumbing that turns it into invitees lives in the
     default-participants branch; take that side on conflict.
-- **Migration 00075** leaves a gap after 00067 on this base (00068-00074 live on the other
-  branches); goose applies ascending versions with gaps fine.
+- **Migration numbering:** the fork's migrations now live in `internal/db/migrations_fork` with their own goose table, so they never collide with upstream's numbering; see docs/FORK.md.
 - **Not translated.** `/live` and the widget are English-only, like the LiveKit room: the
   content is three short status strings and viewer-local dates come from `Intl`. Adding
   the strings to the nine locale files is straightforward if the page is ever marketed.

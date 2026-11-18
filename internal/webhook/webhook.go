@@ -83,6 +83,8 @@ const (
 	FieldPreviousHostID    = "previous_host_id"
 	FieldPreviousHostName  = "previous_host_name"
 	FieldPreviousHostEmail = "previous_host_email"
+
+	FieldInviteDelivery = "invite_delivery"
 )
 
 // Booking events.
@@ -106,6 +108,7 @@ var AllFields = []string{
 	FieldPaymentStatus, FieldAmountPaid, FieldCurrency, FieldRSVPStatus, FieldInitiatedBy,
 	FieldMeeting, FieldHosts, FieldAttendees, FieldRevision, FieldOccurredAt, FieldAdminURL,
 	FieldChanged, FieldPreviousHostID, FieldPreviousHostName, FieldPreviousHostEmail,
+	FieldInviteDelivery,
 }
 
 // Webhook scopes.
@@ -125,6 +128,8 @@ const (
 // defaultFields reproduces the original payload (no PII, no answers) so a webhook with no
 // field config (fields IS NULL) keeps its historical shape. Payment fields are included but
 // omitempty, so free bookings are byte-identical to before; only paid bookings gain them.
+// FieldInviteDelivery is opt-in for the same reason: every booking has a value, so adding
+// it here would change the payload of every unconfigured webhook.
 var defaultFields = []string{
 	FieldID, FieldEventTypeSlug, FieldHostID, FieldStartAt, FieldEndAt,
 	FieldStatus, FieldLocation, FieldCancelReason, FieldCreatedAt,
@@ -519,6 +524,9 @@ type enrichedBooking struct {
 	answers                                 []bookingsnap.Answer
 	snap                                    *bookingsnap.Snapshot // nil when the booking row is gone
 	previousHostName, previousHostEmail     string
+	// inviteDelivery is who sent the booker's invite (calendar, calnode or none), read
+	// from the booking row so every event carries it without each caller passing it.
+	inviteDelivery string
 }
 
 // enrich loads the booking as it stands now (bookingsnap) and lets it override the
@@ -554,6 +562,7 @@ func (s *Service) enrich(ctx context.Context, p BookingPayload) enrichedBooking 
 		c.OccurredAt = rfc3339(snap.ChangedAt)
 	}
 	bd.eventTypeName, bd.hostName, bd.hostEmail = snap.EventTypeName, snap.HostName, snap.HostEmail
+	bd.inviteDelivery = snap.InviteDelivery
 	for _, a := range snap.Attendees {
 		if a.Organizer {
 			bd.attendeeName, bd.attendeeEmail, bd.attendeeTZ = a.Name, a.Email, a.Timezone
@@ -617,6 +626,7 @@ func buildData(bd enrichedBooking, fields []string) map[string]any {
 		FieldPreviousHostID:    bd.core.PreviousHostID,
 		FieldPreviousHostName:  bd.previousHostName,
 		FieldPreviousHostEmail: bd.previousHostEmail,
+		FieldInviteDelivery:    bd.inviteDelivery,
 	}
 	if bd.snap != nil {
 		omitEmpty[FieldAdminURL] = bd.snap.AdminURL

@@ -24,7 +24,7 @@ import (
 // Team calendar: one view of every member's meetings - Calnode bookings for all hosts
 // plus titled events from each member's connected Google/Microsoft calendars. Read by
 // any signed-in member in the admin app, and by an external dashboard through a share
-// token (team_calendar_shares, migration 00074) that embeds the public page below.
+// token (team_calendar_shares, fork migration 00007) that embeds the public page below.
 //
 // The share token grants read access to the whole team's schedule, including attendee
 // names, and never anything else: it is accepted only by the data endpoint and the embed

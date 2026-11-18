@@ -52,6 +52,11 @@ body {
 /* Mobile back-to-calendar button (step-flow); hidden on desktop. */
 .cal-back { display: none; }
 
+.card {
+  margin-top: auto;
+  margin-bottom: auto;
+}
+
 /* ── Mobile ──────────────────────────────────────── */
 @media (max-width: 700px) {
   body { padding: 0 0 1.5rem; align-items: center; gap: 1rem; }
@@ -75,11 +80,7 @@ body {
 {{template "demoBanner" .}}
 {{/* GTM <noscript> fallback intentionally omitted — it would load GTM without consent for no-JS visitors, bypassing the cookie gate. */}}
 
-{{if or .LogoURL .BusinessName}}
-<header style="text-align:center;padding:24px 16px 4px;">
-  {{if .LogoURL}}<img src="{{.LogoURL}}" alt="{{.BusinessName}}" style="height:{{.LogoHeight}}px;width:auto;max-width:100%;opacity:{{.LogoOpacity}};display:inline-block;border:0;">{{else}}<span style="font-size:.9375rem;font-weight:600;color:#111827;">{{.BusinessName}}</span>{{end}}
-</header>
-{{end}}
+{{template "businessHeader" .}}
 
 {{if .BannerURL}}
 <img class="brand-banner" src="{{.BannerURL}}" alt="" style="opacity:{{.BannerOpacity}};">
@@ -132,6 +133,7 @@ body {
         {{end}}
       </span>
       {{end}}
+      {{if .HostsMore}}<span class="face face-more" style="z-index:100">+{{.HostsMore}}</span>{{end}}
     </div>
     <p id="host-name" class="host-name">{{.HostsLabel}}</p>
     {{end}}
@@ -300,6 +302,7 @@ body {
   // The default face(s) are server-rendered; on slot-pick we swap to the host(s)
   // that slot's host_ids resolve to (round-robin: the priority pick; group: all).
   let hostMeta = {};
+  const MAX_FACES = 3; // keep in step with maxHostFaces in book.go
   const facesEl = $('host-faces'), nameEl = $('host-name');
   const defaultFacesHTML = facesEl ? facesEl.innerHTML : '';
   const defaultName = nameEl ? nameEl.textContent : '';
@@ -332,8 +335,13 @@ body {
     if (!facesEl) return;
     const metas = (ids || []).map(id => hostMeta[id]).filter(Boolean);
     if (!metas.length) return; // unknown — keep whatever's shown
-    const n = metas.length;
-    facesEl.innerHTML = metas.map((m, i) => faceHTML(m, (n - i) * 10)).join('');
+    // Cap the stack so it cannot overflow the info panel into the calendar (#166).
+    // Keep in step with maxHostFaces in book.go and the embed widget's copy.
+    const shown = metas.slice(0, MAX_FACES);
+    const more = metas.length - shown.length;
+    facesEl.innerHTML =
+      shown.map((m, i) => faceHTML(m, (shown.length - i) * 10)).join('') +
+      (more > 0 ? `<span class="face face-more" style="z-index:100">+${more}</span>` : '');
     nameEl.textContent = hostsLabel(metas);
   }
   function restoreDefaultHosts() {

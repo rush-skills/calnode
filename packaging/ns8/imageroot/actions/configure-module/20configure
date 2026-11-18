@@ -11,8 +11,9 @@
 #  2. write the container env file state/calnode.env (BASE_URL follows
 #     the hostname; the encryption key is generated once and preserved
 #     across reconfigures, since losing it locks the SQLite data key)
-#  3. register a host-based Traefik route (TLS is handled by the cluster)
-#  4. pull the Calnode image so a first install works offline of updates
+#  3. ensure the app image is present (tolerating a registry outage when
+#     the image is already local)
+#  4. register a host-based Traefik route (TLS is handled by the cluster)
 #
 import json
 import os
@@ -25,9 +26,9 @@ import agent.tasks
 STATE_DIR = os.getcwd()
 ENV_FILE = os.path.join(STATE_DIR, "calnode.env")
 CONFIG_FILE = os.path.join(STATE_DIR, "config.json")
-# Stamped at build time (build-images.sh) to the exact app ref this module
-# release runs, so a pinned install warms the right image instead of :latest.
-CALNODE_IMAGE = "__CALNODE_APP_IMAGE__"
+# Written by the cluster into the module environment at install time from
+# the org.nethserver.images label: the same reference the systemd unit runs.
+CALNODE_IMAGE = os.environ.get("CALNODE_IMAGE", "ghcr.io/calnode/calnode:latest")
 
 
 def read_env_file(path):
@@ -101,8 +102,13 @@ with open(CONFIG_FILE, "w", encoding="utf-8") as handle:
         indent=2,
     )
 
-# Make sure the app image is present before the service starts.
-agent.run_helper("podman", "pull", CALNODE_IMAGE).check_returncode()
+# Make sure the app image is present before the service starts. The cluster
+# normally pre-pulls it at install; tolerate a registry outage if it is
+# already here so a transient network fault cannot block a reconfigure.
+pulled = agent.run_helper("podman", "pull", CALNODE_IMAGE)
+if pulled.returncode != 0:
+    present = agent.run_helper("podman", "image", "exists", CALNODE_IMAGE)
+    agent.assert_exp(present.returncode == 0)
 
 # Register a host-based route. Since the "instance" attribute starts with
 # MODULE_ID, the route is removed automatically with the module.

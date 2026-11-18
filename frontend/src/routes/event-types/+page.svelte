@@ -2,6 +2,8 @@
 	import { onMount } from 'svelte';
 	import { api, type EventType } from '$lib/api';
 	import { slugify } from '$lib/slug';
+	import { currentUser } from '$lib/stores';
+	import { t, tr } from '$lib/i18n';
 	import { Button, buttonVariants } from '$lib/components/ui/button';
 	import { ConfirmDialog } from '$lib/components/ui/confirm-dialog';
 	import { Badge } from '$lib/components/ui/badge';
@@ -26,17 +28,28 @@
 	// copies while the request is in flight.
 	let duplicating = $state('');
 
+	// Admins can switch to every event type on the instance (?scope=all), the same way
+	// the bookings page offers "All bookings". Their default list stays their own.
+	const isAdmin = $derived($currentUser?.is_admin ?? false);
+	let scope = $state<'mine' | 'all'>('mine');
+
 	let filter = $state<'active' | 'archived'>('active');
 	const visible = $derived(items.filter((et) => (filter === 'archived' ? !!et.archived : !et.archived)));
 	const archivedCount = $derived(items.filter((et) => et.archived).length);
 	const activeCount = $derived(items.length - archivedCount);
+	const filterEmptyWord = $derived(
+		(filter === 'archived'
+			? $t('eventTypes.filter.archived', { count: archivedCount })
+			: $t('eventTypes.filter.active', { count: activeCount })
+		).replace(/\s*\(.*\)$/, '').trim().toLowerCase()
+	);
 
 	async function load() {
 		try {
-			const res = await api.get<{ items: EventType[] }>('/v1/event-types');
+			const res = await api.get<{ items: EventType[] }>(scope === 'all' && isAdmin ? '/v1/event-types?scope=all' : '/v1/event-types');
 			items = res.items;
 		} catch (e: any) {
-			toast.error(e.message || 'Could not load event types');
+			toast.error(e.message || tr('eventTypes.toast.errors.load'));
 		} finally {
 			loading = false;
 		}
@@ -44,15 +57,23 @@
 
 	onMount(load);
 
+	async function setScope(s: 'mine' | 'all') {
+		if (scope === s) return;
+		scope = s;
+		await load();
+	}
+
+	function ownerLabel(et: EventType) {
+		return et.owned ? $t('eventTypes.owner.you') : et.owner_name || et.owner_email || $t('common.emDash');
+	}
+
 	async function create() {
 		if (!form.name.trim() || !form.duration_minutes) {
-			toast.error('Name and duration are required.');
+			toast.error(tr('eventTypes.toast.nameDurationRequired'));
 			return;
 		}
 		if (!slugPreview) {
-			toast.error(form.slug.trim()
-				? 'The slug needs at least one letter or number.'
-				: 'A booking link could not be made from this name — add a slug with letters or numbers.');
+			toast.error(form.slug.trim() ? tr('eventTypes.toast.slugNoAlnum') : tr('eventTypes.toast.slugUnderivable'));
 			return;
 		}
 		creating = true;
@@ -68,7 +89,7 @@
 			toast.success(`Created — booking link is /book/${created.slug}`);
 			await load();
 		} catch (e: any) {
-			toast.error(e.message || 'Could not create event type');
+			toast.error(e.message || tr('eventTypes.toast.errors.create'));
 		} finally {
 			creating = false;
 		}
@@ -79,17 +100,17 @@
 			await api.patch(`/v1/event-types/${et.slug}`, { is_active: newActive });
 		} catch (e: any) {
 			et.is_active = !newActive; // revert optimistic update
-			toast.error(e.message || 'Could not update status');
+			toast.error(e.message || tr('eventTypes.toast.errors.status'));
 		}
 	}
 
 	async function archive(et: EventType, archived: boolean) {
 		try {
 			await api.patch(`/v1/event-types/${et.slug}`, { archived });
-			toast.success(archived ? 'Event type archived' : 'Event type restored');
+			toast.success(archived ? tr('eventTypes.toast.archived') : tr('eventTypes.toast.restored'));
 			await load();
 		} catch (e: any) {
-			toast.error(e.message || 'Could not update event type');
+			toast.error(e.message || tr('eventTypes.toast.errors.update'));
 		}
 	}
 
@@ -100,10 +121,10 @@
 		duplicating = et.slug;
 		try {
 			const copy = await api.post<EventType>(`/v1/event-types/${et.slug}/duplicate`);
-			toast.success(`Duplicated as "${copy.slug}". Inactive until you turn it on.`);
+			toast.success(tr('eventTypes.toast.duplicated', { slug: copy.slug }));
 			await load();
 		} catch (e: any) {
-			toast.error(e.message || 'Could not duplicate event type');
+			toast.error(e.message || tr('eventTypes.toast.errors.duplicate'));
 		} finally {
 			duplicating = '';
 		}
@@ -119,7 +140,7 @@
 			await api.del(`/v1/event-types/${deleteSlug}`);
 			await load();
 		} catch (e: any) {
-			toast.error(e.message || 'Could not delete event type');
+			toast.error(e.message || tr('eventTypes.toast.errors.delete'));
 		}
 	}
 
@@ -139,80 +160,97 @@
 
 <ConfirmDialog
 	bind:open={deleteOpen}
-	title="Delete event type?"
-	description="This permanently removes the event type, its booking link and its past and cancelled bookings. Event types with upcoming bookings can't be deleted until those are cancelled or rescheduled."
-	confirmText="Delete"
+	title={$t('eventTypes.confirm.delete.title')}
+	description={$t('eventTypes.confirm.delete.description')}
+	confirmText={$t('common.delete')}
 	destructive
 	onConfirm={doDelete}
 />
 
-<svelte:head><title>Event Types — Calnode</title></svelte:head>
+<svelte:head><title>{$t('eventTypes.headTitle')}</title></svelte:head>
 
 <div class="mb-8 flex items-center justify-between">
 	<div>
-		<h1 class="text-2xl font-semibold tracking-tight">Event Types</h1>
-		<p class="mt-1 text-sm text-muted-foreground">The meetings people can book across your organisation. You can edit your own, and admins can edit anything shared with the organisation.</p>
+		<h1 class="text-2xl font-semibold tracking-tight">{$t('eventTypes.title')}</h1>
+		<p class="mt-1 text-sm text-muted-foreground">
+			{scope === 'all' ? $t('eventTypes.subtitle.all') : $t('eventTypes.subtitle.mine')}
+		</p>
 	</div>
-	<Button onclick={() => { showCreate = !showCreate; }}>
-		{showCreate ? 'Cancel' : 'New event type'}
-	</Button>
+	<div class="flex shrink-0 items-center gap-2">
+		{#if isAdmin}
+			<div class="inline-flex rounded-md border p-0.5">
+				<button
+					class="rounded px-3 py-1 text-sm font-medium transition-colors {scope === 'mine' ? 'bg-secondary text-secondary-foreground' : 'text-muted-foreground hover:text-foreground'}"
+					onclick={() => setScope('mine')}
+				>{$t('eventTypes.scope.mine')}</button>
+				<button
+					class="rounded px-3 py-1 text-sm font-medium transition-colors {scope === 'all' ? 'bg-secondary text-secondary-foreground' : 'text-muted-foreground hover:text-foreground'}"
+					onclick={() => setScope('all')}
+				>{$t('eventTypes.scope.all')}</button>
+			</div>
+		{/if}
+		<Button onclick={() => { showCreate = !showCreate; }}>
+			{showCreate ? $t('eventTypes.new.toggleCancel') : $t('eventTypes.new.toggleOpen')}
+		</Button>
+	</div>
 </div>
 
 {#if showCreate}
 	<div class="mb-6 rounded-lg border bg-card p-6">
-		<h2 class="mb-4 text-sm font-semibold">New event type</h2>
+		<h2 class="mb-4 text-sm font-semibold">{$t('eventTypes.new.title')}</h2>
 		<div class="mb-4 grid grid-cols-2 gap-4">
 			<div class="space-y-1.5">
-				<Label for="et-name">Name</Label>
-				<Input id="et-name" bind:value={form.name} placeholder="30-Minute Call" />
+				<Label for="et-name">{$t('eventTypes.new.name')}</Label>
+				<Input id="et-name" bind:value={form.name} placeholder={$t('eventTypes.new.namePlaceholder')} />
 			</div>
 			<div class="space-y-1.5">
-				<Label for="et-slug">Slug (URL)</Label>
-				<Input id="et-slug" bind:value={form.slug} placeholder="Optional — derived from the name" />
+				<Label for="et-slug">{$t('eventTypes.new.slug')}</Label>
+				<Input id="et-slug" bind:value={form.slug} placeholder={$t('eventTypes.new.slugPlaceholder')} />
 				<p class="text-xs text-muted-foreground" data-testid="slug-preview">
-					Booking link: <code>/book/{slugPreview || '…'}</code>
+					{$t('eventTypes.new.bookingLink')} <code>/book/{slugPreview || '…'}</code>
 				</p>
 			</div>
 			<div class="space-y-1.5">
-				<Label for="et-dur">Duration (minutes)</Label>
+				<Label for="et-dur">{$t('eventTypes.new.duration')}</Label>
 				<Input id="et-dur" type="number" min="5" bind:value={form.duration_minutes} />
 			</div>
 			<div class="space-y-1.5">
-				<Label for="et-desc">Description (optional)</Label>
-				<Input id="et-desc" bind:value={form.description} placeholder="Brief description…" />
+				<Label for="et-desc">{$t('eventTypes.new.description')}</Label>
+				<Input id="et-desc" bind:value={form.description} placeholder={$t('eventTypes.new.descriptionPlaceholder')} />
 			</div>
 		</div>
 		<Button onclick={create} disabled={creating}>
-			{creating ? 'Creating…' : 'Create event type'}
+			{creating ? $t('eventTypes.new.creating') : $t('eventTypes.new.create')}
 		</Button>
 	</div>
 {/if}
 
 {#if loading}
-	<p class="py-8 text-sm text-muted-foreground">Loading…</p>
+	<p class="py-8 text-sm text-muted-foreground">{$t('common.loading')}</p>
 {:else if items.length === 0}
 	<div class="rounded-lg border border-dashed bg-card p-12 text-center">
-		<p class="text-sm font-medium">No event types yet</p>
-		<p class="mt-1 text-sm text-muted-foreground">Create your first event type to start accepting bookings.</p>
+		<p class="text-sm font-medium">{$t('eventTypes.empty.title')}</p>
+		<p class="mt-1 text-sm text-muted-foreground">{$t('eventTypes.empty.description')}</p>
 	</div>
 {:else}
 	<div class="mb-4 inline-flex rounded-md border p-0.5 text-sm">
-		<button type="button" class="rounded px-3 py-1 transition-colors {filter === 'active' ? 'bg-muted font-medium' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (filter = 'active')}>Active ({activeCount})</button>
-		<button type="button" class="rounded px-3 py-1 transition-colors {filter === 'archived' ? 'bg-muted font-medium' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (filter = 'archived')}>Archived ({archivedCount})</button>
+		<button type="button" class="rounded px-3 py-1 transition-colors {filter === 'active' ? 'bg-muted font-medium' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (filter = 'active')}>{$t('eventTypes.filter.active', { count: activeCount })}</button>
+		<button type="button" class="rounded px-3 py-1 transition-colors {filter === 'archived' ? 'bg-muted font-medium' : 'text-muted-foreground hover:text-foreground'}" onclick={() => (filter = 'archived')}>{$t('eventTypes.filter.archived', { count: archivedCount })}</button>
 	</div>
 	{#if visible.length === 0}
 		<div class="rounded-lg border border-dashed bg-card p-12 text-center">
-			<p class="text-sm text-muted-foreground">No {filter === 'archived' ? 'archived' : 'active'} event types.</p>
+			<p class="text-sm text-muted-foreground">{$t('eventTypes.filter.none', { filter: filterEmptyWord })}</p>
 		</div>
 	{:else}
 	<div class="rounded-lg border bg-card overflow-hidden">
 		<table class="w-full text-sm">
 			<thead>
 				<tr class="border-b">
-					<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">Name</th>
-					<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">Duration</th>
-					<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">Booking link</th>
-					<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">Active</th>
+					<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">{$t('eventTypes.table.name')}</th>
+					{#if scope === 'all'}<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">{$t('eventTypes.table.owner')}</th>{/if}
+					<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">{$t('eventTypes.table.duration')}</th>
+					<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">{$t('eventTypes.table.bookingLink')}</th>
+					<th class="px-4 pb-3 pt-3 text-left text-xs font-medium text-muted-foreground">{$t('eventTypes.table.active')}</th>
 					<th class="px-4 pb-3 pt-3"></th>
 				</tr>
 			</thead>
@@ -222,14 +260,15 @@
 						<td class="px-4 py-3">
 							<div class="flex flex-wrap items-center gap-2">
 								<span class="font-medium">{et.name}</span>
-								{#if !et.owned && et.owner_name}
-									<Badge variant="secondary" class="text-[10px]">by {et.owner_name}</Badge>
+								{#if et.owned === false && scope === 'mine'}
+									<Badge variant="secondary" class="text-[10px]">{et.owner_name ? $t('eventTypes.badge.by', { name: et.owner_name }) : $t('eventTypes.badge.youHost')}</Badge>
 								{/if}
-								<Badge variant="outline" class="text-[10px]">{et.visibility === 'private' ? 'Only me' : 'Org-wide'}</Badge>
+								<Badge variant="outline" class="text-[10px]">{et.visibility === 'private' ? $t('eventTypes.badge.private') : $t('eventTypes.badge.org')}</Badge>
 							</div>
 							<div class="text-xs text-muted-foreground">{et.slug}</div>
 						</td>
-						<td class="px-4 py-3 text-muted-foreground">{et.duration_minutes} min</td>
+						{#if scope === 'all'}<td class="px-4 py-3 text-muted-foreground">{ownerLabel(et)}</td>{/if}
+						<td class="px-4 py-3 text-muted-foreground">{$t('common.minutesShort', { n: et.duration_minutes })}</td>
 						<td class="px-4 py-3">
 							<Tooltip.Provider>
 								<Tooltip.Root>
@@ -255,7 +294,7 @@
 							</Tooltip.Provider>
 						</td>
 						<td class="px-4 py-3">
-							<Switch bind:checked={et.is_active} onCheckedChange={(v) => saveActive(et, v)} disabled={!et.can_edit || et.archived} />
+							<Switch bind:checked={et.is_active} onCheckedChange={(v) => saveActive(et, v)} disabled={et.can_edit === false || et.archived} />
 						</td>
 						<td class="px-4 py-3">
 							<Tooltip.Provider>
@@ -268,10 +307,10 @@
 											<!-- Gear/Settings icon -->
 											<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
 										</Tooltip.Trigger>
-										<Tooltip.Content>{et.can_edit ? 'Settings' : 'View settings (read-only)'}</Tooltip.Content>
+										<Tooltip.Content>{et.can_edit === false ? $t('eventTypes.tooltip.viewReadOnly') : $t('eventTypes.tooltip.settings')}</Tooltip.Content>
 									</Tooltip.Root>
 
-									{#if et.can_edit}
+									{#if et.can_edit !== false}
 										<Tooltip.Root>
 											<Tooltip.Trigger
 												class={buttonVariants({ variant: 'ghost', size: 'icon' })}
@@ -281,7 +320,7 @@
 												<!-- Copy icon -->
 												<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="14" height="14" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
 											</Tooltip.Trigger>
-											<Tooltip.Content>Duplicate</Tooltip.Content>
+											<Tooltip.Content>{$t('eventTypes.tooltip.duplicate')}</Tooltip.Content>
 										</Tooltip.Root>
 										<Tooltip.Root>
 											<Tooltip.Trigger
@@ -296,7 +335,7 @@
 													<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="5" rx="1"/><path d="M4 9v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9"/><path d="M10 13h4"/></svg>
 												{/if}
 											</Tooltip.Trigger>
-											<Tooltip.Content>{et.archived ? 'Restore' : 'Archive'}</Tooltip.Content>
+											<Tooltip.Content>{et.archived ? $t('eventTypes.tooltip.restore') : $t('eventTypes.tooltip.archive')}</Tooltip.Content>
 										</Tooltip.Root>
 										<Tooltip.Root>
 											<Tooltip.Trigger
@@ -306,7 +345,7 @@
 												<!-- Trash icon -->
 												<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
 											</Tooltip.Trigger>
-											<Tooltip.Content>Delete</Tooltip.Content>
+											<Tooltip.Content>{$t('eventTypes.tooltip.delete')}</Tooltip.Content>
 										</Tooltip.Root>
 									{/if}
 								</div>

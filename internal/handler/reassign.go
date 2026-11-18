@@ -75,7 +75,8 @@ var errReassignHostUnavailable = errors.New("reassign: new host not found or arc
 type reassignedBooking struct {
 	updated                              *booking.Booking
 	oldHostID, newHostID                 string
-	extEventID, extProvider              string
+	extEventID, extCalendarID            string
+	extProvider                          string
 	etName, orgName, orgEmail, orgLocale string
 	calMsg                               string
 	// initiatedBy is the webhook initiated_by, set by the caller (initiatorFor before the
@@ -101,7 +102,8 @@ func (h *Handler) reassignBookingRow(ctx context.Context, bookingID, newHostID s
 	// Capture the old host + calendar event + summary fields before the move.
 	rb := &reassignedBooking{newHostID: newHostID}
 	err = h.db.QueryRowContext(ctx, `
-		SELECT b.host_id, COALESCE(b.external_event_id,''), COALESCE(bh.external_provider,''),
+		SELECT b.host_id, COALESCE(b.external_event_id,''), COALESCE(bh.external_calendar_id,''),
+		       COALESCE(bh.external_provider,''),
 		       et.name, COALESCE(a.name,''), COALESCE(a.email,''), COALESCE(a.locale,''),
 		       COALESCE(et.calendar_message,'')
 		FROM bookings b
@@ -109,7 +111,7 @@ func (h *Handler) reassignBookingRow(ctx context.Context, bookingID, newHostID s
 		LEFT JOIN booking_attendees a ON a.booking_id = b.id AND a.is_organizer = 1
 		LEFT JOIN booking_hosts bh ON bh.booking_id = b.id AND bh.user_id = b.host_id
 		WHERE b.id = ?`, bookingID).
-		Scan(&rb.oldHostID, &rb.extEventID, &rb.extProvider, &rb.etName, &rb.orgName, &rb.orgEmail, &rb.orgLocale, &rb.calMsg)
+		Scan(&rb.oldHostID, &rb.extEventID, &rb.extCalendarID, &rb.extProvider, &rb.etName, &rb.orgName, &rb.orgEmail, &rb.orgLocale, &rb.calMsg)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, booking.ErrNotFound
 	}
@@ -122,13 +124,12 @@ func (h *Handler) reassignBookingRow(ctx context.Context, bookingID, newHostID s
 		return nil, err
 	}
 
-	// Keep the multi-host record in sync — the primary host row follows the
-	// booking's host_id so later cancel/notify fan-out targets the right person.
-	// (Reassign is single-host; the primary row is the one being moved.)
+	// ReassignHost moved the primary seat and cleared its event ids in its transaction.
+	// Fork: the old event's iCalUID (fork migration 00013) goes with them; the side
+	// effects record the new event's.
 	if _, err := h.db.ExecContext(ctx,
-		`UPDATE booking_hosts SET user_id = ?, external_event_id = NULL WHERE booking_id = ? AND is_primary = 1`,
-		newHostID, rb.updated.ID); err != nil {
-		h.logger.Error("reassign: sync booking_hosts", "error", err, "booking_id", bookingID)
+		`UPDATE booking_hosts SET external_ical_uid = '' WHERE booking_id = ? AND is_primary = 1`, bookingID); err != nil {
+		h.logger.Error("reassign: clear old iCalUID", "error", err, "booking_id", bookingID)
 	}
 	return rb, nil
 }
@@ -149,8 +150,8 @@ func (h *Handler) reassignSideEffects(ctx context.Context, rb *reassignedBooking
 		if rb.extEventID != "" {
 			// Reassignment cancels on the OLD host's calendar. Their stamped provider
 			// routes it ("" falls back to id recognition, then their destination).
-			h.dropCalendarManageLinks(ctx, gc, rb.oldHostID, "", rb.extEventID, rb.extProvider, bCopy.ID)
-			if err := gc.CancelEvent(ctx, rb.oldHostID, "", rb.extEventID, rb.extProvider); err != nil {
+			h.dropCalendarManageLinks(ctx, gc, rb.oldHostID, rb.extCalendarID, rb.extEventID, rb.extProvider, bCopy.ID)
+			if err := gc.CancelEvent(ctx, rb.oldHostID, rb.extCalendarID, rb.extEventID, rb.extProvider); err != nil {
 				h.logger.Error("reassign: delete old calendar event", "error", err, "booking_id", bCopy.ID)
 			}
 		}
@@ -212,10 +213,14 @@ func (h *Handler) reassignSideEffects(ctx context.Context, rb *reassignedBooking
 
 	// A Calnode-sent invite is re-issued (same UID, newer SEQUENCE) so the booker's
 	// calendar entry follows the change. A calendar-sent one needs nothing here: the
-	// new host's calendar invited the booker when the event was recreated above.
-	if inviteMode == booking.InviteByCalnode {
+	// new host's calendar invited the booker when the event was recreated above, and a
+	// booking with no invite gets none now either (applyInviteDelivery says so).
+	switch inviteMode {
+	case booking.InviteByCalnode:
 		h.applyInviteDelivery(ctx, &d, inviteMode, newHostID)
 		d.ICSSequence = int(time.Now().Unix())
+	case booking.InviteByNone:
+		h.applyInviteDelivery(ctx, &d, inviteMode, newHostID)
 	}
 	prefs := h.hostPrefsOrDefault(ctx, bCopy.ID, newHostID)
 	if prefs.NotifyConfirmation {
@@ -286,6 +291,9 @@ func (h *Handler) ReassignBooking(w http.ResponseWriter, r *http.Request) {
 		return
 	case errors.Is(err, booking.ErrAlreadyCancelled):
 		h.writeError(w, http.StatusConflict, "this booking has been cancelled")
+		return
+	case errors.Is(err, booking.ErrHostAlreadyAssigned):
+		h.writeError(w, http.StatusConflict, "the chosen host already attends this booking")
 		return
 	case errors.Is(err, booking.ErrNotFound):
 		h.writeError(w, http.StatusNotFound, "booking not found")

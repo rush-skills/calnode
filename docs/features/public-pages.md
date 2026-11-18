@@ -1,7 +1,7 @@
 # Public pages: attribution removal + "Show host names"
 
 Two changes to the public booking surfaces (book page, manage page, embed widget,
-person/team directory pages). Migration `00071_show_host_names.sql`.
+person/team directory pages). Migration `migrations_fork/00004_show_host_names.sql`.
 
 ## 1. "Powered by Calnode" attribution removed
 
@@ -125,4 +125,4 @@ as `EmailSettings`/`LLMSettings`).
 - Commit 19092d5 refined the OFF behaviour: only event types with more than one host hide
   individual names, showing a single "<Business> team" entry (`teamHost` in `book.go`);
   single-host event types always show their host. Default participants are not hosts.
-- The migration-numbering note that used to live here is moot: 00068–00076 are contiguous.
+- Migration numbering: the fork's migrations now live in `internal/db/migrations_fork` with their own goose table, so they never collide with upstream's numbering; see docs/FORK.md.

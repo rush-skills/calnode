@@ -20,7 +20,7 @@ import (
 	"github.com/calnode/calnode/internal/mailer"
 	"github.com/calnode/calnode/internal/secret"
 
-	"github.com/calnode/calnode/internal/stripe"
+	"github.com/calnode/calnode/internal/payments"
 	"github.com/calnode/calnode/internal/webhook"
 	"github.com/calnode/calnode/internal/worker"
 	"github.com/calnode/calnode/internal/zoom"
@@ -36,6 +36,52 @@ import (
 // uses it to back the HTTP server; the `calnode mcp` subcommand uses it to serve the
 // MCP server over stdio. The returned drain func blocks until the background worker
 // has finished its current poll cycle.
+// newMCPStreamableHandler builds the Streamable HTTP transport for POST /mcp.
+//
+// Stateless is deliberate, not a default that slipped through. The go-sdk only
+// advertises and serves protocol 2026-07-28 (SEP-2575's server/discover flow) on a
+// stateless transport: StreamableServerTransport.SupportsProtocolVersion filters
+// every version >= 2026-07-28 out of a stateful one, so /mcp answered discovery
+// with a list ending at 2025-11-25. ChatGPT's connector flow asks for 2026-07-28
+// and does not fall back to an older version, so its action discovery failed
+// (#170). Clients that negotiate down (MCP Inspector, MiniMax, plain SDK clients)
+// were unaffected — which is why this went unnoticed.
+//
+// Calnode holds no MCP session state: each request is authenticated on its own by
+// RequireBearerToken + MCPCallerMiddleware, and no tool sends server->client
+// requests or notifications. The trade-off is that GET and DELETE /mcp answer 405,
+// since there is no session to stream or terminate.
+func newMCPStreamableHandler(srv *mcp.Server) http.Handler {
+	return mcp.NewStreamableHTTPHandler(
+		func(*http.Request) *mcp.Server { return srv },
+		&mcp.StreamableHTTPOptions{Stateless: true},
+	)
+}
+
+// envEntry pairs one environment-sourced setting with the value the database
+// resolved for the same thing. Only the name is ever surfaced — never a value.
+type envEntry struct {
+	name string
+	env  string
+	db   string
+}
+
+// shadowedEnv returns the names of environment variables that are set but overridden
+// by stored settings, so boot can say so instead of ignoring them silently (#238).
+// A variable that agrees with the database, or is unset, is not reported: only a real
+// divergence is a surprise worth warning about. Fields whose environment default is
+// non-empty (EMAIL_SMTP_PORT, EMAIL_FROM_ADDRESS) are deliberately not compared here —
+// they would warn for values the operator never set.
+func shadowedEnv(entries []envEntry) []string {
+	var out []string
+	for _, e := range entries {
+		if e.env != "" && e.env != e.db {
+			out = append(out, e.name)
+		}
+	}
+	return out
+}
+
 func BuildHandler(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logger) (*handler.Handler, func()) {
 	// Migrations have run by the time we are called (cmd/calnode/main.go). Data sweeps
 	// that migrations cannot express go here, before any request is served: a slug
@@ -108,6 +154,16 @@ func BuildHandler(ctx context.Context, cfg *config.Config, db *sql.DB, logger *s
 		live.Swap(m)
 		logger.Info("mailer: configured from database",
 			"transport", string(transport), "host", dbSMTP.Host, "port", dbSMTP.Port)
+		// Environment SMTP settings are ignored once the database holds a configuration
+		// (they seeded it on first boot). Say which ones, so a redeploy that changes an
+		// env var does not fail silently (#238).
+		if ignored := shadowedEnv([]envEntry{
+			{"EMAIL_SMTP_HOST", cfg.SMTPHost, dbSMTP.Host},
+			{"EMAIL_SMTP_USER", cfg.SMTPUser, dbSMTP.User},
+		}); len(ignored) > 0 {
+			logger.Warn("mailer: ignoring environment settings — the database configuration takes precedence; change it in Settings → Email, or clear the stored settings there to fall back to the environment",
+				"ignored", ignored)
+		}
 
 	case cfg.SMTPHost != "":
 		m, _ := h.BuildMailer(handler.SMTPConfig{
@@ -132,7 +188,13 @@ func BuildHandler(ctx context.Context, cfg *config.Config, db *sql.DB, logger *s
 	} else {
 		h.SetWebhookSvc(whs)
 		// Pass live so the worker picks up SMTP changes automatically.
-		wrk := worker.New(db, whs, logger, worker.WithMailer(live))
+		// Reminder emails need the booker-facing host to make branding asset paths
+		// absolute — mirror handler.publicURL()'s PUBLIC_BASE_URL → BaseURL fallback.
+		publicURL := cfg.PublicBaseURL
+		if publicURL == "" {
+			publicURL = cfg.BaseURL
+		}
+		wrk := worker.New(db, whs, logger, worker.WithMailer(live), worker.WithPublicURL(publicURL))
 		// Notetaker jobs live in the handler package (they need LLM/S3/encKey).
 		wrk.RegisterHandler("notetaker.transcribe", h.JobNotetakerTranscribe)
 		wrk.RegisterHandler("notetaker.summarize", h.JobNotetakerSummarize)
@@ -150,6 +212,13 @@ func BuildHandler(ctx context.Context, cfg *config.Config, db *sql.DB, logger *s
 		googleClientID = dbGoogle.ClientID
 		googleClientSecret = dbGoogle.ClientSecret
 		logger.Info("Google OAuth: credentials loaded from database")
+		// Same silent-override trap as SMTP above (#238).
+		if ignored := shadowedEnv([]envEntry{
+			{"GOOGLE_CLIENT_ID", cfg.GoogleClientID, dbGoogle.ClientID},
+		}); len(ignored) > 0 {
+			logger.Warn("Google OAuth: ignoring environment settings — the database configuration takes precedence; change it in Settings → Google, or clear the stored settings there to fall back to the environment",
+				"ignored", ignored)
+		}
 	}
 
 	// Build one calendar Service and register every configured provider into it.
@@ -241,10 +310,10 @@ func BuildHandler(ctx context.Context, cfg *config.Config, db *sql.DB, logger *s
 	if dbStripe, dbStripeErr := handler.LoadStripeSettingsFromDB(db, encKey); dbStripeErr != nil {
 		logger.Warn("stripe settings: could not load from database", "error", dbStripeErr)
 	} else if dbStripe != nil {
-		if sc, err := stripe.New(dbStripe.SecretKey, dbStripe.PublishableKey, dbStripe.WebhookSecret); err != nil {
+		if sc, err := payments.NewStripe(dbStripe.SecretKey, dbStripe.PublishableKey, dbStripe.WebhookSecret); err != nil {
 			logger.Error("stripe: init failed", "error", err)
 		} else {
-			h.SetStripe(sc)
+			h.SetPaymentProvider(sc)
 			logger.Info("Stripe payments configured", "webhook_secret_set", dbStripe.WebhookSecret != "")
 		}
 	} else {
@@ -309,7 +378,7 @@ func New(ctx context.Context, cfg *config.Config, db *sql.DB, logger *slog.Logge
 	// an OAuth access token (the "Connect" flow) or a cno_ API key, both resolved by
 	// verifyMCPBearer. A 401 advertises the OAuth discovery doc so clients can connect.
 	mcpSrv := h.MCPServer()
-	mcpHTTP := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return mcpSrv }, nil)
+	mcpHTTP := newMCPStreamableHandler(mcpSrv)
 	mcpAuth := auth.RequireBearerToken(h.VerifyMCPBearer, &auth.RequireBearerTokenOptions{
 		ResourceMetadataURL: cfg.BaseURL + "/.well-known/oauth-protected-resource",
 	})

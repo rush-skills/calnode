@@ -69,6 +69,14 @@ app you must `pnpm build` in `frontend/` **and** rebuild/restart the Go binary
 
 ## 4. Persistence (SQLite) — and the single-connection rule
 
+Public person (`/u/{handle}`) and team (`/team/{slug}`) directories list public,
+active event types by `display_order` ascending, then name and unique slug for
+deterministic ties. The integer defaults to 0, preserving alphabetical order for
+existing types. Owners can set it through event-type create/PATCH or the event
+editor's Directory order field; negative values put an event ahead of the default
+group. It applies wherever the event is listed and is retained on duplication.
+It does not affect the admin event-type list or team member roster ordering.
+
 - `internal/db`: opens SQLite with **`SetMaxOpenConns(1)`** + `SetMaxIdleConns(1)`,
   **WAL** journal mode, `busy_timeout=5000`. One writer connection by design.
 - Migrations: **goose** SQL files in `internal/db/migrations/` (00001→00029). Run
@@ -197,9 +205,10 @@ the platform/recovery secret doesn't expose secrets.
   requests are untouched. API-key auth isn't CSRF-able (custom header).
 - **Roles:** Member / Admin / Owner. `is_owner` is additive over `is_admin`.
   Owner-gated actions: revoke admin from an admin, transfer ownership. Any admin can
-  grant admin to a member (`roles.go`; owner-only until a single-admin workspace proved
-  a bottleneck). Admins can cancel any booking, see all bookings, manage teams/members.
-  Every signed-in member can *read* the member directory and team list (`GET /v1/users`,
+  grant admin to a member (fork: `roles.go`; owner-only until a single-admin workspace
+  proved a bottleneck). Admins can cancel any booking, see all bookings, manage
+  teams/members, and edit, duplicate or delete any event type (§14). Every signed-in
+  member can *read* the member directory and team list (`GET /v1/users`,
   `GET /v1/teams`, `GET /v1/teams/{id}`) because the event-type Hosts tab fills its
   pickers from them; archived members and all mutations stay admin-only. Safe-removal +
   archive guards prevent orphaning.
@@ -588,10 +597,24 @@ instance sender from Settings → Email (`applyInviteDelivery`, `BookingData.Hid
 No sender address means no `ORGANIZER` line, never a fallback to the host. Host copies keep
 the host as organizer and, for a `calnode` booking, leave the booker out entirely and go out as
 `METHOD:PUBLISH` (`applyHostInvite`, `ICSWithoutAttendee`), so no host calendar holds them as
-a guest it could re-invite. Reschedule, cancel, reassign and the reconciler read the mode from
-the **booking**, not the event type, so a booking is always updated through the channel
-its invite went out on. Switching an event type to `calnode` requires email to be set up
-(validated on change).
+a guest it could re-invite. `none` (migration 00071) is for integrations that deliver the
+invite themselves: the hosts' events are written guestless exactly as for `calnode`
+(`hostEventsGuestless`) and host copies behave the same, but no Calnode email to the booker
+carries an `.ics`, whatever the host's calendar (`applyInviteDelivery`). The booker's emails
+themselves still go out when email is set up; whether Calnode emails at all stays with the
+mailer and the notification settings. Reschedule, cancel, reassign and the reconciler read
+the mode from the **booking**, not the event type, so a booking is always updated through
+the channel its invite went out on. Switching an event type to `calnode` requires email to
+be set up (validated on change); `none` does not. The booking JSON carries the mode as
+`invite_delivery`, and webhooks can select it as a payload field (not in the default set),
+so an integration can tell per booking whether the booker already holds an invite.
+
+00071 widened the 00068 `CHECK` without a table rebuild: SQLite cannot alter a `CHECK`, and
+rebuilding `bookings` would mean carrying its foreign-key children and the double-booking
+index through a `NO TRANSACTION` migration (compare 00042, which rebuilt only
+`event_types`). Because the `CHECK` belongs to the `invite_delivery` column alone, the
+migration adds a widened copy, fills it, drops the old column and renames the copy, inside
+goose's normal transaction. The column now sits last in both tables.
 
 **RSVPs to Calnode-sent invites (migration 00069, `rsvp_inbound.go`).** A booker's
 Yes/No/Maybe is an iTIP `REPLY` their mail client emails to the invite's `ORGANIZER`. Each
@@ -776,7 +799,11 @@ as the desired state:
 - **Branding (`branding_settings.go`, migrations 00029/00050):** instance-wide
   `business_name` + `logo_url` + `banner_url` on the singleton row. Business name is the
   wordmark fallback (defaults to "Calnode") + public-page header; the logo is the email
-  header image + public-page header. `GET/PATCH /v1/settings/branding` (name + opacity
+  header image + public-page header. Booking, manage, person (`/u/{handle}`) and team
+  (`/team/{slug}`) directories share the `businessHeader` partial, using the configured
+  logo height (scaled by `pageLogoHeight`) and opacity, or the business name when no
+  logo is set. Directory avatars remain inside the person/team card.
+  `GET/PATCH /v1/settings/branding` (name + opacity
   settings only); the logo and banner are each an **upload**
   (`POST/DELETE /v1/settings/branding/logo` and `.../banner`, public serve at
   `GET /branding/logo` / `GET /branding/banner`) reusing the avatar pipeline:
@@ -822,7 +849,8 @@ as the desired state:
 - **Per-webhook payload fields:** each webhook chooses which fields land in the `data`
   object (`webhooks.fields` JSON, migration 00027) — incl. attendee PII + intake
   answers. NULL ⇒ the original default set (so existing webhooks are unchanged and
-  never start leaking PII). The payload is enriched (`enrich`) + filtered per-webhook
+  never start leaking PII; fields added later that every booking carries, such as
+  `invite_delivery`, stay out of that set for the same reason). The payload is enriched (`enrich`) + filtered per-webhook
   (`buildData`) at enqueue time, so each subscriber gets its own `data`. New webhooks
   default to all fields ticked (self-hoster unticks what they don't want); a
   delivery-log view (status/HTTP/attempts) is in the admin webhooks page.
@@ -853,6 +881,35 @@ as the desired state:
 - Owners/admins can request the whole workspace: `GET /v1/bookings?scope=all`
   (gated on `IsAdmin`; ignored for non-admins so it can't escalate). The bookings
   page has a "My / All" toggle for admins with a Host column.
+- **Event types** follow the same model. A member lists what they own or host
+  (`GET /v1/event-types`); a host sees an event type read-only and only its owner may
+  change it. Admins (and so the instance owner) may manage **every** event type:
+  `GET /v1/event-types?scope=all` lists all of them (same `IsAdmin` gate, silently
+  ignored for members), and GET/PATCH/DELETE, `/hosts`, `/questions`, `/duplicate` and
+  `/test-email` accept any slug from an admin. One rule decides it,
+  `canManageEventType` (owner or admin), mostly resolved by `eventTypeForEditor`
+  (PATCH and test-email call it directly), which returns 404 rather than 403 so a
+  member cannot probe slugs. Slugs are unique per instance, so
+  the slug-addressed routes stay unambiguous.
+  The JSON carries `owned` (caller is the owner), `can_edit` (owner or admin; false =
+  read-only host) and `owner_id`; on GET and the list, `owner_name`/`owner_email`
+  whenever the caller is not the owner (PATCH and duplicate responses omit them). The admin UI gates read-only on `can_edit`, not `owned`.
+  ⛔ An admin edit never changes **whose** event type it is. Everything per-owner keeps
+  resolving to `event_types.user_id`: `validateLocation` checks the owner's calendar
+  and Zoom connections (the same rule as an owner's own edit), the editor's "Just me"
+  host is the owner, a duplicate belongs to the source's owner, and the test email
+  names the owner as host (it is still sent to the admin who asked).
+  Known limitation, unchanged by admin editing: Meet, Teams and Zoom links are minted
+  at booking time by the **primary host's** account (§10): the fixed event type's host or the assigned
+  round-robin/collective host, neither of whom has to be the owner (the host list
+  need not include them). A
+  location saved without a manual link can therefore validate against the owner and
+  still fall back to no link for a host who has no matching connection, and the test
+  email names the owner where a real booking names the primary host.
+  There is no audit table; admin changes to someone else's event type are logged as
+  `event type changed by admin` with action, owner and actor, next to the transfer log
+  line. Transfer itself (§7) is unchanged: it still moves only the caller's own event
+  type.
 
 ---
 
@@ -963,7 +1020,10 @@ Each account can set `booking_accent` in its profile. The default preserves the 
 8. **Public-page CSP is dynamic** — `publicCSP()` (tracking_settings.go) returns the
    strict default and relaxes only when head code-injection is configured (broad
    `https:` or the operator's `tracking_csp_allow`). Don't re-hardcode the CSP on the
-   `book`/`manage` handlers — route it through `publicCSP`.
+   `book`/`manage`/directory handlers — route it through `publicCSP`. Person and
+   team directories render the admin-configured head HTML once, after the shared
+   tracking partial, matching booking/manage pages. Native GA4/GTM tags use the
+   same consent banner on directories, including restoring stored consent.
 9. **`FRAME_ANCESTORS` is the admin SPA's only, and it must stay that way.** Set it
    (space-separated `https://host[:port]` / `'self'`) and the handler under `/admin/`
    sends `Content-Security-Policy: frame-ancestors <list>` so an operator can embed the
@@ -1005,20 +1065,25 @@ Each account can set `booking_accent` in its profile. The default preserves the 
 - **Teams on personal Microsoft accounts** — `teamsForBusiness` is work/school only,
   so a personal Microsoft account can't auto-mint Teams links; the organizer must
   supply a manual link (validated, and surfaced in the editor hint).
-- **The admin SPA does not lay out below ~600px.** On the settings pages the nav and the
-  content sit in one flex row with no stacking breakpoint, so the content column is
-  squeezed to near-zero width and text wraps into a tall vertical sliver. Measured on
-  Settings → Profile at a 535px viewport: the `mx-auto max-w-4xl px-8` shell reported a
-  151px client width and the form column 0. Affects every settings page, not one
-  component, so the fix is a breakpoint in the settings shell rather than per-page
-  patching. The **public** booking surfaces are unaffected and are verified on mobile;
-  this is admin-only. Deferred 2026-08-22, not a regression.
+- **The admin SPA does not fully lay out below ~600px.** *Phase 1 landed (#226/#227): the
+  outer shell now stacks below `md` — the sidebar is an off-canvas drawer, a compact
+  header carries the menu button, and content scrolls instead of clipping.* Still future
+  work: the settings sub-nav (`frontend/src/routes/settings/+layout.svelte`, `flex gap-8`
+  with a `w-44 shrink-0` nav) does not stack, so settings pages still squeeze their form
+  column; and list/table views and multi-column forms need the phase 2/3 treatments.
+  Measured before phase 1 on Settings → Profile at 535px: the shell reported a 151px
+  client width and the form column 0. Affects every settings page, so that half is a
+  breakpoint in the settings shell rather than per-page patching. The **public** booking
+  surfaces are unaffected and are verified on mobile; this is admin-only.
 - **LiveKit room is not translated** - the booking surfaces, emails and calendar invites
-  ship in 9 languages (§23), but the in-browser meeting UI is ~45 hardcoded English
+  ship in 11 languages (§23), but the in-browser meeting UI is ~45 hardcoded English
   strings. It has its own vanilla-JS asset pipeline and shares no string plumbing with
   the Go templates, so it needs a small runtime `t()` of its own. Separate work, not hard.
-- **Plural rules are 2-form only** (§23) - shipping Polish, Russian or Arabic correctly
-  needs a real CLDR plural-category selector first.
+- **Plural rules are 2-form only** (§23) - every plural-bearing key splits on `n == 1` and
+  nothing else. Polish ships despite that because its keys dodge the missing categories:
+  durations use invariant abbreviations (`godz.`, `min`), and `hostsLabel`'s
+  `other`/`others` pair (`inny`/`innych`) is correct for every count. Russian or Arabic
+  genuinely do need a CLDR plural-category selector first.
 - **OAuth app verification** — the Google and Microsoft apps should go through
   publisher verification before wide public use to avoid "unverified app" warnings.
 
@@ -1256,7 +1321,7 @@ LLM summary) — the next build; consent-gated (§8.11/§15 of the PRD).
 
 ## 23. Languages (i18n)
 
-Calnode ships **9 locales**: `en` (source) · `es` · `fr` · `fr-CA` · `de` · `it` · `pt` · `nl` · `sv`.
+Calnode ships **11 locales**: `en` (source) · `es` · `fr` · `fr-CA` · `de` · `el` · `it` · `nl` · `pl` · `pt` · `sv`.
 
 `fr-CA` is the first **regional** locale, and it is a separate file rather than a fallback
 because the differences are real: `courriel` not `e-mail`, `reporter`/`report` not
@@ -1271,7 +1336,8 @@ picks the exact tag first (pinned in `TestResolve`).
 
 ### What is translated, and what is not
 
-Translation covers the surfaces a **booker** sees. It deliberately stops there.
+Translation covers the surfaces a **booker** sees, and the admin SPA through its own
+catalog. It deliberately stops at the LiveKit room and at content the operator wrote.
 
 | Surface | Translated? |
 |---|---|
@@ -1281,12 +1347,22 @@ Translation covers the surfaces a **booker** sees. It deliberately stops there.
 | The four emails (confirm / cancel / reschedule / reminder) | yes |
 | Calendar invite title + description | yes |
 | Conversational booking assistant | yes (replies in the visitor's language) |
-| **Admin SPA** (`frontend/`) | **no** - English only, by design |
+| **Admin SPA** (`frontend/`) | **yes** - `en` + `fr` (`frontend/src/lib/i18n/`); English is source of truth |
 | **LiveKit room** (`livekit-room.html` + `livekit-room.js`) | **no** - see below |
 | **Admin-authored content** (event names, descriptions, intake questions, custom email copy) | **no** - stored as the operator typed it |
 | IANA timezone identifiers | no - shown as `Europe/Berlin`, not localized |
 
-**The LiveKit room is the one real hole.** ~45 strings in the in-browser meeting UI
+The admin SPA is a separate catalog from the booker locales. `frontend/src/lib/i18n/`
+ships nested JSON (`en.json` source of truth, `fr.json` a native-speaker translation).
+`t` / `tr` look up a dotted key, interpolate `{placeholders}`, and fall back to English
+then to the key itself. Locale resolution is client-side: a stored preference
+(`localStorage` key `calnode-admin-locale`, set from Settings → Profile → Preferences)
+wins, then `navigator.languages` (`fr-CA` → `fr`), then English. Dates and times in the
+admin use `Intl` with that tag; the operator's existing `date_format` / `time_format` /
+`week_start` prefs still apply. Adding an admin locale is copy-the-JSON plus two
+registrations in `catalog.ts` — see CONTRIBUTING.md.
+
+**The LiveKit room is the remaining hole.** ~45 strings in the in-browser meeting UI
 (join/leave, mute, screen share, recording banner, consent prompts, chat) are hardcoded
 English. It was excluded because the room is vanilla JS with its own asset pipeline
 (`go:embed`-ed in the handler package, not the SPA build) and shares no template or string
@@ -1332,9 +1408,28 @@ you is a key in the JSON instead (`internal/i18n/datetime.go`): `date_format`, `
 `dow_short_*`, `month_short_*`. That also makes per-language date shape expressible - German
 carries its own `date_format` for the ordinal period ("Mo, 22. Jun 2026").
 
+A locale does **not** have to be complete to merge. Partial catalogues are supported: any
+key a locale lacks falls back to English at lookup time (`Locale.T`), so a translation can
+land in stages instead of in one block. The practical reason is that nobody translates 169
+strings in one sitting, and requiring completeness made an in-progress language
+unmergeable - which is how community translations quietly die.
+
+The other half of that bargain is `MinCoverage` (80% of the English keys). A locale at or
+above it is offered to visitors: the language switcher, `Accept-Language` matching and the
+public API payload all read `SupportedLocales()`, which filters on it. A locale below the
+floor still exists and `?lang=<code>` still resolves, so whoever is translating it can
+check their work in situ, but no visitor is served a mostly-English booking page by
+accident. The floor is set with headroom because the English catalogue grows: adding
+strings can push a locale under it, and that is the signal to chase the translators.
+Startup logs a line for every locale it withholds and why.
+
 Three guards police a new file (`go test ./internal/i18n/`):
 
-- `TestAllLocalesHaveTheSameKeys` - no missing or unknown keys.
+- `TestLocalesHaveNoUnknownKeys` - no key that English does not have. A missing key is
+  fine now (that is the fallback), but an unknown one is always a typo or a renamed key
+  and would render for nobody. This replaced `TestAllLocalesHaveTheSameKeys`, which
+  asserted set equality in both directions and therefore rejected the in-progress locales
+  the floor exists to support.
 - `TestAllLocalesHaveMatchingFormatVerbs` - uses `fmt` **itself** as the oracle, so a locale
   that drops or reorders a `%s`/`%d` fails the test instead of emitting `%!(EXTRA…)` to a
   booker. An earlier hand-rolled parser for this was unsound (it missed indexed verbs like
@@ -1343,6 +1438,9 @@ Three guards police a new file (`go test ./internal/i18n/`):
   `month_short_*` and `clock_format` against `Intl`, skipping if node is absent. This is the
   only check that can tell `dim.` from `dim`, or catch a 12h/24h call that is wrong for the
   language. It caught a real drift on first run (`es` had `sep` where CLDR says `sept`).
+
+`TestOfferedLocalesMeetCoverageFloor` pins the invariant the three guards do not: nothing
+below `MinCoverage` is ever in `supported`.
 
 Two traps:
 
@@ -1356,8 +1454,11 @@ Two traps:
 
 ### Translation quality
 
-**Every non-English locale is an LLM draft with no native review.** The structure is
-verified by the guards above; the *wording* is not. Register was chosen per language rather
+**Most non-English locales are LLM drafts with no native review, and none has had a full
+native read.** The structure is
+verified by the guards above; the *wording* is not. `pl` is the partial exception: it was
+contributed and grammar-checked by a native speaker in #216/#220, though two developer
+edits (the CLDR date forms and `innych`) went in on top of his text. Register was chosen per language rather
 than uniformly (`fr`/`de`/`it`/`pt` formal, `es`/`nl`/`sv` informal), matching what business
 booking pages do in each market, but that too is unreviewed. Corrections via PR are welcome
 and are the expected path to improving them. Do not describe a language as production-quality
@@ -1382,6 +1483,13 @@ emails end to end.
 This doc tracks the code; when you change behaviour in an area above, update the
 matching section in the same PR. Notable rounds:
 
+- **2026-11-02 — Admin SPA i18n (`en` + `fr`).** The SvelteKit admin (`frontend/`) is no
+  longer English-only. A small client-side catalog in `frontend/src/lib/i18n/` drives
+  chrome, list pages, the event-type editor, settings, and auth screens. Locale comes
+  from Settings → Profile (stored in `localStorage`) with a browser-language fallback;
+  missing keys fall back to English. Booker-facing locales (`internal/i18n/locales`)
+  are unchanged. The LiveKit room stays English (§18).
+
 - **2026-08-20 — Multi-language public surfaces (8 locales).** Booking page, manage page,
   embed widget, the four emails, the calendar invite and the booking assistant now render in
   `en es fr de it pt nl sv` (new §23). Locale is negotiated from `Accept-Language` with a
@@ -1389,7 +1497,8 @@ matching section in the same PR. Notable rounds:
   (migration 00051) so reminders match the language the booker used. Adding a language is
   adding one JSON file - proven by adding six at once with no code change. Go has no locale
   date data, so the date tables are keys in the JSON, cross-checked against `Intl`/CLDR by a
-  node-backed test. **Not translated: the admin SPA and the LiveKit room** (§18).
+  node-backed test. **Not translated at the time: the admin SPA and the LiveKit room**
+  (§18). The admin SPA gained `en`/`fr` in 2026-11; the room is still English.
 
 - **2026-06-30 — Cookie consent + legal links + shared book/manage partials.** Native
   GA4/GTM (Settings → Tracking) is now consent-gated on book.html **and** manage.html:

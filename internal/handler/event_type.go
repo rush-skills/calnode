@@ -27,6 +27,7 @@ type eventTypeJSON struct {
 	ID                  string  `json:"id"`
 	Slug                string  `json:"slug"`
 	Name                string  `json:"name"`
+	DisplayOrder        int     `json:"display_order"` // lower first on public directories; ties sort by name, then slug
 	Description         *string `json:"description"`
 	DurationMinutes     int     `json:"duration_minutes"`
 	SlotIntervalMinutes int     `json:"slot_interval_minutes"`
@@ -45,14 +46,16 @@ type eventTypeJSON struct {
 	// makes the host's booked hours legible to anyone with the link (#19).
 	ShowTakenSlots bool `json:"show_taken_slots"`
 	// InviteDelivery is who sends the booker's calendar invite: "calendar" (each host's
-	// connected calendar, from the host's own address) or "calnode" (Calnode's own .ics,
-	// from the instance sender, so no host address reaches the booker). See migration 00079.
+	// connected calendar, from the host's own address), "calnode" (Calnode's own .ics,
+	// from the instance sender, so no host address reaches the booker) or "none" (no one:
+	// guestless host events and no .ics, for integrations that send their own invite).
+	// See migrations 00068 and 00071.
 	InviteDelivery string `json:"invite_delivery"`
 	IsPublic       bool   `json:"is_public"`
 	CreatedAt      string `json:"created_at"`
 	// CalendarMessage is sanitized HTML placed on every booking's calendar invite
 	// (above the Booking ID line) — distinct from Description, which is the public
-	// booking page's text. nil/empty = the invite carries only the Booking ID.
+	// booking page's text. nil/empty = the invite carries only the Booking ID. (fork)
 	CalendarMessage *string `json:"calendar_message"`
 	MsgConfirmation *string `json:"msg_confirmation"`
 	MsgCancellation *string `json:"msg_cancellation"`
@@ -72,20 +75,24 @@ type eventTypeJSON struct {
 	// Archived is true when the event type has been archived — hidden from the default
 	// list, with is_active forced off so it stops taking bookings. Reversible.
 	Archived bool `json:"archived"`
-	// Visibility is "org" (every member sees it, admins may edit) or "private" (owner
-	// only, plus assigned hosts read-only). See event_type_access.go.
+	// Visibility is "org" (every member sees it, read-only unless they may manage it) or
+	// "private" (the owner, assigned hosts and admins). Fork: see event_type_access.go.
 	Visibility string `json:"visibility"`
-	// OwnerID is the creator (event_types.user_id): the account whose calendar and
-	// connections drive location defaults, and who is seeded as the first host.
-	OwnerID string `json:"owner_id"`
-	// Owned is true when the requesting user owns this event type.
+	// Owned is true when the requesting user owns this event type; false when they
+	// see it as an assigned host, or as an admin looking at someone else's.
 	Owned bool `json:"owned"`
-	// CanEdit is true when the requesting user may change it: the owner, or an admin
-	// on an org-wide event type. The UI renders read-only when false; the server
-	// enforces the same rule on every write (eventTypeIDForEditor).
+	// CanEdit is true when the requesting user may change this event type: its owner,
+	// or any admin. False means read-only (an assigned host). Owned alone no longer
+	// answers that question, since an admin can edit event types they do not own.
 	CanEdit bool `json:"can_edit"`
-	// OwnerName/OwnerEmail identify the owner so a read-only viewer knows who created
-	// it and who to contact for changes. Populated by list and get.
+	// OwnerID is the user the event type belongs to (event_types.user_id). Per-owner
+	// resources - availability, calendar and Zoom connections - are that user's, also
+	// when an admin is the one editing.
+	OwnerID string `json:"owner_id"`
+	// OwnerName/OwnerEmail identify the owner on the GET and list responses when the
+	// requesting user is not the owner, so a read-only host knows who to contact for
+	// changes and an admin can see whose event type they are looking at. PATCH and
+	// duplicate responses leave them empty.
 	OwnerName  string `json:"owner_name,omitempty"`
 	OwnerEmail string `json:"owner_email,omitempty"`
 	// InviteSenderReady reports, on the single-event-type GET, whether Calnode can
@@ -93,14 +100,6 @@ type eventTypeJSON struct {
 	// after the event type switched to Calnode-sent invites: bookers get no invite until
 	// Settings → Email is fixed, so the editor warns.
 	InviteSenderReady bool `json:"invite_sender_ready"`
-}
-
-// stampViewer fills the per-viewer fields (Owned, CanEdit) from the row's owner and
-// visibility. Every response that carries an event type goes through this so the two
-// flags can never disagree with the write-side rule.
-func (et *eventTypeJSON) stampViewer(user AuthUser) {
-	et.Owned = et.OwnerID == user.ID
-	et.CanEdit = canEditEventType(user, et.OwnerID, et.Visibility)
 }
 
 type rowScanner interface {
@@ -129,8 +128,8 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 		&isActive, &isPublic, &showTaken, &et.CreatedAt,
 		&msgConf, &msgCancel, &msgResched, &msgRemind, &msgGreeting,
 		&subjConf, &subjCancel, &subjResched, &subjRemind,
-		&et.PriceCents, &et.Currency, &calMsg, &et.InviteDelivery,
-		&et.OwnerID, &et.Visibility,
+		&et.PriceCents, &et.Currency, &et.InviteDelivery, &et.DisplayOrder,
+		&calMsg, &et.Visibility,
 	}
 	dests = append(dests, trailing...)
 	err := s.Scan(dests...)
@@ -192,35 +191,71 @@ const etColumns = `id, slug, name, description,
 	is_active, is_public, show_taken_slots, created_at,
 	msg_confirmation, msg_cancellation, msg_reschedule, msg_reminder, msg_greeting,
 	subj_confirmation, subj_cancellation, subj_reschedule, subj_reminder,
-	price_cents, currency, calendar_message, invite_delivery,
-	user_id, visibility`
+	price_cents, currency, invite_delivery, display_order,
+	calendar_message, visibility`
 
-// selectETCols fetches a single event type by whatever WHERE the caller appends.
-// Access is decided before this runs (eventTypeIDForEditor/Viewer), so it is unscoped.
+// selectETCols fetches a single event type without the caller-relative columns.
 const selectETCols = "SELECT " + etColumns + " FROM event_types"
 
-// etOwnerColumns adds the owner's name and email to etColumns, so a viewer who is
-// not the owner knows who created the event type and who to ask for changes.
-const etOwnerColumns = etColumns + `,
+// etOwnerColumns are the trailing columns the list and get queries add after
+// etColumns, scanned by scanEventTypeWithOwner.
+const etOwnerColumns = `, user_id,
 	(SELECT name FROM users WHERE id = event_types.user_id) AS owner_name,
 	(SELECT email FROM users WHERE id = event_types.user_id) AS owner_email,
 	(archived_at IS NOT NULL) AS archived`
 
-// listEventTypesQuery returns every event type the member may see: all org-wide
-// ones, their own, and any they are assigned to host (eventTypeVisibleFilter). Owned
-// and can_edit are derived in Go from user_id + visibility (stampViewer); ownership is
-// keyed on event_types.user_id, not host membership — the owner is also seeded into
-// event_type_hosts. Binds: viewer id ×2.
-const listEventTypesQuery = "SELECT " + etOwnerColumns + `
+// listEventTypesQuery returns every event type the user owns OR is an assigned
+// host on (the owner is also seeded into event_type_hosts, so ownership is keyed on
+// event_types.user_id, not host membership). The first parameter widens it to every
+// event type on the instance; ListEventTypes sets it only for an admin asking for
+// ?scope=all. Organisation-wide event types (fork: event_type_access.go) are listed
+// for every member, read-only unless canManageEventType allows more.
+const listEventTypesQuery = "SELECT " + etColumns + etOwnerColumns + `
 FROM event_types
-WHERE ` + eventTypeVisibleFilter + `
+WHERE ? = 1
+   OR user_id = ?
+   OR id IN (SELECT event_type_id FROM event_type_hosts WHERE user_id = ?)
+   OR visibility = 'org'
 ORDER BY created_at`
 
-// getEventTypeQuery fetches one event type by slug under the same visibility rule as
-// the list. Binds: slug, viewer id ×2.
-const getEventTypeQuery = "SELECT " + etOwnerColumns + `
+// getEventTypeQuery fetches one event type by slug if the user owns it, hosts it, or
+// is an admin (the first parameter), with the owner's id, name and email.
+const getEventTypeQuery = "SELECT " + etColumns + etOwnerColumns + `
 FROM event_types
-WHERE slug = ? AND ` + eventTypeVisibleFilter
+WHERE slug = ? AND (? = 1 OR user_id = ? OR id IN (SELECT event_type_id FROM event_type_hosts WHERE user_id = ?)
+	OR visibility = 'org')`
+
+// scanEventTypeWithOwner scans a row of listEventTypesQuery or getEventTypeQuery and
+// fills the fields that describe the event type relative to the caller.
+func scanEventTypeWithOwner(s rowScanner, user AuthUser) (*eventTypeJSON, error) {
+	var ownerID, ownerName, ownerEmail string
+	var archived int
+	et, err := scanEventTypeRow(s, &ownerID, &ownerName, &ownerEmail, &archived)
+	if et == nil || err != nil {
+		return et, err
+	}
+	et.Archived = archived != 0
+	et.setOwnership(user, ownerID)
+	if !et.Owned {
+		et.OwnerName, et.OwnerEmail = ownerName, ownerEmail
+	}
+	return et, nil
+}
+
+// setOwnership fills owner_id, owned and can_edit for the requesting user.
+func (et *eventTypeJSON) setOwnership(user AuthUser, ownerID string) {
+	et.OwnerID = ownerID
+	et.Owned = ownerID == user.ID
+	et.CanEdit = canManageEventType(user, ownerID)
+}
+
+// boolArg binds a Go bool as SQLite's 0/1 for the `? = 1` switches above.
+func boolArg(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
 
 // loadReminders fetches the hours_before list for an event type and sets et.Reminders.
 func (h *Handler) loadReminders(ctx context.Context, etID string, et *eventTypeJSON) error {
@@ -251,6 +286,7 @@ func (h *Handler) CreateEventType(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Slug                string  `json:"slug"`
 		Name                string  `json:"name"`
+		DisplayOrder        int     `json:"display_order"`
 		Description         *string `json:"description"`
 		DurationMinutes     int     `json:"duration_minutes"`
 		SlotIntervalMinutes *int    `json:"slot_interval_minutes"`
@@ -297,9 +333,8 @@ func (h *Handler) CreateEventType(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, "slug must contain letters or numbers")
 		return
 	}
-	// Org-wide unless the creator says otherwise: a shared workspace should see what
-	// exists in it. The creator is still the owner (user_id) for hosting and location
-	// defaults either way.
+	// Fork: org-wide unless the creator says otherwise, so a shared workspace sees what
+	// exists in it. The creator is still the owner (user_id) either way.
 	visibility := eventTypeVisibilityOrg
 	if req.Visibility != nil {
 		if !validEventTypeVisibility(*req.Visibility) {
@@ -377,7 +412,7 @@ func (h *Handler) CreateEventType(w http.ResponseWriter, r *http.Request) {
 	if req.InviteDelivery != nil {
 		mode, ok := normalizeInviteDelivery(*req.InviteDelivery)
 		if !ok {
-			h.writeError(w, http.StatusBadRequest, "invite_delivery must be 'calendar' or 'calnode'")
+			h.writeError(w, http.StatusBadRequest, "invite_delivery must be 'calendar', 'calnode' or 'none'")
 			return
 		}
 		if mode == booking.InviteByCalnode && !h.inviteSenderReady(r.Context()) {
@@ -402,12 +437,12 @@ func (h *Handler) CreateEventType(w http.ResponseWriter, r *http.Request) {
 		   slot_interval_minutes, location_type, location_value, allow_phone_call,
 		   routing_mode, buffer_before_minutes, buffer_after_minutes,
 		   min_notice_minutes, max_future_days, max_active_bookings, show_taken_slots, invite_delivery,
-		   msg_confirmation, msg_cancellation, msg_reschedule, msg_reminder, visibility)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		   msg_confirmation, msg_cancellation, msg_reschedule, msg_reminder, display_order, visibility)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, user.ID, slug, req.Name, req.Description,
 		req.DurationMinutes, slotInterval, locType, req.LocationValue, req.AllowPhoneCall != nil && *req.AllowPhoneCall,
 		routingMode, bufBefore, bufAfter, minNotice, maxFuture, maxActive, showTaken, inviteDelivery,
-		defaultMsgConfirmation, defaultMsgCancellation, defaultMsgReschedule, defaultMsgReminder, visibility)
+		defaultMsgConfirmation, defaultMsgCancellation, defaultMsgReschedule, defaultMsgReminder, req.DisplayOrder, visibility)
 	if err != nil {
 		if db.IsUniqueViolation(err) {
 			h.writeError(w, http.StatusConflict, "slug already in use")
@@ -445,16 +480,21 @@ func (h *Handler) CreateEventType(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	et.OwnerName, et.OwnerEmail = user.Name, user.Email
-	et.stampViewer(user) // the creator owns it
+	et.setOwnership(user, user.ID) // the creator owns it
 	h.writeJSON(w, http.StatusCreated, et)
 }
 
 // ListEventTypes handles GET /v1/event-types.
+//
+// By default it lists the event types the caller owns or hosts, for admins too, so an
+// admin's own list stays their own. ?scope=all widens it to every event type on the
+// instance, gated exactly like GET /v1/bookings?scope=all: honoured for an admin,
+// silently ignored for anyone else, so a member cannot use it to escalate.
 func (h *Handler) ListEventTypes(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
+	all := r.URL.Query().Get("scope") == "all" && user.IsAdmin
 
-	rows, err := h.db.QueryContext(r.Context(), listEventTypesQuery, user.ID, user.ID)
+	rows, err := h.db.QueryContext(r.Context(), listEventTypesQuery, boolArg(all), user.ID, user.ID)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list event types", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
@@ -464,17 +504,12 @@ func (h *Handler) ListEventTypes(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]eventTypeJSON, 0)
 	for rows.Next() {
-		var archived int
-		var ownerName, ownerEmail sql.NullString
-		et, err := scanEventTypeRow(rows, &ownerName, &ownerEmail, &archived)
+		et, err := scanEventTypeWithOwner(rows, user)
 		if err != nil {
 			h.logger.ErrorContext(r.Context(), "scan event type", "error", err)
 			h.writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		et.OwnerName, et.OwnerEmail = ownerName.String, ownerEmail.String
-		et.Archived = archived != 0
-		et.stampViewer(user)
 		items = append(items, *et)
 	}
 	if err := rows.Err(); err != nil {
@@ -490,10 +525,8 @@ func (h *Handler) GetEventType(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
 	slug := r.PathValue("slug")
 
-	var archived int
-	var ownerName, ownerEmail sql.NullString
-	row := h.db.QueryRowContext(r.Context(), getEventTypeQuery, slug, user.ID, user.ID)
-	et, err := scanEventTypeRow(row, &ownerName, &ownerEmail, &archived)
+	row := h.db.QueryRowContext(r.Context(), getEventTypeQuery, slug, boolArg(user.IsAdmin), user.ID, user.ID)
+	et, err := scanEventTypeWithOwner(row, user)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "get event type", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
@@ -503,9 +536,6 @@ func (h *Handler) GetEventType(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusNotFound, "event type not found")
 		return
 	}
-	et.OwnerName, et.OwnerEmail = ownerName.String, ownerEmail.String
-	et.Archived = archived != 0
-	et.stampViewer(user)
 	et.InviteSenderReady = h.inviteSenderReady(r.Context())
 	if err := h.loadReminders(r.Context(), et.ID, et); err != nil {
 		h.logger.ErrorContext(r.Context(), "get event type: load reminders", "error", err)
@@ -524,6 +554,7 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Slug                *string `json:"slug"`
 		Name                *string `json:"name"`
+		DisplayOrder        *int    `json:"display_order"`
 		Description         *string `json:"description"`
 		DurationMinutes     *int    `json:"duration_minutes"`
 		SlotIntervalMinutes *int    `json:"slot_interval_minutes"`
@@ -562,14 +593,6 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Who may write is decided once, here, by the shared rule (owner, or admin on an
-	// org-wide event type). Everything below keys on the id it returns.
-	ref := h.eventTypeForEditor(w, r, slug, user)
-	if ref == nil {
-		return
-	}
-	etID := ref.ID
-
 	// Validate reminders list before touching the DB.
 	if req.Reminders != nil {
 		for _, hb := range req.Reminders {
@@ -600,6 +623,9 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Description != nil {
 		set("description", *req.Description)
+	}
+	if req.DisplayOrder != nil {
+		set("display_order", *req.DisplayOrder)
 	}
 	if req.DurationMinutes != nil {
 		if *req.DurationMinutes <= 0 {
@@ -667,7 +693,7 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 		}
 		// A price is only bookable once payments are configured — block the footgun of a
 		// paid event type that no one can actually book.
-		if *req.PriceCents > 0 && h.getStripe() == nil {
+		if *req.PriceCents > 0 && h.getPaymentProvider() == nil {
 			h.writeError(w, http.StatusBadRequest, "connect Stripe in Settings → Payments before setting a price")
 			return
 		}
@@ -705,29 +731,11 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 		}
 		set("show_taken_slots", v)
 	}
-	if req.Visibility != nil {
-		if !validEventTypeVisibility(*req.Visibility) {
-			h.writeError(w, http.StatusBadRequest, "visibility must be 'org' or 'private'")
-			return
-		}
-		// Whether the rest of the workspace may see it is the owner's call. An admin
-		// may edit an org-wide event type, but not hide it from (or on behalf of) the
-		// person who made it. Compared against the stored value, not merely mentioned:
-		// the editor resubmits the whole form, and an admin saving an unrelated field
-		// must not be refused for a visibility they did not touch.
-		if *req.Visibility != ref.Visibility {
-			if user.ID != ref.OwnerID {
-				h.writeError(w, http.StatusForbidden, "only the owner can change who an event type is visible to")
-				return
-			}
-			set("visibility", *req.Visibility)
-		}
-	}
 	var newInviteDelivery string
 	if req.InviteDelivery != nil {
 		mode, ok := normalizeInviteDelivery(*req.InviteDelivery)
 		if !ok {
-			h.writeError(w, http.StatusBadRequest, "invite_delivery must be 'calendar' or 'calnode'")
+			h.writeError(w, http.StatusBadRequest, "invite_delivery must be 'calendar', 'calnode' or 'none'")
 			return
 		}
 		newInviteDelivery = mode
@@ -743,7 +751,7 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	const maxMsgLen = 2000
-	// Email notes are rich text (sanitized HTML) since the editor moved to a rich
+	// Fork: email notes are rich text (sanitized HTML) since the editor moved to a rich
 	// editor; markup counts toward the cap, so it is roomier than the plain fields'.
 	const maxNoteLen = 4000
 	if req.CalendarMessage != nil {
@@ -812,18 +820,39 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 		set(s.col, nullableString(strings.TrimSpace(*s.val)))
 	}
 
-	// Current location and invite delivery, to validate the effective values below.
-	var curLocType, curLocVal, curInviteDelivery string
-	if err := h.db.QueryRowContext(r.Context(),
-		`SELECT location_type, COALESCE(location_value, ''), invite_delivery FROM event_types WHERE id = ?`, etID).
-		Scan(&curLocType, &curLocVal, &curInviteDelivery); err != nil {
-		if err == sql.ErrNoRows {
-			h.writeError(w, http.StatusNotFound, "event type not found")
-			return
-		}
-		h.logger.ErrorContext(r.Context(), "patch event type: lookup location", "error", err)
+	// Look up the event type ID, owner + current location (needed for reminder upsert,
+	// to verify the caller may edit it, and to validate the effective online-meeting
+	// location below).
+	var etID, ownerID, curLocType, curLocVal, curInviteDelivery, curVisibility string
+	err := h.db.QueryRowContext(r.Context(),
+		`SELECT id, user_id, location_type, COALESCE(location_value, ''), invite_delivery, visibility FROM event_types WHERE slug = ?`, slug).
+		Scan(&etID, &ownerID, &curLocType, &curLocVal, &curInviteDelivery, &curVisibility)
+	if err == sql.ErrNoRows || (err == nil && !canManageEventType(user, ownerID)) {
+		h.writeError(w, http.StatusNotFound, "event type not found")
+		return
+	}
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "patch event type: lookup id", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	// Fork: who else in the workspace may see it is the owner's call. An admin may edit
+	// someone else's event type but not hide it from (or on behalf of) its owner.
+	// Compared against the stored value, not merely mentioned: the editor resubmits the
+	// whole form, and an admin saving an unrelated field must not be refused for a
+	// visibility they did not touch.
+	if req.Visibility != nil {
+		if !validEventTypeVisibility(*req.Visibility) {
+			h.writeError(w, http.StatusBadRequest, "visibility must be 'org' or 'private'")
+			return
+		}
+		if *req.Visibility != curVisibility {
+			if user.ID != ownerID {
+				h.writeError(w, http.StatusForbidden, "only the owner can change who an event type is visible to")
+				return
+			}
+			set("visibility", *req.Visibility)
+		}
 	}
 
 	// Validate the location only when this patch actually CHANGES it, comparing what
@@ -851,11 +880,14 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 		effLocVal = *req.LocationValue
 	}
 	//
-	// Validated against the OWNER's connections, not the caller's: an auto-generated
-	// Meet/Teams/Zoom link is minted from the owner's calendar at booking time, so an
-	// admin editing someone else's event type must be held to what that owner can host.
+	// Validated against the event type's OWNER, not the caller, so an admin edit applies
+	// the same rule the owner's own edit always has and the admin's connections prove
+	// nothing. A Meet, Teams or Zoom link is minted at booking time by the PRIMARY host's
+	// account (mintMeetingLink), i.e. the event type's host, which need not be the owner: the
+	// host list can exclude them, and round-robin or collective pick among several. This
+	// check does not look at the hosts.
 	if effLocType != curLocType || effLocVal != curLocVal {
-		if err := h.validateLocation(r.Context(), ref.OwnerID, effLocType, &effLocVal); err != nil {
+		if err := h.validateLocation(r.Context(), ownerID, effLocType, &effLocVal); err != nil {
 			h.writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -882,6 +914,7 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 	// books, but a booking is the first evidence the URL actually reached someone, and it
 	// is the check we can make honestly. Cancelled ones count - the manage link in that
 	// booker's confirmation email still resolves through the slug.
+	effectiveSlug := slug
 	if req.Slug != nil {
 		newSlug := slugify(*req.Slug)
 		if newSlug == "" {
@@ -910,6 +943,7 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			set("slug", newSlug)
+			effectiveSlug = newSlug
 		}
 	}
 
@@ -948,47 +982,32 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Re-read by id: a rename above moved the row out from under the slug this request
-	// arrived on, and re-reading by that name would 404 a patch that succeeded.
-	et, err := h.fetchEventTypeByID(r.Context(), etID)
+	// effectiveSlug, not slug: a rename above moved the row out from under the name this
+	// request arrived on, and re-reading by that name would 404 a patch that succeeded.
+	row := h.db.QueryRowContext(r.Context(), selectETCols+" WHERE slug = ?", effectiveSlug)
+	et, err := scanEventType(row)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "fetch patched event type", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if et == nil {
-		h.writeError(w, http.StatusNotFound, "event type not found")
+	if err := h.loadReminders(r.Context(), etID, et); err != nil {
+		h.logger.ErrorContext(r.Context(), "fetch patched event type: load reminders", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	et.stampViewer(user)
+	et.setOwnership(user, ownerID)
+	h.logForeignEventTypeChange(r.Context(), "update", etID, ownerID, user)
 	h.writeJSON(w, http.StatusOK, et)
 }
 
-// fetchEventTypeByID loads one event type with its owner's name/email and reminders,
-// in the shape GET returns. Access is the caller's business; (nil, nil) if missing.
-func (h *Handler) fetchEventTypeByID(ctx context.Context, id string) (*eventTypeJSON, error) {
-	var archived int
-	var ownerName, ownerEmail sql.NullString
-	row := h.db.QueryRowContext(ctx, "SELECT "+etOwnerColumns+" FROM event_types WHERE id = ?", id)
-	et, err := scanEventTypeRow(row, &ownerName, &ownerEmail, &archived)
-	if err != nil || et == nil {
-		return et, err
-	}
-	et.OwnerName, et.OwnerEmail = ownerName.String, ownerEmail.String
-	et.Archived = archived != 0
-	if err := h.loadReminders(ctx, id, et); err != nil {
-		return nil, err
-	}
-	return et, nil
-}
+// maxCalendarMessageLen bounds the raw calendar_message submission (fork). Larger than
+// the email notes' cap because markup counts and the invite body is a natural home for
+// an agenda, but still small enough that Google's description limit is never in play.
+const maxCalendarMessageLen = 10000
 
 // nullableString converts an empty string to nil (NULL in SQLite) so clearing a
 // custom note stores NULL rather than an empty string.
-// maxCalendarMessageLen bounds the raw calendar_message submission. Larger than the
-// email notes' 2000 because markup counts and the invite body is a natural home for an
-// agenda, but still small enough that Google's description limit is never in play.
-const maxCalendarMessageLen = 10000
-
 func nullableString(s string) any {
 	if s == "" {
 		return nil
@@ -1020,15 +1039,15 @@ func (h *Handler) replaceReminders(ctx context.Context, etID string, newHours []
 // DeleteEventType handles DELETE /v1/event-types/{slug}.
 func (h *Handler) DeleteEventType(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
-	etID := h.eventTypeIDForEditor(w, r, r.PathValue("slug"), user)
+	etID, ownerID := h.eventTypeForEditor(w, r, r.PathValue("slug"), user)
 	if etID == "" {
 		return
 	}
 
-	// Upcoming active bookings block deletion: someone is still expecting that meeting, so
-	// they must be cancelled or moved first. Past and cancelled bookings are history and
-	// go with the event type (their answers, hosts, tokens and messages cascade; webhook
-	// delivery logs are kept but detached from the booking).
+	// Fork: upcoming active bookings block deletion: someone is still expecting that
+	// meeting, so they must be cancelled or moved first. Past and cancelled bookings are
+	// history and go with the event type (their answers, hosts, tokens and messages
+	// cascade; webhook delivery logs are kept but detached from the booking).
 	ctx := r.Context()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	tx, err := h.db.BeginTx(ctx, nil)
@@ -1085,5 +1104,6 @@ func (h *Handler) DeleteEventType(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	h.logForeignEventTypeChange(r.Context(), "delete", etID, ownerID, user)
 	w.WriteHeader(http.StatusNoContent)
 }

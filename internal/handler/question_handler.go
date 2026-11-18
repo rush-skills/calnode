@@ -87,10 +87,8 @@ func (h *Handler) ListQuestions(w http.ResponseWriter, r *http.Request) {
 // questions on inactive or private event types.
 func (h *Handler) ListQuestionsAdmin(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
-	slug := r.PathValue("slug")
-
-	// A read: a read-only viewer sees the intake form the editor shows.
-	etID := h.eventTypeIDForViewer(w, r, slug, user)
+	// Fork: a read, so a read-only viewer sees the intake form the editor shows.
+	etID := h.eventTypeIDForViewer(w, r, r.PathValue("slug"), user)
 	if etID == "" {
 		return
 	}
@@ -160,8 +158,8 @@ func (h *Handler) CreateQuestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify the caller may edit this event type.
-	etID := h.eventTypeIDForEditor(w, r, slug, user)
+	// Verify the caller may edit this event type (its owner, or an admin).
+	etID, ownerID := h.eventTypeForEditor(w, r, slug, user)
 	if etID == "" {
 		return
 	}
@@ -216,6 +214,7 @@ func (h *Handler) CreateQuestion(w http.ResponseWriter, r *http.Request) {
 		Required:    req.Required,
 		Position:    position,
 	}
+	h.logForeignEventTypeChange(r.Context(), "create_question", etID, ownerID, user)
 	h.writeJSON(w, http.StatusCreated, q)
 }
 
@@ -238,19 +237,18 @@ func (h *Handler) UpdateQuestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	etID := h.eventTypeIDForEditor(w, r, slug, user)
+	// Verify the caller may edit the event type, then load the question within it.
+	etID, ownerID := h.eventTypeForEditor(w, r, slug, user)
 	if etID == "" {
 		return
 	}
-
-	// Load the current question, scoped to the event type just authorised.
 	var current questionJSON
 	var optRaw sql.NullString
 	var requiredInt int
 	err := h.db.QueryRowContext(r.Context(), `
-		SELECT q.id, q.event_type_id, q.label, q.type, q.options, q.required, q.position
-		FROM event_type_questions q
-		WHERE q.id = ? AND q.event_type_id = ?`, qID, etID).
+		SELECT id, event_type_id, label, type, options, required, position
+		FROM event_type_questions
+		WHERE id = ? AND event_type_id = ?`, qID, etID).
 		Scan(&current.ID, &current.EventTypeID, &current.Label, &current.Type,
 			&optRaw, &requiredInt, &current.Position)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -318,22 +316,21 @@ func (h *Handler) UpdateQuestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.logForeignEventTypeChange(r.Context(), "update_question", etID, ownerID, user)
 	h.writeJSON(w, http.StatusOK, current)
 }
 
 // DeleteQuestion handles DELETE /v1/event-types/{slug}/questions/{id} (admin).
 func (h *Handler) DeleteQuestion(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
-	slug := r.PathValue("slug")
-	qID := r.PathValue("id")
-
-	etID := h.eventTypeIDForEditor(w, r, slug, user)
+	etID, ownerID := h.eventTypeForEditor(w, r, r.PathValue("slug"), user)
 	if etID == "" {
 		return
 	}
+	qID := r.PathValue("id")
 
-	res, err := h.db.ExecContext(r.Context(), `
-		DELETE FROM event_type_questions WHERE id = ? AND event_type_id = ?`, qID, etID)
+	res, err := h.db.ExecContext(r.Context(),
+		`DELETE FROM event_type_questions WHERE id = ? AND event_type_id = ?`, qID, etID)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "delete question", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
@@ -343,6 +340,7 @@ func (h *Handler) DeleteQuestion(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusNotFound, "question not found")
 		return
 	}
+	h.logForeignEventTypeChange(r.Context(), "delete_question", etID, ownerID, user)
 	w.WriteHeader(http.StatusNoContent)
 }
 

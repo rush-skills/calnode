@@ -68,6 +68,14 @@ behaviour or markup must usually be made in all three, or they drift:
   booked. Never feed them to MCP or the assistant - `computeSlots(..., includeTaken)`
   makes each caller say. See ARCHITECTURE §8.
 
+## This is a fork - keep upstream merges cheap (docs/FORK.md)
+
+`internal/db/migrations/` is **upstream's, byte-identical** - never add a file there. Fork
+schema changes go in `internal/db/migrations_fork/` (own goose table
+`goose_db_version_fork`, run after upstream's, additive only). Where upstream and the fork
+both have a feature, upstream's version wins and the fork keeps only the extra; mark
+fork-only code with a `fork:` comment.
+
 ## Calendar invite carries the manage links
 
 Every booking's calendar event ends with reschedule and cancel links
@@ -155,13 +163,15 @@ client SDK**, not Svelte.
 ## Languages (i18n) - data-driven, adding one touches no code
 
 Public surfaces (book.html, manage.html, embed.js, the four emails, calendar invite
-title/description) are translated. **NOT translated: the admin SPA, the LiveKit room**
-(`livekit-room.html`/`.js`, ~45 hardcoded strings - it has its own asset pipeline and shares
-no string plumbing with the Go templates), and admin-authored content (event names,
-descriptions, questions, custom email copy). Locale is resolved per request from
+title/description) are translated. The **admin SPA has its own separate catalog**
+(`frontend/src/lib/i18n/`, client-side, `en` + `fr`, English fallback per key) — a
+different system from the booker locales here; see ARCHITECTURE §23. **NOT translated:
+the LiveKit room** (`livekit-room.html`/`.js`, ~45 hardcoded strings - it has its own
+asset pipeline and shares no string plumbing with the Go templates), and admin-authored
+content (event names, descriptions, questions, custom email copy). Locale is resolved per request from
 `Accept-Language` + a `?lang=` override + the operator's fallback setting
 (`internal/handler/i18n.go`), and the booker's locale is stored on the booking so later
-reminders match. Ships `en es fr fr-CA de it pt nl sv`. Full detail: ARCHITECTURE §23.
+reminders match. Ships `en es fr fr-CA de el it nl pl pt sv`. Full detail: ARCHITECTURE §23.
 
 **Adding a locale = adding `internal/i18n/locales/<code>.json`.** Nothing else. `init()`
 globs the directory; the switcher, the fallback dropdown and the public API payload all read
@@ -267,5 +277,6 @@ at an unconditional `"zoom"`.
 - The NS8 module is a thin wrapper around the published app image, built by
   `.github/workflows/ns8-module.yml` with the same tag scheme as
   `docker-publish.yml`. Release tags pin module and app to the same version.
-- The committed systemd unit keeps a `__CALNODE_APP_IMAGE__` placeholder;
-  `packaging/ns8/build-images.sh` stamps the real app ref at build time.
+- The app image ref lives in the `org.nethserver.images` label; at install
+  the cluster exposes it as `${CALNODE_IMAGE}` and the unit + configure read
+  it from there. Never hardcode an app tag in `packaging/ns8/`.

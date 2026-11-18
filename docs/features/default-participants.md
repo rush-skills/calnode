@@ -37,7 +37,7 @@ auto-joins a meeting when a shared mailbox (e.g. `notes@example.com`) is on the 
 
 ## Storage
 
-Migration `00072_default_attendees.sql`: `server_settings.default_attendee_emails TEXT NOT
+Migration `migrations_fork/00005_default_attendees.sql` (was 00072 before the fork split): `server_settings.default_attendee_emails TEXT NOT
 NULL DEFAULT ''`, comma-separated, lowercase, normalised on write.
 
 ## API
@@ -123,10 +123,7 @@ commas are accepted so a pasted list works. Type: `ParticipantSettings` in `lib/
   booker an attendee), which needs the host's address on `CreateEventParams` and changes
   who the booker's own invite comes from; deferred, not hidden. Until then an operator
   on CalDAV should verify one booking against their server before relying on the bot.
-- **Migration number.** `00072` was assigned by the integration plan while `00067` is the
-  newest on main; `goose.Up` runs without allow-missing, so the sibling branches holding
-  `00068`-`00071` must land in the same release as this one (or the numbers be made
-  contiguous at merge) - a database that applied `00072` first refuses later lower numbers.
+- **Migration number.** Resolved: the fork's migrations now live in `internal/db/migrations_fork` with their own goose table, so they never collide with upstream's numbering; see docs/FORK.md.
 
 - A default participant is invited from **each** host's calendar on a group booking, so a
   three-host meeting produces three invites to the bot. That is how the provider-native

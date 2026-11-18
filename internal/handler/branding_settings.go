@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/calnode/calnode/internal/branding"
 	"github.com/calnode/calnode/internal/i18n"
 	"github.com/calnode/calnode/internal/mailer"
 	"github.com/disintegration/imaging"
@@ -26,55 +27,26 @@ const logoServePath = "/branding/logo"
 // bannerServePath is the served path for the instance banner image.
 const bannerServePath = "/branding/banner"
 
-// brandingSettings is the instance-wide brand identity used in emails and on the
-// public booking/manage pages.
+// brandingSettings is the instance-wide brand identity. The definition lives in
+// internal/branding so the background worker can load it too (reminder emails).
+//
+// Fork: it also carries ShowHostNames (server_settings.show_host_names, default on),
+// which decides whether the public booking surfaces name the hosts. Kept here rather
+// than in internal/branding so that package stays upstream's. See
+// docs/features/public-pages.md.
 type brandingSettings struct {
-	BusinessName  string
-	LogoURL       string // served path (relative), e.g. "/branding/logo?v=123"; empty = no logo
-	LogoHeight    int    // email logo height in px (pages scale up); see pageLogoHeight
-	LogoOpacity   int    // 20–100; CSS opacity for a subtle logo. 100 = fully opaque
-	BannerURL     string // served path (relative), e.g. "/branding/banner?v=123"; empty = no banner
-	BannerOpacity int    // 20–100; CSS opacity for the banner. 100 = fully opaque
-	PrivacyURL    string // operator's Privacy Policy URL (absolute http[s]); "" = hidden
-	TermsURL      string // operator's Terms URL (absolute http[s]); "" = hidden
-	// FallbackLocale is what a visitor sees when their browser doesn't ask for any
-	// locale Calnode supports — defaults to "en". See i18n.ResolveWithFallback.
-	FallbackLocale string
-	// ShowHostNames (default true) shows host names and avatars on the public booking
-	// surfaces: the book/manage pages, the public event-type JSON + /slots host map the
-	// embed widget consumes, the public create-booking response, and the team page's
-	// member roster. When false those surfaces carry only the event/meeting name — the
-	// names are withheld server-side, so no surface receives one it then has to hide.
-	// See docs/features/public-pages.md.
+	branding.Settings
 	ShowHostNames bool
 }
 
 // loadBranding reads the brand identity from the singleton settings row.
 func (h *Handler) loadBranding(ctx context.Context) brandingSettings {
-	var b brandingSettings
-	// Scanned as an int that starts at its default so a failed Scan (no settings row yet)
-	// leaves the switch ON — the zero value of a bool would silently hide every host.
-	showHostNames := 1
-	_ = h.db.QueryRowContext(ctx, `
-		SELECT COALESCE(business_name,''), COALESCE(logo_url,''),
-		       COALESCE(logo_height,28), COALESCE(logo_opacity,100),
-		       COALESCE(banner_url,''), COALESCE(banner_opacity,100),
-		       COALESCE(privacy_url,''), COALESCE(terms_url,''),
-		       COALESCE(fallback_locale,'en'), COALESCE(show_host_names,1)
-		FROM server_settings WHERE id = 1`).Scan(&b.BusinessName, &b.LogoURL, &b.LogoHeight, &b.LogoOpacity,
-		&b.BannerURL, &b.BannerOpacity, &b.PrivacyURL, &b.TermsURL, &b.FallbackLocale, &showHostNames)
-	b.ShowHostNames = showHostNames != 0
-	if b.LogoHeight <= 0 {
-		b.LogoHeight = 28
-	}
-	if b.LogoOpacity <= 0 || b.LogoOpacity > 100 {
-		b.LogoOpacity = 100
-	}
-	if b.BannerOpacity <= 0 || b.BannerOpacity > 100 {
-		b.BannerOpacity = 100
-	}
-	if i18n.Get(b.FallbackLocale) == nil {
-		b.FallbackLocale = i18n.DefaultCode
+	b := brandingSettings{Settings: branding.Load(ctx, h.db), ShowHostNames: true}
+	// Starts at its default, so a failed read (no settings row yet) leaves the switch ON.
+	var show int
+	if err := h.db.QueryRowContext(ctx,
+		`SELECT COALESCE(show_host_names, 1) FROM server_settings WHERE id = 1`).Scan(&show); err == nil {
+		b.ShowHostNames = show != 0
 	}
 	return b
 }
@@ -89,7 +61,7 @@ func (h *Handler) hostNamesShown(ctx context.Context) bool {
 }
 
 // pageLogoHeight scales the email logo height up ~1.3× for the roomier public
-// booking/manage page headers.
+// booking/manage/directory page headers.
 func pageLogoHeight(emailPx int) int {
 	if emailPx <= 0 {
 		emailPx = 28
@@ -127,21 +99,7 @@ func opacityCSS(pct int) string {
 // as a relative path; emails need an absolute URL, so it's prefixed with the
 // public base URL here. Cheap single-row read; called once per send batch.
 func (h *Handler) applyBranding(ctx context.Context, d *mailer.BookingData) {
-	b := h.loadBranding(ctx)
-	d.BrandName = b.BusinessName
-	d.LogoHeight = b.LogoHeight
-	d.LogoOpacity = b.LogoOpacity
-	if strings.HasPrefix(b.LogoURL, "/") {
-		d.LogoURL = h.publicURL() + b.LogoURL
-	} else {
-		d.LogoURL = b.LogoURL
-	}
-	d.BannerOpacity = b.BannerOpacity
-	if strings.HasPrefix(b.BannerURL, "/") {
-		d.BannerURL = h.publicURL() + b.BannerURL
-	} else {
-		d.BannerURL = b.BannerURL
-	}
+	h.loadBranding(ctx).ApplyTo(d, h.publicURL())
 }
 
 // GetBranding handles GET /v1/settings/branding (admin).

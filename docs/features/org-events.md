@@ -1,7 +1,7 @@
 # Org-wide event types and slug normalisation
 
 Feature branch notes: what was built, the decisions behind it, and where it deliberately
-deviates from the brief. Migration: `00073_event_type_visibility.sql`.
+deviates from the brief. Migration: `migrations_fork/00006_event_type_visibility.sql`.
 
 ## A. Slug normalisation
 
@@ -56,37 +56,29 @@ surfaces use the slug the server returns.
 
 **Schema.** `event_types.visibility TEXT NOT NULL DEFAULT 'org' CHECK (visibility IN ('org',
 'private'))`. The default converts every existing row to org-visible (required by the brief;
-verified by `internal/db/event_type_visibility_migration_test.go`, which migrates to 00072,
+verified by `internal/db/event_type_visibility_migration_test.go`, which migrates to fork 00005,
 inserts, then migrates on). `visibility` is unrelated to `is_public`, which governs the public
 directory pages; the editor now labels that checkbox "Listing" to keep the two apart.
 
-**The rule (`internal/handler/event_type_access.go`).**
-- *See:* org-wide, your own, or one you are assigned to host (`eventTypeVisibleFilter`).
-  Hosts-see-private is kept from the old model: someone hosting an event type needs to know
-  what they are hosting, and the pre-existing `TestEventTypes_assignedHostSeesReadOnly` still
-  covers it.
-- *Edit:* `canEditEventType(user, ownerID, visibility)` = owner, or admin && org-wide.
-  Private stays owner-only, so an admin cannot reach into something a member kept to
-  themselves.
-- `eventTypeIDForEditor` / `eventTypeForEditor` replace **every** former
-  `WHERE slug = ? AND user_id = ?` write guard and `eventTypeIDForOwner` (deleted): PATCH,
-  DELETE, hosts PUT, questions POST/PATCH/DELETE, duplicate, test-email. 404 for an unknown
-  slug; **403** for "exists but not yours". 403 rather than 404 is deliberate — the slug is
-  the public booking URL, so its existence is no secret, and a member who just saw the event
-  type in their list deserves to be told why the save failed.
-- `eventTypeIDForViewer` backs the admin-side *reads* the editor needs (hosts list, admin
-  questions list) so a read-only viewer sees the same panels an editor does; 404 when the
-  event type is private to someone else.
-- Admin on someone else's **private** event type: reads 404 (private means not there, as far
-  as the rest of the workspace is concerned), writes 403 (the brief's matrix asks for it, and
-  the slug is public anyway). The two answers differ on purpose and are both tested; a reviewer
-  flagged the asymmetry, and it is accepted rather than leaking private rows into admin reads.
+**The rule — upstream's, since the v0.14 merge.** Upstream Calnode shipped its own admin model
+(v0.12+): `canManageEventType(user, ownerID)` = owner or any admin, and `eventTypeForEditor`
+answers **404** to anyone else. The fork now uses that unchanged and keeps only what upstream
+lacks (`internal/handler/event_type_access.go`):
+- *See:* upstream's rule (your own, one you host, or any if you are an admin) **plus**
+  every `visibility = 'org'` event type, in the list and on GET. Members see org-wide ones
+  read-only (`can_edit: false`, upstream's read-only summary in the editor).
+- *Edit / delete / hosts / questions / duplicate:* upstream's `eventTypeForEditor`. A member
+  writing to an org-wide type they can see gets 404, as upstream answers for a hosted one.
+- `eventTypeIDForViewer` backs the two admin-side *reads* (hosts list, admin questions list)
+  so they follow the same visibility as GET.
+- **Behaviour change in the merge:** before it, an admin could neither see nor edit someone
+  else's *private* event type (reads 404, writes 403). Upstream lets admins manage every
+  event type, so now they can (it stays out of their default list; it shows under
+  `?scope=all`). Only the owner can still change `visibility` itself (403).
 
-**JSON.** `eventTypeJSON` gains `visibility`, `owner_id`, `can_edit`; `owner_name` /
-`owner_email` are now populated on list and get for everyone (they already were for
-non-owners, and member emails are visible via `/v1/users` anyway). `owned` and `can_edit` are
-set in one place (`stampViewer`) so they can never disagree with the write-side rule. The
-`etColumns` list carries `user_id, visibility`, so every scan picks them up.
+**JSON.** `eventTypeJSON` gains `visibility`; `owner_id`, `owned`, `can_edit` and
+`owner_name` / `owner_email` come from upstream (`setOwnership`; owner identity only when the
+viewer is not the owner).
 
 **Create.** Any member; `visibility` optional, default `org`, validated; the creator stays
 `user_id`.

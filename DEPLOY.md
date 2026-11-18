@@ -14,12 +14,52 @@ small Alpine runtime) and published to GHCR:
 
 Or build it yourself with `docker build -t calnode .`.
 
-This guide covers a generic Docker deploy and a step-by-step **Railway** deploy
+This guide covers a standalone binary, a generic Docker deploy and a step-by-step **Railway** deploy
 (the current reference host).
+
+## Standalone binary
+
+Download `calnode_<version>_linux_amd64.tar.gz` (x86-64) or
+`calnode_<version>_linux_arm64.tar.gz` (ARM64), plus `checksums.txt`, from the same
+[GitHub release](https://github.com/Calnode/calnode/releases). Each archive contains
+the same static executable as the corresponding container image, with the admin
+UI and timezone database embedded, and the Apache-2.0 license. No Go, Node or Docker
+installation is needed to run it.
+
+For example, after downloading the amd64 archive and checksums for your chosen release:
+
+```bash
+version=X.Y.Z # replace with the downloaded release version, without the v prefix
+sha256sum --check --ignore-missing checksums.txt
+tar -xzf "calnode_${version}_linux_amd64.tar.gz"
+mkdir -p data
+export CALNODE_ENCRYPTION_KEY="$(openssl rand -hex 32)"
+export CALNODE_RECOVERY_SECRET="$(openssl rand -hex 32)"
+BASE_URL=http://localhost:3000 DATABASE_URL=sqlite://./data/calnode.db ./calnode
+```
+
+Save both generated secrets before restarting; reuse them on subsequent starts and
+keep the recovery secret separately. For production, set `BASE_URL` to your HTTPS
+address, use a persistent data directory, and place the process behind a
+TLS-terminating proxy that preserves `Host`. The Linux host needs a CA certificate
+store for outbound HTTPS. Run the process under a service manager for automatic restarts.
+
+The archive does **not** include Litestream or the container entrypoint. Setting
+`LITESTREAM_REPLICA_URL` alone will not start backups or restore a database when running
+the binary directly; configure Litestream separately or use another SQLite-aware
+backup method. The email, calendar and other integration settings below still apply.
 
 ---
 
 ## 1. Configuration (environment variables)
+
+> **Settings saved in the UI win over environment variables.** Email (SMTP/Resend) and
+> Google OAuth credentials are stored in the database. Environment variables are read only
+> when nothing is stored: on first boot they *seed* the database, and from then on the
+> stored values take precedence. Changing an env var after that has no effect until you
+> clear the matching setting in Settings → Email / Settings → Google. Calnode logs a
+> warning at startup naming every variable it is ignoring, so this is visible rather than
+> silent.
 
 | Variable | Required | Default | Notes |
 |---|---|---|---|
@@ -29,11 +69,11 @@ This guide covers a generic Docker deploy and a step-by-step **Railway** deploy
 | `PUBLIC_BASE_URL` | no | = `BASE_URL` | Booker-facing host for booking links/emails, if different from the identity host. |
 | `DATABASE_URL` | no | `sqlite://./data/calnode.db` | Point at the persistent volume, e.g. `sqlite:///data/calnode.db`. |
 | `PORT` | no | `3000` | The app listens on `$PORT`. Many platforms inject their own (Railway injects `8080`) — let them. |
-| `EMAIL_SMTP_HOST` / `_PORT` / `_USER` / `_PASS` | no¹ | — / `587` | SMTP. Can also be set later in Settings → Email (DB-stored, encrypted). |
+| `EMAIL_SMTP_HOST` / `_PORT` / `_USER` / `_PASS` | no¹ | — / `587` | SMTP. Seeds Settings → Email on first boot; once stored there, the database value wins (see the precedence note above). |
 | `EMAIL_SMTP_CONNECT_HOST` / `EMAIL_SMTP_CONNECT_PORT` | no | SMTP host / port | TCP relay address, loaded at startup. Applies to environment and database SMTP settings; TLS and authentication still use the SMTP host. |
 | `EMAIL_SMTP_TLS` / `_STARTTLS` | no | `false` | `STARTTLS` for 587, implicit `TLS` for 465. |
 | `EMAIL_FROM_ADDRESS` / `EMAIL_FROM_NAME` | no | `bookings@localhost` / `Calnode` | The From identity. |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | no | — | Google sign-in + calendar. Can also be set in Settings → Google OAuth. |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | no | — | Google sign-in + calendar. Seeds Settings → Google OAuth on first boot; once stored there, the database value wins (see the precedence note above). |
 | `LITESTREAM_REPLICA_URL` | recommended | — | Enables continuous SQLite backup (see §6). |
 | `COOKIE_SECURE` | no | https→true | Override cookie Secure flag; defaults from `BASE_URL` scheme. |
 | `TRUSTED_PROXY_CIDRS` | no | — | Comma-separated CIDRs (a bare address = one host) whose `X-Forwarded-For` is believed when keying per-IP rate limits, e.g. `10.0.0.0/8`. Include a fronting CDN's own ranges so the walk steps over its edge and lands on the visitor. Unset ⇒ the header is ignored and the limit keys on the TCP peer, so behind a CDN every visitor shares one bucket. **Only list networks you control**: anything in the list can name any client IP it likes. Single-value vendor headers (`CF-Connecting-IP`, `X-Real-IP`) are never read, from any peer. |
@@ -309,6 +349,22 @@ Recovery is automatic: if the volume comes up empty, `entrypoint.sh` restores th
 latest replica from object storage before starting the app. To **prove the
 round-trip without touching the live DB**, restore to a scratch path (never
 `/data/calnode.db`) and confirm it's a valid SQLite file.
+
+> **The replica holds the database, not the encryption key.** If you deployed
+> without setting `CALNODE_ENCRYPTION_KEY`, the app generated a key at first start
+> and wrote it to `calnode.key` next to the database (`/data/calnode.key` in the
+> container). Litestream does not replicate that file, so restoring the database
+> from the replica on its own will not start: the restored rows are sealed under a
+> key that is gone, and the app exits rather than re-keying your data. Back that
+> file up separately, and restore it beside the database.
+>
+> If a restore does fail this way, delete the `calnode.key` that the failed start
+> generated before restoring the real one — the process writes a new key on first
+> start, and that file will not unlock the restored database.
+>
+> Deployments that set `CALNODE_ENCRYPTION_KEY` in the environment (the recommended
+> production path, and what the NS8 module does) are unaffected: the key comes from
+> the environment, survives a volume loss with it, and no key file is written.
 
 **Non-destructive drill, in the container (zero setup — litestream + creds + config are already there):**
 ```bash

@@ -68,6 +68,7 @@ type Snapshot struct {
 	Revision           int
 	CancellationReason string
 	LocationValue      string
+	InviteDelivery     string // calendar, calnode or none
 	EventTypeID        string
 	EventTypeSlug      string
 	EventTypeName      string
@@ -89,14 +90,14 @@ func Load(ctx context.Context, db *sql.DB, id, baseURL string) (*Snapshot, error
 	var bookingLocType, etLocType string
 	err := db.QueryRowContext(ctx, `
 		SELECT b.status, b.start_at, b.end_at, b.created_at, b.changed_at, b.revision,
-		       COALESCE(b.cancellation_reason, ''), COALESCE(b.location_value, ''),
+		       COALESCE(b.cancellation_reason, ''), COALESCE(b.location_value, ''), b.invite_delivery,
 		       COALESCE(b.location_type, ''), et.id, et.slug, et.name, COALESCE(et.location_type, ''),
 		       b.host_id, COALESCE(u.name, ''), COALESCE(u.email, ''), COALESCE(b.external_event_id, '')
 		FROM bookings b
 		JOIN event_types et ON et.id = b.event_type_id
 		LEFT JOIN users u ON u.id = b.host_id
 		WHERE b.id = ?`, id).Scan(&s.Status, &s.StartAt, &s.EndAt, &s.CreatedAt, &s.ChangedAt, &s.Revision,
-		&s.CancellationReason, &s.LocationValue, &bookingLocType, &s.EventTypeID, &s.EventTypeSlug,
+		&s.CancellationReason, &s.LocationValue, &s.InviteDelivery, &bookingLocType, &s.EventTypeID, &s.EventTypeSlug,
 		&s.EventTypeName, &etLocType, &s.HostID, &s.HostName, &s.HostEmail, &s.Meeting.CalendarEventID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound

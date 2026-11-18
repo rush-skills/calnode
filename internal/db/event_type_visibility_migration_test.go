@@ -3,33 +3,19 @@ package db
 import (
 	"database/sql"
 	"testing"
-
-	"github.com/pressly/goose/v3"
 )
 
-// Migration 00073 adds event_types.visibility with DEFAULT 'org', and that default is
-// the point: every event type that existed before it becomes organisation-visible.
-// This applies the schema up to 00072, inserts a row the old way, then migrates on and
-// checks the row came through as 'org'.
-func TestMigration00073_existingRowsBecomeOrgVisible(t *testing.T) {
-	database, err := Open("sqlite://:memory:")
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	defer database.Close()
-
-	goose.SetBaseFS(migrations)
-	if err := goose.SetDialect("sqlite3"); err != nil {
-		t.Fatalf("set dialect: %v", err)
-	}
-	if err := goose.UpTo(database, "migrations", 72); err != nil {
-		t.Fatalf("migrate to 72: %v", err)
-	}
+// Fork migration 00006 adds event_types.visibility with DEFAULT 'org', and that default
+// is the point: every event type that existed before it becomes organisation-visible.
+// This applies the schema up to fork 00005, inserts a row the old way, then migrates on
+// and checks the row came through as 'org'.
+func TestForkMigration00006_existingRowsBecomeOrgVisible(t *testing.T) {
+	database := openForkTo(t, 5).DB
 
 	// The column must not exist yet, or this test proves nothing.
 	var visibility sql.NullString
 	if err := database.QueryRow(`SELECT visibility FROM event_types LIMIT 1`).Scan(&visibility); err == nil {
-		t.Fatal("event_types.visibility exists before migration 00073")
+		t.Fatal("event_types.visibility exists before fork migration 00006")
 	}
 
 	if _, err := database.Exec(`INSERT INTO users (id, email, name) VALUES ('u1', 'u1@example.com', 'One')`); err != nil {

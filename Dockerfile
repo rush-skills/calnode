@@ -1,11 +1,23 @@
 # syntax=docker/dockerfile:1
 
+# Base images are pinned by digest (the multi-arch index, so every platform
+# resolves). The tag stays beside it for readers and for Dependabot, whose
+# docker entry bumps the digest when the tag moves.
+
 # ── Frontend build stage ───────────────────────────────────────────────────────
-FROM node:22-alpine AS frontend-builder
+# Built for the BUILD platform, not the target: the output is static JS/CSS that is
+# identical for every architecture. Without this pin a multi-arch build (buildx:
+# linux/amd64,linux/arm64) runs pnpm install and pnpm build a second time under QEMU
+# for arm64, which is slow and occasionally hangs for hours.
+FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:8996bb5821d62a8fd9bb27c1cb07462f3fdce6e47d640c6a881ead0b064ce216 AS frontend-builder
 
 # Pin pnpm to the version in package.json's `packageManager` field (not @latest)
 # so CI builds are reproducible and match the committed lockfile.
-RUN corepack enable && corepack prepare pnpm@10.32.1 --activate
+#
+# Installed with npm, not corepack: Node 25+ no longer bundles corepack, so
+# `corepack enable` fails on node:26-alpine with "corepack: not found". Installing
+# the pinned version directly keeps the same guarantee without that dependency.
+RUN npm install -g pnpm@10.32.1
 
 WORKDIR /app
 
@@ -16,7 +28,11 @@ COPY frontend/ .
 RUN pnpm build
 
 # ── Go build stage ─────────────────────────────────────────────────────────────
-FROM golang:1.27.1-alpine AS builder
+# Also the BUILD platform. CGO is disabled, so Go cross-compiles natively to the
+# target arch; there is no reason for this stage to run under QEMU. Running it
+# emulated is what made a multi-arch build stall: the arm64 leg spent its time
+# interpreting the compiler instead of compiling.
+FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS builder
 
 RUN apk add --no-cache ca-certificates wget
 
@@ -28,10 +44,10 @@ RUN go mod download
 COPY . .
 COPY --from=frontend-builder /app/build ./frontend/build
 
-# Build natively for whatever architecture this stage is running on
-# (TARGETARCH is auto-populated by Docker buildx; falls back correctly
-# on ARM hosts where the original hardcoded amd64 would produce a
-# binary that can't execute at all).
+# Build for the TARGET architecture from this (build-platform) stage. buildx
+# populates TARGETARCH; with no CGO this is a native cross-compile, not emulation.
+# A plain `docker build` on an arm64 host still works: TARGETARCH then matches the
+# host, so the binary executes there as before.
 ARG TARGETARCH
 # VERSION is passed by docker-publish.yml from the resolved image tag (semver on a
 # release, "edge"/branch on a plain main push); defaults to "dev" for local builds
@@ -53,11 +69,17 @@ RUN wget -qO- \
     "https://github.com/benbjohnson/litestream/releases/download/v${LITESTREAM_VERSION}/litestream-v${LITESTREAM_VERSION}-linux-${TARGETARCH}.tar.gz" \
     | tar -xz -C /usr/local/bin litestream
 
+# Export the same executable as the container, including its embedded frontend.
+FROM scratch AS standalone
+COPY --from=builder /build/calnode /calnode
+COPY LICENSE /LICENSE
+
 # ── Runtime stage ─────────────────────────────────────────────────────────────
 # alpine (not scratch) — needed for the shell entrypoint and Litestream.
-# No --platform pin here: inherits the build host's native architecture,
-# matching whatever TARGETARCH the binary above was actually compiled for.
-FROM alpine:3.21
+# No --platform pin: under buildx this defaults to the TARGET platform, which is
+# what we want (an arm64 final image for arm64 consumers). Only the two builder
+# stages above are pinned to BUILDPLATFORM.
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 
 RUN apk add --no-cache ca-certificates tzdata
 

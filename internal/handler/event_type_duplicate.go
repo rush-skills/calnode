@@ -87,11 +87,14 @@ func (h *Handler) DuplicateEventType(w http.ResponseWriter, r *http.Request) {
 	user, _ := userFromContext(r.Context())
 	srcSlug := r.PathValue("slug")
 
-	// Editor-scoped, like PATCH and DELETE. A read-only viewer would be handed a copy
-	// they could not then change, which is worse than refusing.
-	srcID := h.eventTypeIDForEditor(w, r, srcSlug, user)
+	// Editor-scoped, like PATCH and DELETE: the owner or an admin. An assigned host
+	// sees an event type read-only, so handing them a copy they could not then change
+	// would be worse than refusing. The copy keeps the source's owner (user_id is
+	// copied below), so an admin duplicating someone else's event type makes another
+	// one for that person, not one for themselves.
+	srcID, ownerID := h.eventTypeForEditor(w, r, srcSlug, user)
 	if srcID == "" {
-		return // eventTypeIDForEditor already wrote 404/403/500
+		return // eventTypeForEditor already wrote 404/500
 	}
 
 	tx, err := h.db.BeginTx(r.Context(), nil)
@@ -147,7 +150,8 @@ func (h *Handler) DuplicateEventType(w http.ResponseWriter, r *http.Request) {
 		  is_active, is_public, show_taken_slots, archived_at,
 		  msg_confirmation, msg_cancellation, msg_reschedule, msg_reminder, msg_greeting,
 		  subj_confirmation, subj_cancellation, subj_reschedule, subj_reminder,
-		  price_cents, currency, calendar_message, visibility, invite_delivery)
+		  price_cents, currency, invite_delivery, display_order,
+		  calendar_message, visibility)
 		SELECT
 		  ?, user_id, team_id, ?, name, description,
 		  duration_minutes, slot_interval_minutes,
@@ -158,7 +162,8 @@ func (h *Handler) DuplicateEventType(w http.ResponseWriter, r *http.Request) {
 		  0, is_public, show_taken_slots, NULL,
 		  msg_confirmation, msg_cancellation, msg_reschedule, msg_reminder, msg_greeting,
 		  subj_confirmation, subj_cancellation, subj_reschedule, subj_reminder,
-		  price_cents, currency, calendar_message, visibility, invite_delivery
+		  price_cents, currency, invite_delivery, display_order,
+		  calendar_message, visibility
 		FROM event_types WHERE id = ?`, newID, newSlug, srcID); err != nil {
 		h.logger.ErrorContext(r.Context(), "duplicate event type: copy row", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
@@ -179,18 +184,20 @@ func (h *Handler) DuplicateEventType(w http.ResponseWriter, r *http.Request) {
 
 	// Answer with the copy in the same shape as CreateEventType, so the admin UI can
 	// drop the caller straight into the new event type's editor.
-	//
-	// The copy keeps the source's owner (user_id) and visibility, copied by the INSERT
-	// above. An admin duplicating a colleague's org-wide event type therefore gets a
-	// copy that colleague still owns — whose calendar mints its meeting links and whose
-	// hosts it inherited — and that the admin can still edit, because it is org-wide.
-	et, err := h.fetchEventTypeByID(r.Context(), newID)
-	if err != nil || et == nil {
+	row := h.db.QueryRowContext(r.Context(), selectETCols+" WHERE id = ?", newID)
+	et, err := scanEventType(row)
+	if err != nil {
 		h.logger.ErrorContext(r.Context(), "duplicate event type: fetch copy", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	et.stampViewer(user)
+	if err := h.loadReminders(r.Context(), newID, et); err != nil {
+		h.logger.ErrorContext(r.Context(), "duplicate event type: load reminders", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	et.setOwnership(user, ownerID) // the copy belongs to the source's owner
+	h.logForeignEventTypeChange(r.Context(), "duplicate", newID, ownerID, user)
 	h.writeJSON(w, http.StatusCreated, et)
 }
 
