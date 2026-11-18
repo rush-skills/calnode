@@ -2016,5 +2016,234 @@
 			"hint": "Affiché dans l'événement d'agenda reçu par chaque participant et hôte, au-dessus de la référence de réservation. Distinct de la description de la page de réservation. Laissez vide pour n'envoyer que la référence.",
 			"placeholder": "Ordre du jour, préparation, ce qu’il faut apporter…"
 		}
+	},
+	"liveEvents": {
+		"headTitle": "Événements en direct — Calnode",
+		"title": "Événements en direct",
+		"subtitle": "Permanences et sessions en direct. Le lien pour rejoindre est publié sur votre page et votre widget pendant la session.",
+		"new": "Nouvel événement en direct",
+		"empty": "Rien de prévu ni en direct. Planifiez une permanence ou passez en direct tout de suite.",
+		"liveNowCount": {
+			"one": "{count} en direct",
+			"other": "{count} en direct"
+		},
+		"shownCount": {
+			"one": "{count} affiché",
+			"other": "{count} affichés"
+		},
+		"recurringBadge": "Récurrent",
+		"autoStartShort": "démarrage auto",
+		"status": {
+			"scheduled": "Planifié",
+			"live": "En direct",
+			"ended": "Terminé",
+			"cancelled": "Annulé"
+		},
+		"when": {
+			"started": "Commencé {when}",
+			"unscheduled": "Aucun horaire prévu"
+		},
+		"duration": {
+			"hoursMinutes": "{h} h {m} min",
+			"minutes": "{m} min"
+		},
+		"error": {
+			"load": "Impossible de charger les événements en direct",
+			"history": "Impossible de charger l'historique des sessions",
+			"create": "Impossible de créer l'événement en direct",
+			"save": "Impossible d'enregistrer l'événement en direct",
+			"start": "Impossible de démarrer",
+			"end": "Impossible de terminer",
+			"cancel": "Impossible d'annuler"
+		},
+		"validation": {
+			"title": "Le titre est obligatoire.",
+			"startDateForTime": "Choisissez une date de début pour l'heure de début.",
+			"dateForEndTime": "Choisissez une date pour l'heure de fin.",
+			"endTimeForDate": "Saisissez une heure de fin pour la date de fin.",
+			"startInvalid": "L'heure de début n'est pas valide.",
+			"endAfterNow": "L'heure de fin doit être postérieure à maintenant.",
+			"liveNeedsLink": "Une session en direct a besoin d'un lien ; terminez-la d'abord pour retirer le lien."
+		},
+		"toast": {
+			"live": "Vous êtes en direct.",
+			"scheduled": "Événement en direct planifié.",
+			"updated": "Événement en direct mis à jour.",
+			"started": "« {title} » est en direct.",
+			"ended": "Session terminée.",
+			"cancelled": "Événement en direct annulé.",
+			"copied": "{what} copié."
+		},
+		"confirm": {
+			"end": {
+				"title": "Terminer cette session ?",
+				"description": "« {title} » passera hors ligne et son lien sera retiré de la page et du widget.",
+				"action": "Terminer la session"
+			},
+			"cancel": {
+				"title": "Annuler cet événement en direct ?",
+				"titleLive": "Terminer et annuler cette session ?",
+				"description": "« {title} » sera annulé. Cette action est irréversible.",
+				"descriptionCalendar": "« {title} » sera annulé et retiré de l'agenda de l'hôte. Cette action est irréversible.",
+				"seriesNote": "Seule cette date est annulée ; le reste de la série ne change pas.",
+				"action": "Annuler l'événement"
+			}
+		},
+		"form": {
+			"title": "Titre",
+			"titlePlaceholder": "Permanence",
+			"description": "Description",
+			"descriptionPlaceholder": "Venez poser vos questions sur…",
+			"kind": "Type",
+			"kindSavedAs": "Sera enregistré sous",
+			"kindHint": "Saisissez un nouveau nom pour créer un type distinct (par ex. webinar). Chaque type peut avoir sa propre page ou son propre widget.",
+			"host": "Hôte",
+			"me": "Moi",
+			"startNow": "Commencer maintenant",
+			"starts": "Début",
+			"ends": "Fin",
+			"date": "Date",
+			"sameDay": "Même jour",
+			"localTimeHint": "Les horaires sont dans votre fuseau horaire. Laissez vide pour démarrer à la main.",
+			"optionalToday": "(facultatif, aujourd'hui)",
+			"joinLink": "Lien pour rejoindre",
+			"optionalOverride": "(facultatif, remplace le lien généré)",
+			"autoStart": "Passer en direct automatiquement à l'heure de début",
+			"autoEnd": "Terminer automatiquement à l'heure de fin",
+			"invite": "Inviter les participants par défaut",
+			"inviteHint": "Les participants par défaut de l'espace (un preneur de notes, par ex.) sont ajoutés à l'invitation. Désactivez-le pour les sessions annoncées comme non enregistrées."
+		},
+		"create": {
+			"title": "Nouvel événement en direct",
+			"description": "Le lien est une réunion Google Meet (ou Teams) sur l'agenda connecté de l'hôte ; les participants par défaut de l'espace sont invités, sauf si vous le désactivez. Collez un lien pour utiliser le vôtre.",
+			"goLive": "Passer en direct",
+			"schedule": "Planifier"
+		},
+		"edit": {
+			"title": "Modifier l'événement en direct",
+			"descriptionLive": "La session est en direct : son horaire et son hôte sont figés jusqu'à la fin. Le reste peut changer.",
+			"description": "Changer l'horaire ou l'hôte déplace l'événement d'agenda ; un nouvel hôte reçoit un nouveau lien.",
+			"occurrenceNote": "Il s'agit d'une date d'une série récurrente : les modifications ne valent que pour cette date, et une modification ultérieure de la série ne les écrase pas.",
+			"fixedWhileLive": "Figé pendant le direct.",
+			"scheduleFixed": "L'horaire est figé pendant que la session est en direct.",
+			"localTimeHint": "Les horaires sont dans votre fuseau horaire. Effacez les deux pour démarrer à la main.",
+			"mintHint": "Laissé vide, un lien Meet/Teams est généré depuis l'agenda de l'hôte au démarrage de la session.",
+			"save": "Enregistrer les modifications"
+		},
+		"table": {
+			"status": "Statut",
+			"session": "Session",
+			"host": "Hôte",
+			"when": "Quand",
+			"joinLink": "Lien pour rejoindre",
+			"actions": "Actions"
+		},
+		"tooltip": {
+			"copyLink": "Copier le lien",
+			"edit": "Modifier",
+			"startNow": "Commencer maintenant",
+			"end": "Terminer la session",
+			"cancel": "Annuler l'événement"
+		},
+		"link": {
+			"mintedAtStart": "Généré au démarrage",
+			"none": "Pas encore de lien — modifiez pour en ajouter un"
+		},
+		"history": {
+			"title": "Historique des sessions",
+			"subtitle": "Sessions terminées et annulées, les plus récentes en premier.",
+			"filterLabel": "Filtrer l'historique par type",
+			"allKinds": "Tous les types",
+			"empty": "Aucune session passée pour le moment.",
+			"started": "Début",
+			"duration": "Durée",
+			"outcome": "Résultat",
+			"scheduledAt": "{when} (prévu)",
+			"loadMore": "Charger plus"
+		},
+		"embed": {
+			"title": "Intégration",
+			"subtitle": "Affichez « En direct — rejoindre » ou « Hors ligne, prochaine session à … » sur votre site. Les deux se mettent à jour toutes les 30 secondes.",
+			"openPage": "Ouvrir la page en direct",
+			"kindLabel": "Afficher les sessions de",
+			"everyKind": "Tous les types",
+			"kindHint": "Choisissez un type pour obtenir des extraits qui n'affichent que ce type, afin de placer chacun à un endroit différent.",
+			"iframe": "Iframe",
+			"iframeTitle": "En direct",
+			"darkHint": "Ajoutez &theme=dark (ou ?theme=dark) pour un site sombre.",
+			"widget": "Widget",
+			"widgetHint": "Composant web intégré. data-kind le limite à un type ; data-base vaut ce serveur par défaut.",
+			"rawStatus": "Statut brut pour votre application : {url} (JSON public, CORS ouvert ; ?kind=a,b et ?limit=20 acceptés)."
+		},
+		"series": {
+			"new": "Nouvelle série récurrente",
+			"title": "Séries récurrentes",
+			"subtitle": "Chaque série crée ses sessions quatre semaines à l'avance. Modifiez une session seule depuis la liste ci-dessous.",
+			"createTitle": "Nouvelle série récurrente",
+			"editTitle": "Modifier la série",
+			"createDescription": "Les sessions se répètent à l'heure locale du fuseau choisi : 17:00 reste 17:00 au changement d'heure.",
+			"editDescription": "Les modifications valent pour toutes les sessions à venir de la série, sauf ce qui a été modifié sur une session seule.",
+			"create": "Créer la série",
+			"timezone": "Fuseau horaire",
+			"timezoneHint": "Les dates et heures ci-dessous sont dans ce fuseau.",
+			"weekdays": "Se répète le",
+			"startTime": "Heure de début",
+			"duration": "Durée (minutes)",
+			"interval": "Toutes les N semaines",
+			"startDate": "Première date",
+			"endDate": "Dernière date",
+			"noEnd": "Sans fin",
+			"skip": "Dates exclues",
+			"skipHint": "Aucune session à ces dates. Choisissez une date, ou une première et une dernière date pour exclure toute une période.",
+			"skipFrom": "Date ou début",
+			"skipTo": "Fin (facultatif)",
+			"skipAdd": "Ajouter",
+			"skipRangeLabel": "{from} – {to}",
+			"skipCount": {
+				"one": "{count} date exclue",
+				"other": "{count} dates exclues"
+			},
+			"hosts": "Hôtes",
+			"hostsHint": "Choisissez un hôte, ou plusieurs pour alterner d'une session à l'autre (dans l'ordre choisi). L'hôte d'une session peut toujours être changé à part.",
+			"link": "Lien de réunion",
+			"linkFresh": "Un nouveau lien pour chaque session",
+			"linkFreshHint": "Généré depuis l'agenda connecté de l'hôte (Google Meet ou Teams).",
+			"linkFixed": "Le même lien à chaque fois",
+			"linkFixedHint": "Une salle permanente que vous collez une fois, réutilisée par chaque session.",
+			"linkFreshShort": "nouveau lien à chaque session",
+			"linkFixedShort": "même lien à chaque fois",
+			"noDefaultParticipants": "sans participants par défaut",
+			"everyWeek": "chaque semaine",
+			"everyNWeeks": {
+				"one": "chaque semaine",
+				"other": "toutes les {count} semaines"
+			},
+			"summary": "{days} · {time} {zone} · {every}",
+			"rotates": "En alternance : {names}",
+			"validation": {
+				"weekdays": "Choisissez au moins un jour.",
+				"time": "Saisissez une heure de début.",
+				"duration": "Saisissez une durée en minutes.",
+				"startDate": "Choisissez la première date.",
+				"endDate": "La dernière date doit être égale ou postérieure à la première.",
+				"link": "Collez le lien que chaque session utilisera.",
+				"skipRange": "La fin d'une période exclue doit être égale ou postérieure à son début."
+			},
+			"toast": {
+				"created": "Série récurrente créée.",
+				"updated": "Série mise à jour.",
+				"ended": "Série terminée."
+			},
+			"error": {
+				"load": "Impossible de charger les séries récurrentes",
+				"save": "Impossible d'enregistrer la série",
+				"end": "Impossible de terminer la série"
+			},
+			"confirmEnd": {
+				"title": "Terminer cette série ?",
+				"description": "« {title} » cesse de se répéter et ses sessions à venir sont annulées. Une session en direct continue, et les sessions passées restent dans l'historique.",
+				"action": "Terminer la série"
+			}
+		}
 	}
 }

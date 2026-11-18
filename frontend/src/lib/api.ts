@@ -430,9 +430,51 @@ export type LiveEvent = {
 	/** The session's join link (minted Meet/Teams link or a manual override). */
 	join_url: string;
 	has_calendar_event: boolean;
+	/** Whether the workspace's default participants (a notetaker) are invited. */
+	invite_default_participants: boolean;
+	/** Fork: set on an occurrence of a recurring series. */
+	series_id: string | null;
+	occurrence_date: string | null;
+	/** Field groups edited on this occurrence alone (a series edit leaves them alone). */
+	overrides: string[];
 	created_by: string;
 	created_at: string;
 	updated_at: string;
+};
+
+/** Fork: a recurring live-event series (internal/handler/live_series.go). */
+export type LiveSeries = {
+	id: string;
+	title: string;
+	description: string;
+	kind: string;
+	/** One host, or several that rotate per occurrence. */
+	host_user_ids: string[];
+	hosts: { id: string; name: string }[];
+	timezone: string;
+	/** 0 = Sunday … 6 = Saturday. */
+	weekdays: number[];
+	interval_weeks: number;
+	/** "HH:MM" wall clock in `timezone`. */
+	start_time: string;
+	duration_minutes: number;
+	start_date: string;
+	end_date: string | null;
+	/** "YYYY-MM-DD" or "YYYY-MM-DD/YYYY-MM-DD". */
+	skip_dates: string[];
+	/** A standing link every occurrence reuses; '' = a fresh link per occurrence. */
+	join_url: string;
+	auto_start: boolean;
+	auto_end: boolean;
+	invite_default_participants: boolean;
+	status: 'active' | 'ended';
+	created_by: string;
+	created_at: string;
+	updated_at: string;
+};
+
+export type LiveSeriesInput = Partial<Omit<LiveSeries, 'id' | 'hosts' | 'status' | 'created_by' | 'created_at' | 'updated_at' | 'end_date'>> & {
+	end_date?: string;
 };
 
 export type LiveEventInput = {
@@ -446,6 +488,7 @@ export type LiveEventInput = {
 	join_url?: string;
 	auto_start?: boolean;
 	auto_end?: boolean;
+	invite_default_participants?: boolean;
 };
 
 async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise<T> {

@@ -2016,5 +2016,234 @@
 			"hint": "Shown in the calendar event every attendee and host receives, above the booking reference. Separate from the description on the booking page. Leave empty to send just the booking reference.",
 			"placeholder": "Agenda, prep notes, what to bring…"
 		}
+	},
+	"liveEvents": {
+		"headTitle": "Live events — Calnode",
+		"title": "Live events",
+		"subtitle": "Office hours and live sessions. The join link is published on your live page and widget while a session is on.",
+		"new": "New live event",
+		"empty": "Nothing scheduled or live. Schedule office hours or go live right away.",
+		"liveNowCount": {
+			"one": "{count} live now",
+			"other": "{count} live now"
+		},
+		"shownCount": {
+			"one": "{count} shown",
+			"other": "{count} shown"
+		},
+		"recurringBadge": "Recurring",
+		"autoStartShort": "auto-start",
+		"status": {
+			"scheduled": "Scheduled",
+			"live": "Live",
+			"ended": "Ended",
+			"cancelled": "Cancelled"
+		},
+		"when": {
+			"started": "Started {when}",
+			"unscheduled": "No scheduled time"
+		},
+		"duration": {
+			"hoursMinutes": "{h}h {m}m",
+			"minutes": "{m}m"
+		},
+		"error": {
+			"load": "Could not load live events",
+			"history": "Could not load session history",
+			"create": "Could not create the live event",
+			"save": "Could not save the live event",
+			"start": "Could not start",
+			"end": "Could not end",
+			"cancel": "Could not cancel"
+		},
+		"validation": {
+			"title": "Title is required.",
+			"startDateForTime": "Pick a start date to go with the start time.",
+			"dateForEndTime": "Pick a date to go with the end time.",
+			"endTimeForDate": "Enter an end time to go with the end date.",
+			"startInvalid": "Start time is not valid.",
+			"endAfterNow": "The end time must be later than now.",
+			"liveNeedsLink": "A live session needs a join link; end it first to remove the link."
+		},
+		"toast": {
+			"live": "You are live.",
+			"scheduled": "Live event scheduled.",
+			"updated": "Live event updated.",
+			"started": "\"{title}\" is live.",
+			"ended": "Session ended.",
+			"cancelled": "Live event cancelled.",
+			"copied": "{what} copied."
+		},
+		"confirm": {
+			"end": {
+				"title": "End this session?",
+				"description": "\"{title}\" will go offline and its join link will be withdrawn from the live page and widget.",
+				"action": "End session"
+			},
+			"cancel": {
+				"title": "Cancel this live event?",
+				"titleLive": "End and cancel this session?",
+				"description": "\"{title}\" will be cancelled. This cannot be undone.",
+				"descriptionCalendar": "\"{title}\" will be cancelled and removed from the host’s calendar. This cannot be undone.",
+				"seriesNote": "Only this date is cancelled; the rest of the series is unchanged.",
+				"action": "Cancel event"
+			}
+		},
+		"form": {
+			"title": "Title",
+			"titlePlaceholder": "Office hours",
+			"description": "Description",
+			"descriptionPlaceholder": "Drop in with questions about…",
+			"kind": "Kind",
+			"kindSavedAs": "Will be saved as",
+			"kindHint": "Type a new name to create a separate kind (e.g. webinar). Each kind can be shown on its own page or widget.",
+			"host": "Host",
+			"me": "Me",
+			"startNow": "Start now",
+			"starts": "Starts",
+			"ends": "Ends",
+			"date": "Date",
+			"sameDay": "Same day",
+			"localTimeHint": "Times are in your local timezone. Leave blank to start it by hand.",
+			"optionalToday": "(optional, today)",
+			"joinLink": "Join link",
+			"optionalOverride": "(optional override)",
+			"autoStart": "Go live automatically at the start time",
+			"autoEnd": "End automatically at the end time",
+			"invite": "Invite the default participants",
+			"inviteHint": "The workspace’s default participants (a notetaker, say) join the calendar invite. Turn off for sessions promised as not recorded."
+		},
+		"create": {
+			"title": "New live event",
+			"description": "The join link is a Google Meet (or Teams) on the host’s connected calendar; the workspace’s default participants are invited unless you turn that off. Paste a link to use your own instead.",
+			"goLive": "Go live",
+			"schedule": "Schedule"
+		},
+		"edit": {
+			"title": "Edit live event",
+			"descriptionLive": "The session is live: its schedule and host are fixed until it ends. Everything else can change.",
+			"description": "Changing the schedule or host moves the calendar event; a new host gets a fresh join link.",
+			"occurrenceNote": "This is one date of a recurring series: changes apply to this date only, and a later edit of the series leaves them alone.",
+			"fixedWhileLive": "Fixed while live.",
+			"scheduleFixed": "The schedule is fixed while the session is live.",
+			"localTimeHint": "Times are in your local timezone. Clear both to start it by hand.",
+			"mintHint": "Left blank, a Meet/Teams link is minted from the host’s calendar when the session starts.",
+			"save": "Save changes"
+		},
+		"table": {
+			"status": "Status",
+			"session": "Session",
+			"host": "Host",
+			"when": "When",
+			"joinLink": "Join link",
+			"actions": "Actions"
+		},
+		"tooltip": {
+			"copyLink": "Copy join link",
+			"edit": "Edit",
+			"startNow": "Start now",
+			"end": "End session",
+			"cancel": "Cancel event"
+		},
+		"link": {
+			"mintedAtStart": "Minted at start",
+			"none": "No link yet — edit to add one"
+		},
+		"history": {
+			"title": "Session history",
+			"subtitle": "Ended and cancelled sessions, newest first.",
+			"filterLabel": "Filter history by kind",
+			"allKinds": "All kinds",
+			"empty": "No past sessions yet.",
+			"started": "Started",
+			"duration": "Duration",
+			"outcome": "Outcome",
+			"scheduledAt": "{when} (scheduled)",
+			"loadMore": "Load more"
+		},
+		"embed": {
+			"title": "Embed",
+			"subtitle": "Show “Live now — join” or “Offline, next session at …” on your own site. Both poll every 30 seconds.",
+			"openPage": "Open live page",
+			"kindLabel": "Show sessions of",
+			"everyKind": "Every kind",
+			"kindHint": "Pick a kind to get snippets that show only that kind, so each can be placed somewhere different.",
+			"iframe": "Iframe",
+			"iframeTitle": "Live now",
+			"darkHint": "Add &theme=dark (or ?theme=dark) to match a dark site.",
+			"widget": "Widget",
+			"widgetHint": "Inline web component. data-kind limits it to one kind; data-base defaults to this server.",
+			"rawStatus": "Raw status for your own app: {url} (public JSON, CORS-open; ?kind=a,b and ?limit=20 supported)."
+		},
+		"series": {
+			"new": "New recurring series",
+			"title": "Recurring series",
+			"subtitle": "Each series creates its sessions four weeks ahead. Edit one session on its own from the list below.",
+			"createTitle": "New recurring series",
+			"editTitle": "Edit series",
+			"createDescription": "Sessions repeat on the wall clock of the timezone you pick, so 17:00 stays 17:00 across daylight saving.",
+			"editDescription": "Changes apply to every upcoming session of the series, except what was edited on a single session.",
+			"create": "Create series",
+			"timezone": "Timezone",
+			"timezoneHint": "Dates and times below are in this timezone.",
+			"weekdays": "Repeats on",
+			"startTime": "Start time",
+			"duration": "Duration (minutes)",
+			"interval": "Every N weeks",
+			"startDate": "First date",
+			"endDate": "Last date",
+			"noEnd": "No end",
+			"skip": "Skip dates",
+			"skipHint": "No sessions on these dates. Pick a single date, or a first and last date to skip a whole period.",
+			"skipFrom": "Date or start",
+			"skipTo": "End (optional)",
+			"skipAdd": "Add",
+			"skipRangeLabel": "{from} – {to}",
+			"skipCount": {
+				"one": "{count} skipped date",
+				"other": "{count} skipped dates"
+			},
+			"hosts": "Hosts",
+			"hostsHint": "Pick one host, or several to rotate between them session by session (in the order picked). Any single session’s host can still be changed on its own.",
+			"link": "Meeting link",
+			"linkFresh": "A fresh link for every session",
+			"linkFreshHint": "Minted from the host’s connected calendar (Google Meet or Teams).",
+			"linkFixed": "The same link every time",
+			"linkFixedHint": "A standing room you paste once, reused by every session.",
+			"linkFreshShort": "fresh link per session",
+			"linkFixedShort": "same link every time",
+			"noDefaultParticipants": "no default participants",
+			"everyWeek": "every week",
+			"everyNWeeks": {
+				"one": "every week",
+				"other": "every {count} weeks"
+			},
+			"summary": "{days} · {time} {zone} · {every}",
+			"rotates": "Rotates: {names}",
+			"validation": {
+				"weekdays": "Pick at least one day.",
+				"time": "Enter a start time.",
+				"duration": "Enter a duration in minutes.",
+				"startDate": "Pick the first date.",
+				"endDate": "The last date must be on or after the first.",
+				"link": "Paste the link every session will use.",
+				"skipRange": "The end of a skipped period must be on or after its start."
+			},
+			"toast": {
+				"created": "Recurring series created.",
+				"updated": "Series updated.",
+				"ended": "Series ended."
+			},
+			"error": {
+				"load": "Could not load recurring series",
+				"save": "Could not save the series",
+				"end": "Could not end the series"
+			},
+			"confirmEnd": {
+				"title": "End this series?",
+				"description": "\"{title}\" stops repeating and its upcoming sessions are cancelled. A session that is live now keeps running, and past sessions stay in the history.",
+				"action": "End series"
+			}
+		}
 	}
 }
